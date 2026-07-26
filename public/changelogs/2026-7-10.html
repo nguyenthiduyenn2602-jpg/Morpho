@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026 年 7 月 10 日更新说明 · 生活统计 / 全服写诗 / 画风重构</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #161427;
+    --ink-soft: #322e4a;
+    --ink-mute: #635d80;
+    --ink-faint: #9892b3;
+    --paper: #f1f0fa;
+    --paper-warm: #e4e1f3;
+    --rule: #d4cfe6;
+    --accent: #4f46a8;
+    --accent-soft: #7b72c9;
+    --highlight: #ddd6f5;
+    --note-bg: #e4e1f3;
+    --tip-bg: #dfe9ec;
+    --warn-bg: #f3e2ea;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --serif: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+    --cn: 'Noto Serif SC', 'Fraunces', serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--cn);
+    font-size: 17px;
+    line-height: 1.85;
+    font-feature-settings: "palt" 1, "kern" 1;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(circle at 18% 8%, rgba(123, 114, 201, 0.08) 0%, transparent 42%),
+      radial-gradient(circle at 88% 92%, rgba(79, 70, 168, 0.06) 0%, transparent 42%);
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+  }
+
+  header.page {
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 48px;
+    margin-bottom: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .eyebrow::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
+
+  h1 {
+    font-family: var(--cn);
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1.25;
+    margin: 0 0 20px;
+    letter-spacing: -0.01em;
+  }
+
+  h1 .en {
+    display: block;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 22px;
+    color: var(--ink-mute);
+    margin-top: 12px;
+    letter-spacing: 0;
+  }
+
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 600px; margin-top: 28px; line-height: 1.75; }
+
+  .meta { display: flex; gap: 32px; margin-top: 36px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); letter-spacing: 0.05em; flex-wrap: wrap; }
+  .meta span strong { color: var(--ink-soft); font-weight: 500; margin-right: 8px; }
+
+  .overview { background: white; border: 1px solid var(--rule); border-radius: 4px; padding: 24px 28px; margin-bottom: 64px; }
+  .overview h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-mute); margin: 0 0 14px; font-weight: 500; }
+  .overview ol { margin: 0; padding-left: 0; list-style: none; counter-reset: ov; }
+  .overview li { counter-increment: ov; padding: 6px 0 6px 36px; position: relative; color: var(--ink-soft); font-size: 15px; }
+  .overview li::before { content: counter(ov, decimal-leading-zero); position: absolute; left: 0; top: 6px; font-family: var(--serif); font-style: italic; color: var(--accent); font-weight: 600; }
+
+  .item { margin-bottom: 56px; scroll-margin-top: 40px; }
+  .item-head { display: flex; align-items: baseline; gap: 20px; margin-bottom: 14px; padding-bottom: 18px; border-bottom: 1px dashed var(--rule); }
+  .item-num { font-family: var(--serif); font-style: italic; font-weight: 600; font-size: 52px; line-height: 1; color: var(--accent); flex-shrink: 0; }
+  .item-title h2 { font-family: var(--cn); font-weight: 600; font-size: 26px; line-height: 1.3; margin: 0 0 6px; color: var(--ink); }
+  .item-title .sub { font-family: var(--serif); font-style: italic; color: var(--ink-mute); font-size: 15px; }
+
+  .tag-pill { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); background: var(--paper-warm); border: 1px solid var(--rule); padding: 2px 10px; border-radius: 999px; margin-left: 4px; vertical-align: middle; }
+
+  p { margin: 0 0 18px; color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  em { font-family: var(--serif); font-style: italic; color: var(--accent); font-weight: 500; }
+
+  code, .kbd { font-family: var(--mono); font-size: 0.88em; background: var(--paper-warm); padding: 2px 7px; border-radius: 3px; color: var(--accent); border: 1px solid var(--rule); }
+  mark { background: linear-gradient(180deg, transparent 55%, var(--highlight) 55%); color: var(--ink); padding: 0 2px; }
+
+  .path { font-family: var(--mono); font-size: 13px; background: var(--paper-warm); padding: 3px 10px; border-radius: 3px; color: var(--ink); border: 1px solid var(--rule); white-space: nowrap; display: inline-block; }
+
+  ul.clean { list-style: none; padding: 0; margin: 14px 0; }
+  ul.clean li { padding: 5px 0 5px 22px; position: relative; color: var(--ink-soft); font-size: 15.5px; }
+  ul.clean li::before { content: '—'; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+
+  .note { background: var(--note-bg); border-left: 3px solid var(--ink-mute); padding: 18px 22px; border-radius: 3px; margin: 22px 0; }
+  .note .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 6px; font-weight: 500; }
+  .note p:last-child { margin-bottom: 0; }
+
+  .tip { background: var(--tip-bg); border-radius: 3px; padding: 18px 22px; margin: 22px 0; border: 1px dashed #7d9aa3; }
+  .tip .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: #3f6470; margin-bottom: 6px; font-weight: 600; }
+  .tip p:last-child { margin-bottom: 0; }
+
+  ol.steps { list-style: none; padding-left: 0; margin: 18px 0; counter-reset: stp; }
+  ol.steps > li { counter-increment: stp; padding: 10px 0 10px 44px; position: relative; color: var(--ink-soft); font-size: 15.5px; line-height: 1.75; }
+  ol.steps > li::before { content: counter(stp); position: absolute; left: 0; top: 8px; width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; border: 1px solid var(--accent); color: var(--accent); font-family: var(--serif); font-weight: 600; font-size: 14px; background: white; }
+
+  .finale { margin-top: 48px; background: white; border: 1px solid var(--rule); border-radius: 4px; padding: 30px 34px; text-align: center; }
+  .finale .big { font-family: var(--cn); font-size: 22px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+  .finale .small { color: var(--ink-mute); font-size: 15px; margin-bottom: 0; }
+
+  footer.page { margin-top: 72px; padding-top: 32px; border-top: 1px solid var(--rule); text-align: center; font-family: var(--serif); font-style: italic; color: var(--ink-faint); font-size: 15px; }
+  footer.page .ornament { font-size: 20px; color: var(--accent); margin-bottom: 12px; letter-spacing: 8px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 32px; }
+    h1 .en { font-size: 17px; }
+    .item-head { flex-direction: column; gap: 4px; align-items: flex-start; }
+    .item-num { font-size: 42px; }
+    .item-title h2 { font-size: 22px; }
+    .meta { flex-direction: column; gap: 6px; }
+    .finale { padding: 22px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="page">
+    <div class="eyebrow">July 10, 2026 · Feature Update</div>
+    <h1>
+      生活统计 · 全服写诗 · 画风重构
+      <span class="en">Log life together, write a poem with everyone, and meet them in a brand-new look.</span>
+    </h1>
+    <p class="lede">
+      这次是个大版本，十处更新一口气上：档案里多了一整套<em>生活统计</em>，还能让角色帮你一起记；彼方开了一场<em>全服写诗</em>；捏人系统<em>换了画风</em>、上了整批 PSD 导入，神经链接也多了角色分组和手办区；小屋、记忆宫殿、外观各有升级，再加一大批 iOS 适配与散修。
+    </p>
+    <div class="meta">
+      <span><strong>主题</strong>生活统计 · 彼方 · 捏人 · 小屋 · 记忆宫殿</span>
+      <span><strong>类型</strong>大版本更新</span>
+      <span><strong>阅读</strong>约 4 分钟</span>
+    </div>
+  </header>
+
+  <div class="overview">
+    <h4>本次更新概览</h4>
+    <ol>
+      <li><strong>档案 · 生活统计</strong>：生理期/排卵预测 + 药盒（含长期药）+ 记账 + 锻炼周计划四模块，还能让角色<strong>注入代记</strong>。</li>
+      <li><strong>彼方 · 特别活动</strong>：全服所有 char 大家一起写一首诗。</li>
+      <li><strong>外观 · 新主题</strong>：新的桌面主题外观 + 配色。</li>
+      <li><strong>小屋 · 小重构 + 样板房</strong>：装修模式大升级、样板房 JSON、家园读全天日程 + 新增「凌晨」段。</li>
+      <li><strong>捏人 · 画风重构</strong>：换画风（老画风折叠）+ PSD 整批导入 + 神经链接手办区。</li>
+      <li><strong>神经链接 · 角色分组</strong>：分组折叠 + 全部选角入口按组筛选。</li>
+      <li><strong>记忆宫殿 · 升级</strong>：房间门牌 + 消化状态机 + 回看窗口（测试中）。</li>
+      <li><strong>聊天 · 专属提示铃声</strong>：角色可设专属铃声。</li>
+      <li><strong>存储优化</strong>：壁纸 / 小屋图片 base64 → Blob，省配额省内存。</li>
+      <li><strong>稳定性</strong>：一大批 iOS 安全区适配 + 导出/导入补漏 + 一堆散修。</li>
+    </ol>
+  </div>
+
+  <!-- 1 -->
+  <section class="item" id="i-life">
+    <div class="item-head">
+      <div class="item-num">01</div>
+      <div class="item-title">
+        <h2>档案 · 生活统计 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">帮你记生活，也可以让 ta 帮你记。</div>
+      </div>
+    </div>
+    <p>
+      <em>「档案」</em>App 新增了一整套<mark>生活统计</mark>，四个模块各管一摊：
+    </p>
+    <ul class="clean">
+      <li><strong>生理期</strong>：记录周期，带排卵预测。</li>
+      <li><strong>药盒</strong>：记吃药，支持<strong>长期药</strong>。</li>
+      <li><strong>记账</strong>：日常花销一笔笔记。</li>
+      <li><strong>锻炼</strong>：按周计划安排训练。</li>
+    </ul>
+    <p>
+      最有意思的是<mark>角色注入代记</mark>：开启后，平时聊天时随口告诉角色<strong>「我吃药了」「今天花了 30 块」</strong>，角色就会顺手<strong>帮你记进生活统计</strong>——不用你自己再切进去手动填。
+    </p>
+    <div class="tip">
+      <div class="label">怎么开</div>
+      <ol class="steps">
+        <li>在<strong>「档案」App 的设置</strong>里打开生活统计。</li>
+        <li>去要代记的那个角色的<strong>「神经链接」</strong>里，打开<strong>提示词注入开关</strong>。</li>
+        <li>之后正常聊天，把吃药 / 花钱这类事顺嘴说给 ta，ta 就会一起记下来。</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="item" id="i-poem">
+    <div class="item-head">
+      <div class="item-num">02</div>
+      <div class="item-title">
+        <h2>彼方 · 特别活动 · 全服写诗 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">全服的 char，一起写一首诗。</div>
+      </div>
+    </div>
+    <p>
+      「彼方」上线了一场<mark>特别活动</mark>：<strong>全服所有角色大家一起写诗</strong>。你的 char 会接上别人 char 留下的句子，一句一句往下续，最后合成一首跨用户的接龙现代诗。
+    </p>
+    <ul class="clean">
+      <li>不是你一个人的诗，是<strong>全服共同</strong>写出来的一首。</li>
+      <li>让你的 char 去彼方逛逛，就有机会落笔添上一句。</li>
+    </ul>
+  </section>
+
+  <!-- 3 -->
+  <section class="item" id="i-theme">
+    <div class="item-head">
+      <div class="item-num">03</div>
+      <div class="item-title">
+        <h2>外观 · 新桌面主题 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">换个皮肤，换个心情。</div>
+      </div>
+    </div>
+    <p>
+      <em>「外观」</em>新增了<mark>新的桌面主题</mark>与配套<strong>配色方案</strong>，想让手机换个样子的可以进去挑挑。
+    </p>
+  </section>
+
+  <!-- 4 -->
+  <section class="item" id="i-room">
+    <div class="item-head">
+      <div class="item-num">04</div>
+      <div class="item-title">
+        <h2>小屋 · 小重构 + 样板房</h2>
+        <div class="sub">装修更顺手，家园更有生活感。</div>
+      </div>
+    </div>
+    <p>
+      <em>「小屋」</em>这一轮做了不少打磨：
+    </p>
+    <ul class="clean">
+      <li><strong>装修模式大升级</strong>：批量导入、导入小屋、双指捏合缩放、撤销 / 重做。</li>
+      <li><strong>样板房</strong>：装修好的小屋可导出成 JSON 样板房；<strong>地毯</strong>独立成单独图层垫底。</li>
+      <li><strong>家园演绎</strong>现在会参考角色的<strong>全天日程</strong>来推进。</li>
+      <li><strong>家园新增「凌晨」段</strong>：早 / 中 / 晚 / 凌晨四段制，深夜时段的提示词更冲动、更感性。</li>
+    </ul>
+    <div class="tip">
+      <div class="label">小彩蛋</div>
+      <p>如果你开了<strong>情绪 API</strong>，平时聊天会<strong>非常偶尔</strong>地触发一次小屋内容更新——ta 的屋子会悄悄跟着你们的对话变一点。</p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="item" id="i-creator">
+    <div class="item-head">
+      <div class="item-num">05</div>
+      <div class="item-title">
+        <h2>捏人 · 画风重构</h2>
+        <div class="sub">新画风、批量 PSD，还有一个手办柜。</div>
+      </div>
+    </div>
+    <p>
+      捏人系统<mark>换了画风</mark>——老画风的内置部件会<strong>折叠隐藏</strong>，默认用新画风；同时支持<strong>PSD 整批导入</strong>，做素材的效率高很多。
+    </p>
+    <p>
+      「神经链接」还新增了一个<mark>手办区</mark>，把同一个 char 在<strong>小小窝 / 彼方 / 520</strong> 等不同位置的 Q 版捏人形象<strong>统一整合</strong>到一处管理。
+    </p>
+    <div class="note">
+      <div class="label">给老用户的提醒</div>
+      <p>已经用<strong>旧画风</strong>捏好的角色会<strong>保留旧版画风</strong>，不会被动改。但如果你想再修改，就<strong>只能切到新画风</strong>了。<strong>自己上传图片</strong>捏人的用户不受影响。</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="item" id="i-groups">
+    <div class="item-head">
+      <div class="item-num">06</div>
+      <div class="item-title">
+        <h2>神经链接 · 角色分组 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">角色多了，终于能归类了。</div>
+      </div>
+    </div>
+    <p>
+      「神经链接」支持<mark>角色分组</mark>了：列表页可按组<strong>折叠</strong>，各个<strong>选角入口</strong>（聊天、见面、群聊等）也都能<strong>按组筛选</strong>，角色一多不再翻到头晕。
+    </p>
+  </section>
+
+  <!-- 7 -->
+  <section class="item" id="i-memory">
+    <div class="item-head">
+      <div class="item-num">07</div>
+      <div class="item-title">
+        <h2>记忆宫殿 · 升级 <span class="tag-pill">测试中</span></h2>
+        <div class="sub">给长期记忆立几块「门牌」。</div>
+      </div>
+    </div>
+    <p>
+      记忆宫殿这轮升级了内部机制：<mark>房间门牌</mark>（情景 → 语义固化的终点）、<strong>消化瘦身成状态机</strong>、以及<strong>回看窗口</strong>（对旧记忆的二次领悟）。
+    </p>
+    <p>
+      简单说：每个房间能提炼出一段<strong>长期、每次召回都会带上</strong>的记忆，你可以在<strong>「神经链接」的门牌处</strong>看到它。
+    </p>
+    <div class="note">
+      <div class="label">还在测试</div>
+      <p>门牌这部分目前<strong>还在测试</strong>，<strong>不影响向量记忆本身</strong>的正常使用——你原来的记忆该怎么用还怎么用。</p>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="item" id="i-ringtone">
+    <div class="item-head">
+      <div class="item-num">08</div>
+      <div class="item-title">
+        <h2>聊天 · 专属提示铃声 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">一听就知道是 ta 发来的。</div>
+      </div>
+    </div>
+    <p>
+      现在可以给角色设<mark>专属提示铃声</mark>了。位置：<span class="path">聊天 App → 顶部加号 → 第二页</span>。
+    </p>
+  </section>
+
+  <!-- 9 -->
+  <section class="item" id="i-storage">
+    <div class="item-head">
+      <div class="item-num">09</div>
+      <div class="item-title">
+        <h2>存储优化</h2>
+        <div class="sub">省配额，也省内存。</div>
+      </div>
+    </div>
+    <p>
+      桌面<strong>壁纸</strong>和<strong>小屋图片</strong>从 base64 改存为 <mark>Blob</mark>，明显省下 IndexedDB 配额、也不再占着 JS 内存。图多的用户会感觉更稳、更省空间。
+    </p>
+  </section>
+
+  <!-- 10 -->
+  <section class="item" id="i-fixes">
+    <div class="item-head">
+      <div class="item-num">10</div>
+      <div class="item-title">
+        <h2>稳定性 · 一堆散修</h2>
+        <div class="sub">看不见，但用着更顺。</div>
+      </div>
+    </div>
+    <p>
+      一大批<mark>iOS 安全区适配</mark>（刘海 / 底部横条让位）、<strong>导出 / 导入补漏</strong>，外加一堆散修——涉及<strong>主动消息、通话 / 键盘、查手机、音乐、active-msg</strong> 等处的小修复。零散但实在。
+    </p>
+  </section>
+
+  <div class="finale">
+    <div class="big">这次东西有点多，慢慢玩。</div>
+    <div class="small">有 Bug 或想法，欢迎反馈 —— 数据库暂时停止咕咕叫，专心听你说。</div>
+  </div>
+
+  <footer class="page">
+    <div class="ornament">· · ·</div>
+    SullyOS Changelog · 2026.07.10
+  </footer>
+
+</div>
+
+</body>
+</html>

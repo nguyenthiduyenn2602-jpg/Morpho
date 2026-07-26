@@ -1,0 +1,7 @@
+name = "sullyos-mcp-proxy"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# 可选：防白嫖密钥。部署后执行
+#   wrangler secret put PROXY_KEY
+# 然后在 SullyOS 设置的「代理密钥」里填同一个值。

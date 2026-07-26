@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>角色卡危险信息批量检测 · 本地测试版</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e222d; --line: #2a2f3c;
+    --txt: #e6e8ee; --muted: #9aa2b1; --accent: #7c9cff;
+    --danger: #ff5d6c; --danger-bg: #3a1620; --warn: #ffb454; --warn-bg: #3a2c14;
+    --ok: #46d19e; --ok-bg: #12291f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--txt); padding: 24px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 14px; padding: 30px 20px; text-align: center;
+    background: var(--panel); transition: .15s; cursor: pointer;
+  }
+  .drop.hover { border-color: var(--accent); background: var(--panel2); }
+  .drop b { color: var(--accent); }
+  textarea {
+    width: 100%; min-height: 90px; margin-top: 12px; background: var(--panel); color: var(--txt);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; resize: vertical;
+  }
+  .row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: var(--accent); color: #0b1020; border: 0; border-radius: 9px; padding: 9px 16px;
+    font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .stats { display: flex; gap: 10px; margin: 20px 0 8px; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 120px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .stat .n { font-size: 24px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .stat.danger .n { color: var(--danger); } .stat.warn .n { color: var(--warn); } .stat.ok .n { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; background: var(--panel2); }
+  tr.data { cursor: pointer; }
+  tr.data:hover { background: var(--panel2); }
+  tr.data.danger td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+  tr.data.warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+  tr.data.ok td:first-child { box-shadow: inset 3px 0 0 var(--ok); }
+  .fname { font: 12px ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
+  .num { text-align: center; font-weight: 600; }
+  .num.hit { color: var(--danger); }
+  .detail td { background: #12141c; padding: 0; }
+  .detailInner { padding: 4px 16px 14px; }
+  .sec { margin: 12px 0; }
+  .sec > h3 { font-size: 13px; margin: 8px 0 4px; }
+  .item { padding: 7px 0; border-bottom: 1px dashed var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .path { font: 12px ui-monospace, Menlo, Consolas, monospace; color: var(--accent); word-break: break-all; }
+  .val { font: 12px ui-monospace, Menlo, Consolas, monospace; color: #ffd7dc; word-break: break-all; }
+  .why { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px; margin: 2px 6px 2px 0; }
+  .pill.red { background: var(--danger-bg); color: #ffb3bc; border: 1px solid var(--danger); }
+  .pill.yellow { background: var(--warn-bg); color: #ffd79a; border: 1px solid var(--warn); }
+  .pill.green { background: var(--ok-bg); color: #b0efd6; border: 1px solid var(--ok); }
+  .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+  .filterbar { margin: 12px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filterbar input { background: var(--panel); border: 1px solid var(--line); color: var(--txt); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+  .chip { font-size: 12px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; }
+  .chip.active { border-color: var(--accent); color: var(--accent); }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 24px; line-height: 1.7; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🕵️ 角色卡危险信息批量检测 <span class="badge">本地测试版 · 不接入正式版</span></h1>
+  <div class="sub">一次拖入 / 选择<b>多张</b>角色卡 JSON（或整个文件夹），批量检测里面是否带 API 密钥等危险信息。全程在本地浏览器运行，不上传任何数据。</div>
+
+  <div class="drop" id="drop">
+    把 <b>多张角色卡 .json</b>（或一个文件夹）拖到这里，或点击 <b>选择文件</b>
+    <input type="file" id="file" accept=".json,application/json" multiple hidden />
+    <input type="file" id="dir" webkitdirectory directory multiple hidden />
+    <div style="margin-top:10px"><button class="ghost" id="pickFiles" type="button">选择多个文件</button> <button class="ghost" id="pickDir" type="button">选择文件夹</button></div>
+  </div>
+  <textarea id="paste" placeholder="…或者粘贴单张角色卡 JSON（批量请用上面拖入 / 选择文件）"></textarea>
+  <div class="row">
+    <button id="scan">检测粘贴内容</button>
+    <button class="ghost" id="clear">清空</button>
+  </div>
+
+  <div id="out"></div>
+
+  <div class="foot">
+    检测逻辑：<br>
+    1. <b>深度递归扫描</b>整份 JSON——字段名像密钥（apiKey / secret / token / authorization / bearer / password / anonKey …）或字段值像密钥（<code>sk-…</code>、<code>Bearer …</code>、JWT、长十六进制/base64）的一律标红，新增字段也覆盖。<br>
+    2. 按已知清单核对<b>美化 / 语言 / 运行时状态</b>字段是否存在。<br>
+    密钥值默认打码，只露头尾几位供比对。点表格里任意一行可展开该卡详情；可按结论筛选、按文件名搜索、导出 CSV。
+  </div>
+</div>
+
+<script>
+// ————— 已知字段清单（与 utils/characterCard.ts 的 CARD_STRIPPED_FIELDS 对应）—————
+const CREDENTIAL_CARRIERS = {
+  emotionConfig:   '情绪 buff API（emotionConfig.api）',
+  embeddingConfig: '记忆宫殿向量 embedding API',
+  proactiveConfig: '主动消息 副 API（secondaryApi）',
+  activeMsg2Config:'主动消息2 副 API（secondaryApi）',
+};
+const BEAUTIFY = ['embeddedTheme','bubbleStyle','chatFineTune','chromeCustomCss','chatSound','chatSoundBound','chatBackground','dateBackground','thinkingChainStyle','thinkingChainCustomColors','thinkingChainCustomPrompt'];
+const LANGUAGE = ['chatVoiceLang','dateVoiceLang','callVoiceLang','chatVoiceEnabled','dateVoiceEnabled'];
+const RUNTIME  = ['activeBuffs','buffInjection','memoryPalaceInjection','savedDateState','savedRoomState','lastRoomDate','phoneState','dreamLogs','specialMomentRecords','vrState'];
+
+const SECRET_KEY_NAME = /(api[_-]?key|secret|token|authorization|auth|bearer|password|passwd|pwd|access[_-]?key|private[_-]?key|anon[_-]?key|credential|apikey)/i;
+const SECRET_VALUE = [
+  { re: /\bsk-[A-Za-z0-9_\-]{12,}/, label: 'OpenAI 风格密钥 sk-…' },
+  { re: /\bBearer\s+[A-Za-z0-9._\-]{12,}/i, label: 'Bearer 令牌' },
+  { re: /\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{6,}/, label: 'JWT' },
+  { re: /\b[A-Za-z0-9]{32,}\b/, label: '疑似长密钥 / 哈希（32+ 位）' },
+];
+const VALUE_WHITELIST_KEYS = /^(id|systemPrompt|description|worldview|content|summary|memoryText|impression|avatar|src|prompt|notes|bio|title|label|text)$/i;
+
+function mask(v) {
+  if (typeof v !== 'string') v = String(v);
+  if (v.length <= 8) return '•'.repeat(v.length);
+  return v.slice(0, 4) + '••••••' + v.slice(-3) + ' (' + v.length + '字)';
+}
+function looksLikeSecretValue(v) {
+  if (typeof v !== 'string' || v.length < 12) return null;
+  if (v.startsWith('data:')) return null;
+  if (/^https?:\/\//.test(v) && !/[?&](key|token|secret)=/i.test(v)) return null;
+  for (const p of SECRET_VALUE) { if (p.re.test(v)) return p.label; }
+  return null;
+}
+function deepScan(obj, path, hits) {
+  if (obj === null || typeof obj !== 'object') return;
+  for (const [k, v] of Object.entries(obj)) {
+    const p = path ? path + '.' + k : k;
+    const isSecretName = SECRET_KEY_NAME.test(k);
+    if (isSecretName && v != null && v !== '' && typeof v !== 'object') {
+      hits.push({ path: p, value: mask(v), why: '字段名疑似凭据（' + k + '）' });
+    } else if (typeof v === 'string' && !VALUE_WHITELIST_KEYS.test(k)) {
+      const lbl = looksLikeSecretValue(v);
+      if (lbl) hits.push({ path: p, value: mask(v), why: '字段值疑似' + lbl });
+    }
+    if (v && typeof v === 'object') deepScan(v, p, hits);
+  }
+}
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// 分析单张卡 → 结构化结果
+function analyze(data) {
+  const secretHits = []; deepScan(data, '', secretHits);
+  const seen = new Set(); const secrets = secretHits.filter(h => !seen.has(h.path) && seen.add(h.path));
+  const carriers = [];
+  for (const [f, desc] of Object.entries(CREDENTIAL_CARRIERS)) if (data && data[f] != null) carriers.push({ field: f, desc });
+  const present = (arr) => arr.filter(f => data && data[f] != null);
+  const beaut = present(BEAUTIFY), lang = present(LANGUAGE), runtime = present(RUNTIME);
+  const level = secrets.length ? 'danger' : (carriers.length || beaut.length || lang.length || runtime.length ? 'warn' : 'ok');
+  return {
+    isCard: !!(data && data.type === 'sully_character_card'),
+    name: (data && data.name) ? String(data.name) : '(无名)',
+    secrets, carriers, beaut, lang, runtime, level,
+  };
+}
+
+// ————— 批量状态 —————
+let RESULTS = []; // [{filename, result?, error?}]
+let FILTER = 'all';
+let SEARCH = '';
+let SORT = { key: 'level', dir: 1 };
+
+const LEVEL_RANK = { danger: 0, warn: 1, ok: 2, error: 3 };
+const LEVEL_ICON = { danger: '🔴', warn: '🟡', ok: '🟢', error: '❌' };
+
+function readFiles(fileList) {
+  const files = Array.from(fileList).filter(f => /\.json$/i.test(f.name) || f.type === 'application/json');
+  if (!files.length) { document.getElementById('out').innerHTML = `<div class="stat warn" style="padding:16px">没找到 .json 文件</div>`; return; }
+  RESULTS = [];
+  let done = 0;
+  files.forEach((f, i) => {
+    const r = new FileReader();
+    r.onload = ev => {
+      let entry = { filename: f.webkitRelativePath || f.name };
+      try { entry.result = analyze(JSON.parse(ev.target.result)); }
+      catch (e) { entry.error = e.message; }
+      RESULTS[i] = entry;
+      if (++done === files.length) { RESULTS = RESULTS.filter(Boolean); renderBatch(); }
+    };
+    r.readAsText(f);
+  });
+}
+
+function levelOf(entry) { return entry.error ? 'error' : entry.result.level; }
+
+function renderBatch() {
+  const out = document.getElementById('out');
+  if (!RESULTS.length) { out.innerHTML = ''; return; }
+  const total = RESULTS.length;
+  const c = { danger:0, warn:0, ok:0, error:0 };
+  RESULTS.forEach(e => c[levelOf(e)]++);
+
+  let rows = RESULTS.slice();
+  if (FILTER !== 'all') rows = rows.filter(e => levelOf(e) === FILTER);
+  if (SEARCH) rows = rows.filter(e => (e.filename + ' ' + (e.result?.name||'')).toLowerCase().includes(SEARCH.toLowerCase()));
+  rows.sort((a, b) => {
+    let av, bv;
+    if (SORT.key === 'level') { av = LEVEL_RANK[levelOf(a)]; bv = LEVEL_RANK[levelOf(b)]; }
+    else if (SORT.key === 'secrets') { av = a.result?.secrets.length||0; bv = b.result?.secrets.length||0; }
+    else if (SORT.key === 'name') { av = a.result?.name||''; bv = b.result?.name||''; }
+    else { av = a.filename; bv = b.filename; }
+    return (av < bv ? -1 : av > bv ? 1 : 0) * SORT.dir;
+  });
+
+  let html = `<div class="stats">
+    <div class="stat"><div class="n">${total}</div><div class="l">扫描总数</div></div>
+    <div class="stat danger"><div class="n">${c.danger}</div><div class="l">🔴 带密钥（危险）</div></div>
+    <div class="stat warn"><div class="n">${c.warn}</div><div class="l">🟡 带隐私字段</div></div>
+    <div class="stat ok"><div class="n">${c.ok}</div><div class="l">🟢 干净</div></div>
+    ${c.error?`<div class="stat"><div class="n">${c.error}</div><div class="l">❌ 解析失败</div></div>`:''}
+  </div>`;
+
+  html += `<div class="filterbar">
+    <span class="chip ${FILTER==='all'?'active':''}" data-f="all">全部 ${total}</span>
+    <span class="chip ${FILTER==='danger'?'active':''}" data-f="danger">🔴 ${c.danger}</span>
+    <span class="chip ${FILTER==='warn'?'active':''}" data-f="warn">🟡 ${c.warn}</span>
+    <span class="chip ${FILTER==='ok'?'active':''}" data-f="ok">🟢 ${c.ok}</span>
+    ${c.error?`<span class="chip ${FILTER==='error'?'active':''}" data-f="error">❌ ${c.error}</span>`:''}
+    <input id="search" placeholder="搜文件名 / 角色名" value="${esc(SEARCH)}" />
+    <button class="ghost" id="csv">导出 CSV 报告</button>
+  </div>`;
+
+  html += `<table><thead><tr>
+    <th data-s="level">结论</th>
+    <th data-s="filename">文件名</th>
+    <th data-s="name">角色名</th>
+    <th data-s="secrets" class="num">密钥</th>
+    <th class="num">美化</th><th class="num">语言</th><th class="num">运行时</th>
+  </tr></thead><tbody>`;
+
+  if (!rows.length) html += `<tr><td colspan="7" class="empty">没有符合条件的结果</td></tr>`;
+  rows.forEach((e) => {
+    const lv = levelOf(e);
+    const idx = RESULTS.indexOf(e);
+    if (e.error) {
+      html += `<tr class="data ${lv}" data-idx="${idx}"><td>❌</td><td class="fname">${esc(e.filename)}</td><td colspan="5" class="why">JSON 解析失败：${esc(e.error)}</td></tr>`;
+      return;
+    }
+    const r = e.result;
+    html += `<tr class="data ${lv}" data-idx="${idx}">
+      <td>${LEVEL_ICON[lv]}</td>
+      <td class="fname">${esc(e.filename)}</td>
+      <td>${esc(r.name)}${r.isCard?'':' <span class="pill yellow">非角色卡</span>'}</td>
+      <td class="num ${r.secrets.length?'hit':''}">${r.secrets.length||'·'}</td>
+      <td class="num">${r.beaut.length||'·'}</td>
+      <td class="num">${r.lang.length||'·'}</td>
+      <td class="num">${r.runtime.length||'·'}</td>
+    </tr>
+    <tr class="detail" id="d${idx}" style="display:none"><td colspan="7"><div class="detailInner">${detailHTML(r)}</div></td></tr>`;
+  });
+  html += `</tbody></table>`;
+  out.innerHTML = html;
+
+  // 绑定事件
+  out.querySelectorAll('.chip').forEach(ch => ch.onclick = () => { FILTER = ch.dataset.f; renderBatch(); });
+  out.querySelectorAll('th[data-s]').forEach(th => th.onclick = () => {
+    const k = th.dataset.s; SORT.dir = (SORT.key === k ? -SORT.dir : 1); SORT.key = k; renderBatch();
+  });
+  out.querySelectorAll('tr.data').forEach(tr => tr.onclick = () => {
+    const d = document.getElementById('d' + tr.dataset.idx);
+    if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+  });
+  const s = document.getElementById('search');
+  if (s) s.oninput = () => { SEARCH = s.value; const pos = s.selectionStart; renderBatch(); const s2 = document.getElementById('search'); if (s2){ s2.focus(); s2.setSelectionRange(pos,pos);} };
+  const csv = document.getElementById('csv'); if (csv) csv.onclick = exportCSV;
+}
+
+function detailHTML(r) {
+  let h = '';
+  h += `<div class="sec"><h3>🔑 密钥 / 凭据（深度扫描）</h3>`;
+  if (r.secrets.length) r.secrets.forEach(x => h += `<div class="item"><div class="path">${esc(x.path)}</div><div class="val">${esc(x.value)}</div><div class="why">${esc(x.why)}</div></div>`);
+  else h += `<div class="empty">未扫到明文密钥值 ✅</div>`;
+  h += `</div>`;
+  if (r.carriers.length) {
+    h += `<div class="sec"><h3>⚙️ 含密钥槽位的配置对象</h3>`;
+    r.carriers.forEach(c => h += `<div class="item"><span class="pill red">${esc(c.field)}</span> ${esc(c.desc)}<div class="why">内嵌 apiKey 槽位——即使当前为空也属该剥离的凭据载体</div></div>`);
+    h += `</div>`;
+  }
+  const list = (title, fields) => fields.length ? `<div class="sec"><h3>${title}（${fields.length}）</h3><div>${fields.map(f=>`<span class="pill yellow">${esc(f)}</span>`).join('')}</div></div>` : '';
+  h += list('🎨 美化字段', r.beaut);
+  h += list('🗣️ 语言 / 语音偏好', r.lang);
+  h += list('⏱️ 运行时状态残留', r.runtime);
+  return h;
+}
+
+function exportCSV() {
+  const head = ['文件名','结论','角色名','是否合法角色卡','密钥数','密钥路径','美化字段数','语言字段数','运行时字段数'];
+  const lines = [head.join(',')];
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  RESULTS.forEach(e => {
+    if (e.error) { lines.push([q(e.filename), q('解析失败'), '', '', '', q(e.error), '', '', ''].join(',')); return; }
+    const r = e.result;
+    lines.push([
+      q(e.filename), q({danger:'危险',warn:'隐私字段',ok:'干净'}[r.level]), q(r.name), q(r.isCard?'是':'否'),
+      r.secrets.length, q(r.secrets.map(s=>s.path).join(' | ')), r.beaut.length, r.lang.length, r.runtime.length,
+    ].join(','));
+  });
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'card-scan-report.csv'; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// 单张粘贴
+function runSingle(text) {
+  const out = document.getElementById('out');
+  if (!text || !text.trim()) { out.innerHTML = `<div class="stat warn" style="padding:16px">请先粘贴角色卡 JSON，或用上方拖入 / 选择文件做批量</div>`; return; }
+  let data; try { data = JSON.parse(text); }
+  catch (e) { out.innerHTML = `<div class="stat danger" style="padding:16px">❌ JSON 解析失败：${esc(e.message)}</div>`; return; }
+  RESULTS = [{ filename: '(粘贴内容)', result: analyze(data) }];
+  FILTER='all'; SEARCH=''; renderBatch();
+}
+
+// ————— 交互 —————
+const drop = document.getElementById('drop');
+document.getElementById('pickFiles').addEventListener('click', e => { e.stopPropagation(); document.getElementById('file').click(); });
+document.getElementById('pickDir').addEventListener('click', e => { e.stopPropagation(); document.getElementById('dir').click(); });
+drop.addEventListener('click', () => document.getElementById('file').click());
+document.getElementById('file').addEventListener('change', e => readFiles(e.target.files));
+document.getElementById('dir').addEventListener('change', e => readFiles(e.target.files));
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hover'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hover'); }));
+drop.addEventListener('drop', e => { if (e.dataTransfer.files.length) readFiles(e.dataTransfer.files); });
+document.getElementById('scan').addEventListener('click', () => runSingle(document.getElementById('paste').value));
+document.getElementById('clear').addEventListener('click', () => { document.getElementById('paste').value=''; RESULTS=[]; document.getElementById('out').innerHTML=''; });
+</script>
+</body>
+</html>

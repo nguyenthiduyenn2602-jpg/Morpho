@@ -1,0 +1,24 @@
+name = "sullyos-loyal-recruitment"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# 忠实用户一次性招募 —— 独立于邮局和彼方活动的第三个 Worker。
+#
+# 部署：
+#   1) wrangler d1 create sullyos-loyal-recruitment
+#   2) 将 database_id 填入下方 [[d1_databases]]
+#   3) wrangler secret put GROUP_PASSWORD
+#   4) wrangler secret put ADMIN_TOKEN
+#   5) wrangler secret put RECRUIT_IP_SALT
+#   6) wrangler deploy
+#
+# 建议把 noir2.cc.cd/recruit/* 单独路由到本 Worker。
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sullyos-loyal-recruitment"
+database_id = "REPLACE_WITH_YOUR_RECRUITMENT_D1_ID"
+
+[vars]
+GROUP_ID = "892128017"
+RATE_SUBMITS = "20"

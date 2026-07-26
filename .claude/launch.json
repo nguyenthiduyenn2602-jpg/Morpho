@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sullyos-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "sullyos-dev-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev", "--port", "5199", "--strictPort"],
+      "port": 5199,
+      "autoPort": false
+    },
+    {
+      "name": "sullyos-dev-alt2",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev", "--port", "5211", "--strictPort"],
+      "port": 5211,
+      "autoPort": false
+    }
+  ]
+}

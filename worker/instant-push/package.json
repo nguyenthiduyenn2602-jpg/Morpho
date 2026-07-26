@@ -1,0 +1,17 @@
+{
+  "name": "sullyos-instant-push-worker",
+  "version": "0.9.2",
+  "private": true,
+  "type": "module",
+  "description": "SullyOS Instant Push — Cloudflare Worker (deploy-from-git entry, agentic-loop enabled).",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@rei-standard/amsg-instant": "0.9.1",
+    "@rei-standard/amsg-shared": "0.2.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.78.0"
+  }
+}
