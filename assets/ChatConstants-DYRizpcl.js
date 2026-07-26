@@ -92,4 +92,4 @@ const e={default:{id:"default",name:"Indigo",type:"preset",user:{textColor:"#fff
     - 就像你在写日记一样，直接写内容。
 
 ### 待处理的聊天日志 (Chat Logs)
-\${rawLog}`}];export{r as D,e as P,a};
+\${rawLog}`}];export{a as D,e as P,r as a};
