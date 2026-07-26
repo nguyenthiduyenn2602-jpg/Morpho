@@ -1,0 +1,91 @@
+{
+  "schema": "sullyos.room-template.v1",
+  "name": "蓝色系简约风",
+  "description": "",
+  "exportedAt": "2026-07-08T14:32:25.902Z",
+  "room": {
+    "wallImage": "assets/wall.png",
+    "floorImage": "assets/floor.png"
+  },
+  "items": [
+    {
+      "name": "地毯",
+      "type": "rug",
+      "image": "assets/item-01.png",
+      "x": 64.28570189692203,
+      "y": 93.47035698012459,
+      "scale": 3.15,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "茶几",
+      "type": "furniture",
+      "image": "assets/item-02.png",
+      "x": 63.31951563923313,
+      "y": 91.12155651217672,
+      "scale": 1.8,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "窗台",
+      "type": "furniture",
+      "image": "assets/item-03.png",
+      "x": 27.947039810418588,
+      "y": 65.38504905290281,
+      "scale": 2.8,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "矮柜",
+      "type": "furniture",
+      "image": "assets/item-04.png",
+      "x": 21.442830163224105,
+      "y": 89.98752513127107,
+      "scale": 1,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "电脑桌",
+      "type": "furniture",
+      "image": "assets/item-05.png",
+      "x": 74.00279610809802,
+      "y": 71.43031927368449,
+      "scale": 2.4,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "置物架",
+      "type": "furniture",
+      "image": "assets/item-06.png",
+      "x": 72.13193321555264,
+      "y": 50.57101896064043,
+      "scale": 1.55,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "沙发",
+      "type": "furniture",
+      "image": "assets/item-07.png",
+      "x": 30.559998424388436,
+      "y": 83.92290067910159,
+      "scale": 2.75,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    }
+  ],
+  "builtIn": true,
+  "id": "blue-minimal"
+}

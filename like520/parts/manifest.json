@@ -1,0 +1,639 @@
+[
+  {
+    "categoryKey": "back2",
+    "id": "back2_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/back2_01.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/back2_02.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_03",
+    "name": "03",
+    "tintable": true,
+    "src": "parts/back2_03.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/back2_04.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/back2_05.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_06",
+    "name": "06",
+    "tintable": true,
+    "src": "parts/back2_06.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_07",
+    "name": "07",
+    "tintable": true,
+    "src": "parts/back2_07.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_08",
+    "name": "08",
+    "tintable": true,
+    "src": "parts/back2_08.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_09",
+    "name": "09",
+    "tintable": true,
+    "src": "parts/back2_09.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_010",
+    "name": "010",
+    "tintable": true,
+    "src": "parts/back2_010.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_011",
+    "name": "011",
+    "tintable": true,
+    "src": "parts/back2_011.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_012",
+    "name": "012",
+    "tintable": true,
+    "src": "parts/back2_012.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_013",
+    "name": "013",
+    "tintable": true,
+    "src": "parts/back2_013.png"
+  },
+  {
+    "categoryKey": "back2",
+    "id": "back2_014",
+    "name": "014",
+    "tintable": true,
+    "src": "parts/back2_014.png"
+  },
+  {
+    "categoryKey": "back1",
+    "id": "back1_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/back1_01.png"
+  },
+  {
+    "categoryKey": "back1",
+    "id": "back1_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/back1_02.png"
+  },
+  {
+    "categoryKey": "back1",
+    "id": "back1_03",
+    "name": "03",
+    "tintable": true,
+    "src": "parts/back1_03.png"
+  },
+  {
+    "categoryKey": "back1",
+    "id": "back1_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/back1_04.png"
+  },
+  {
+    "categoryKey": "skin",
+    "id": "skin_04",
+    "name": "04",
+    "tintable": false,
+    "src": "parts/skin_04.png"
+  },
+  {
+    "categoryKey": "skin",
+    "id": "skin_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/skin_03.png"
+  },
+  {
+    "categoryKey": "skin",
+    "id": "skin_02",
+    "name": "02",
+    "tintable": false,
+    "src": "parts/skin_02.png"
+  },
+  {
+    "categoryKey": "skin",
+    "id": "skin_01",
+    "name": "01",
+    "tintable": false,
+    "src": "parts/skin_01.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_01",
+    "name": "01",
+    "tintable": false,
+    "src": "parts/outfit_01.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_02",
+    "name": "02",
+    "tintable": false,
+    "src": "parts/outfit_02.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/outfit_03.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_04",
+    "name": "04",
+    "tintable": false,
+    "src": "parts/outfit_04.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_05",
+    "name": "05",
+    "tintable": false,
+    "src": "parts/outfit_05.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_06",
+    "name": "06",
+    "tintable": true,
+    "src": "parts/outfit_06.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_07",
+    "name": "07",
+    "tintable": true,
+    "src": "parts/outfit_07.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_08",
+    "name": "08",
+    "tintable": true,
+    "src": "parts/outfit_08.png"
+  },
+  {
+    "categoryKey": "outfit",
+    "id": "outfit_09",
+    "name": "09",
+    "tintable": false,
+    "src": "parts/outfit_09.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_01",
+    "name": "01",
+    "tintable": false,
+    "src": "parts/outer_01.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/outer_02.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/outer_03.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/outer_04.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/outer_05.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_06",
+    "name": "06",
+    "tintable": true,
+    "src": "parts/outer_06.png"
+  },
+  {
+    "categoryKey": "outer",
+    "id": "outer_07",
+    "name": "07",
+    "tintable": true,
+    "src": "parts/outer_07.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_01",
+    "name": "01",
+    "tintable": false,
+    "src": "parts/facemark_01.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_02",
+    "name": "02",
+    "tintable": false,
+    "src": "parts/facemark_02.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/facemark_03.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_04",
+    "name": "04",
+    "tintable": false,
+    "src": "parts/facemark_04.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_05",
+    "name": "05",
+    "tintable": false,
+    "src": "parts/facemark_05.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_06",
+    "name": "06",
+    "tintable": false,
+    "src": "parts/facemark_06.png"
+  },
+  {
+    "categoryKey": "facemark",
+    "id": "facemark_07",
+    "name": "07",
+    "tintable": false,
+    "src": "parts/facemark_07.png"
+  },
+  {
+    "categoryKey": "earhair",
+    "id": "earhair_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/earhair_01.png"
+  },
+  {
+    "categoryKey": "earhair",
+    "id": "earhair_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/earhair_02.png"
+  },
+  {
+    "categoryKey": "earhair",
+    "id": "earhair_03",
+    "name": "03",
+    "tintable": true,
+    "src": "parts/earhair_03.png"
+  },
+  {
+    "categoryKey": "earhair",
+    "id": "earhair_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/earhair_04.png"
+  },
+  {
+    "categoryKey": "earhair",
+    "id": "earhair_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/earhair_05.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/fronthair_01.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/fronthair_02.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_03",
+    "name": "03",
+    "tintable": true,
+    "src": "parts/fronthair_03.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/fronthair_04.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/fronthair_05.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_06",
+    "name": "06",
+    "tintable": true,
+    "src": "parts/fronthair_06.png"
+  },
+  {
+    "categoryKey": "fronthair",
+    "id": "fronthair_07",
+    "name": "07",
+    "tintable": true,
+    "src": "parts/fronthair_07.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/eyes_01.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/eyes_02.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_03",
+    "name": "03",
+    "tintable": true,
+    "src": "parts/eyes_03.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/eyes_04.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/eyes_05.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_06",
+    "name": "06",
+    "tintable": true,
+    "src": "parts/eyes_06.png"
+  },
+  {
+    "categoryKey": "eyes",
+    "id": "eyes_07",
+    "name": "07",
+    "tintable": true,
+    "src": "parts/eyes_07.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_01",
+    "name": "01",
+    "tintable": false,
+    "src": "parts/mouth_01.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_02",
+    "name": "02",
+    "tintable": false,
+    "src": "parts/mouth_02.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/mouth_03.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_04",
+    "name": "04",
+    "tintable": false,
+    "src": "parts/mouth_04.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_05",
+    "name": "05",
+    "tintable": false,
+    "src": "parts/mouth_05.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_06",
+    "name": "06",
+    "tintable": false,
+    "src": "parts/mouth_06.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_07",
+    "name": "07",
+    "tintable": false,
+    "src": "parts/mouth_07.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_08",
+    "name": "08",
+    "tintable": false,
+    "src": "parts/mouth_08.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_09",
+    "name": "09",
+    "tintable": false,
+    "src": "parts/mouth_09.png"
+  },
+  {
+    "categoryKey": "mouth",
+    "id": "mouth_10",
+    "name": "10",
+    "tintable": false,
+    "src": "parts/mouth_10.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_01",
+    "name": "01",
+    "tintable": true,
+    "src": "parts/decor_01.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_02",
+    "name": "02",
+    "tintable": true,
+    "src": "parts/decor_02.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_03",
+    "name": "03",
+    "tintable": false,
+    "src": "parts/decor_03.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_04",
+    "name": "04",
+    "tintable": true,
+    "src": "parts/decor_04.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_05",
+    "name": "05",
+    "tintable": true,
+    "src": "parts/decor_05.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_06",
+    "name": "06",
+    "tintable": false,
+    "src": "parts/decor_06.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_07",
+    "name": "07",
+    "tintable": false,
+    "src": "parts/decor_07.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_08",
+    "name": "08",
+    "tintable": true,
+    "src": "parts/decor_08.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_09",
+    "name": "09",
+    "tintable": true,
+    "src": "parts/decor_09.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_010",
+    "name": "010",
+    "tintable": true,
+    "src": "parts/decor_010.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_011",
+    "name": "011",
+    "tintable": true,
+    "src": "parts/decor_011.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_012",
+    "name": "012",
+    "tintable": true,
+    "src": "parts/decor_012.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_013",
+    "name": "013",
+    "tintable": false,
+    "src": "parts/decor_013.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_014",
+    "name": "014",
+    "tintable": true,
+    "src": "parts/decor_014.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_015",
+    "name": "015",
+    "tintable": false,
+    "src": "parts/decor_015.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_016",
+    "name": "016",
+    "tintable": false,
+    "src": "parts/decor_016.png"
+  },
+  {
+    "categoryKey": "decor",
+    "id": "decor_017",
+    "name": "017",
+    "tintable": true,
+    "src": "parts/decor_017.png"
+  }
+]

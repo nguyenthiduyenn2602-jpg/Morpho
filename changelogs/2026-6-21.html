@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2026 年 6 月 21 日更新说明 · 查手机翻新 / 人格模拟 / 手游风</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --ink-soft: #3d3d3d;
+    --ink-mute: #6b6b6b;
+    --ink-faint: #9a9a9a;
+    --paper: #f4f1fb;
+    --paper-warm: #e9e3f4;
+    --rule: #d8cfe8;
+    --accent: #6b4aa0;
+    --accent-soft: #9a7ace;
+    --highlight: #e4d7f5;
+    --note-bg: #e9e3f4;
+    --tip-bg: #e3eae8;
+    --warn-bg: #f4e2e8;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --serif: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+    --cn: 'Noto Serif SC', 'Fraunces', serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--cn);
+    font-size: 17px;
+    line-height: 1.85;
+    font-feature-settings: "palt" 1, "kern" 1;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(154, 122, 206, 0.06) 0%, transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(107, 74, 160, 0.05) 0%, transparent 40%);
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+  }
+
+  header.page {
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 48px;
+    margin-bottom: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .eyebrow::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
+
+  h1 {
+    font-family: var(--cn);
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1.25;
+    margin: 0 0 20px;
+    letter-spacing: -0.01em;
+  }
+
+  h1 .en {
+    display: block;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 22px;
+    color: var(--ink-mute);
+    margin-top: 12px;
+    letter-spacing: 0;
+  }
+
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 600px; margin-top: 28px; line-height: 1.75; }
+
+  .meta { display: flex; gap: 32px; margin-top: 36px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); letter-spacing: 0.05em; flex-wrap: wrap; }
+  .meta span strong { color: var(--ink-soft); font-weight: 500; margin-right: 8px; }
+
+  .overview { background: white; border: 1px solid var(--rule); border-radius: 4px; padding: 24px 28px; margin-bottom: 64px; }
+  .overview h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-mute); margin: 0 0 14px; font-weight: 500; }
+  .overview ol { margin: 0; padding-left: 0; list-style: none; counter-reset: ov; }
+  .overview li { counter-increment: ov; padding: 6px 0 6px 36px; position: relative; color: var(--ink-soft); font-size: 15px; }
+  .overview li::before { content: counter(ov, decimal-leading-zero); position: absolute; left: 0; top: 6px; font-family: var(--serif); font-style: italic; color: var(--accent); font-weight: 600; }
+
+  .item { margin-bottom: 56px; scroll-margin-top: 40px; }
+  .item-head { display: flex; align-items: baseline; gap: 20px; margin-bottom: 14px; padding-bottom: 18px; border-bottom: 1px dashed var(--rule); }
+  .item-num { font-family: var(--serif); font-style: italic; font-weight: 600; font-size: 52px; line-height: 1; color: var(--accent); flex-shrink: 0; }
+  .item-title h2 { font-family: var(--cn); font-weight: 600; font-size: 26px; line-height: 1.3; margin: 0 0 6px; color: var(--ink); }
+  .item-title .sub { font-family: var(--serif); font-style: italic; color: var(--ink-mute); font-size: 15px; }
+
+  .tag-pill { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); background: var(--paper-warm); border: 1px solid var(--rule); padding: 2px 10px; border-radius: 999px; margin-left: 4px; vertical-align: middle; }
+
+  p { margin: 0 0 18px; color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  em { font-family: var(--serif); font-style: italic; color: var(--accent); font-weight: 500; }
+
+  code, .kbd { font-family: var(--mono); font-size: 0.88em; background: var(--paper-warm); padding: 2px 7px; border-radius: 3px; color: var(--accent); border: 1px solid var(--rule); }
+  mark { background: linear-gradient(180deg, transparent 55%, var(--highlight) 55%); color: var(--ink); padding: 0 2px; }
+
+  .path { font-family: var(--mono); font-size: 13px; background: var(--paper-warm); padding: 3px 10px; border-radius: 3px; color: var(--ink); border: 1px solid var(--rule); white-space: nowrap; display: inline-block; }
+
+  ul.clean { list-style: none; padding: 0; margin: 14px 0; }
+  ul.clean li { padding: 5px 0 5px 22px; position: relative; color: var(--ink-soft); font-size: 15.5px; }
+  ul.clean li::before { content: '—'; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+
+  .note { background: var(--note-bg); border-left: 3px solid var(--ink-mute); padding: 18px 22px; border-radius: 3px; margin: 22px 0; }
+  .note .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 6px; font-weight: 500; }
+  .note p:last-child { margin-bottom: 0; }
+
+  .tip { background: var(--tip-bg); border-radius: 3px; padding: 18px 22px; margin: 22px 0; border: 1px dashed #87a89d; }
+  .tip .label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: #4a6a5d; margin-bottom: 6px; font-weight: 600; }
+  .tip p:last-child { margin-bottom: 0; }
+
+  ol.steps { list-style: none; padding-left: 0; margin: 18px 0; counter-reset: stp; }
+  ol.steps > li { counter-increment: stp; padding: 10px 0 10px 44px; position: relative; color: var(--ink-soft); font-size: 15.5px; line-height: 1.75; }
+  ol.steps > li::before { content: counter(stp); position: absolute; left: 0; top: 8px; width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; border: 1px solid var(--accent); color: var(--accent); font-family: var(--serif); font-weight: 600; font-size: 14px; background: white; }
+
+  .finale { margin-top: 48px; background: white; border: 1px solid var(--rule); border-radius: 4px; padding: 30px 34px; text-align: center; }
+  .finale .big { font-family: var(--cn); font-size: 22px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+  .finale .small { color: var(--ink-mute); font-size: 15px; margin-bottom: 0; }
+
+  footer.page { margin-top: 72px; padding-top: 32px; border-top: 1px solid var(--rule); text-align: center; font-family: var(--serif); font-style: italic; color: var(--ink-faint); font-size: 15px; }
+  footer.page .ornament { font-size: 20px; color: var(--accent); margin-bottom: 12px; letter-spacing: 8px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 32px; }
+    h1 .en { font-size: 17px; }
+    .item-head { flex-direction: column; gap: 4px; align-items: flex-start; }
+    .item-num { font-size: 42px; }
+    .item-title h2 { font-size: 22px; }
+    .meta { flex-direction: column; gap: 6px; }
+    .finale { padding: 22px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="page">
+    <div class="eyebrow">June 21, 2026 · Feature Update</div>
+    <h1>
+      「查手机」翻新 · 人格模拟
+      <span class="en">Peek into a character's screen-life — and dress your phone like a mobile game.</span>
+    </h1>
+    <p class="lede">
+      「查手机」App 整体翻新，UI 重做，并新增了<em>「人格模拟」</em>：让你点一场角色的 <strong>Screenlife</strong> 演出，看 ta 屏幕里的一天。生成的内容要不要写回角色那边，现在你说了算。外观这边也新增了<em>手游风</em>皮肤，一键把界面换成手游既视感。另外，配了小红书 Lite 的朋友，现在能直接把帖子分享给角色了。
+    </p>
+    <div class="meta">
+      <span><strong>主题</strong>查手机 · 人格模拟 · 手游风</span>
+      <span><strong>类型</strong>功能更新</span>
+      <span><strong>阅读</strong>约 2 分钟</span>
+    </div>
+  </header>
+
+  <div class="overview">
+    <h4>本次更新概览</h4>
+    <ol>
+      <li><strong>「查手机」App 翻新</strong>：界面 UI 整体重做，更顺手好看。</li>
+      <li>新增 <strong>「人格模拟」</strong>：可指定一场角色的 <strong>Screenlife</strong> 演出，窥见 ta 屏幕里的一天。</li>
+      <li>「查手机」<strong>右下角设置</strong>新增开关：自己决定要不要把生成内容<strong>发送给角色</strong>。</li>
+      <li><strong>外观</strong>新增<strong>手游风</strong>皮肤，可一键切换。</li>
+      <li>配置了 <strong>小红书 Lite</strong> 的用户，现在能<strong>直接分享小红书帖子给角色</strong>。</li>
+    </ol>
+  </div>
+
+  <!-- 1 -->
+  <section class="item" id="i-checkphone">
+    <div class="item-head">
+      <div class="item-num">01</div>
+      <div class="item-title">
+        <h2>翻新 · 「查手机」 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">界面重做，还能模拟一场 ta 的人格。</div>
+      </div>
+    </div>
+    <p>
+      <em>「查手机」</em>App 这次<strong>整体翻新</strong>，UI 从里到外重做了一遍，逛起来更顺手也更耐看。重头戏是新增的 <mark>「人格模拟」</mark>：你可以<strong>指定一场角色的 Screenlife 演出</strong>，让 ta 把屏幕里那段时间的一天演给你看——聊了什么、刷了什么、记了什么，都顺着 ta 的人格走。
+    </p>
+
+    <p><strong>生成的内容，要不要算数你来定</strong></p>
+    <ul class="clean">
+      <li>「查手机」<strong>右下角的设置</strong>新增一个开关：<strong>是否将生成内容发送给角色</strong>。</li>
+      <li>打开它，这次模拟出来的内容会<strong>写回角色那边</strong>，和你平时的互动连起来；</li>
+      <li>关掉它，就当是一次<strong>纯观赏</strong>的演出，看完即走，不影响角色的日常。</li>
+    </ul>
+
+    <div class="note">
+      <div class="label">一句话</div>
+      <p>
+        想认真养、让这段「成为 ta 经历的一部分」，就把开关<strong>打开</strong>；只是好奇 ta 屏幕里什么样、图一乐，就<strong>关着</strong>看。
+      </p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="item" id="i-mobilegame-skin">
+    <div class="item-head">
+      <div class="item-num">02</div>
+      <div class="item-title">
+        <h2>外观 · 手游风皮肤 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">一键换上手游既视感。</div>
+      </div>
+    </div>
+    <p>
+      <em>「外观」</em>App 新增了<strong>手游风</strong>外观，喜欢那种花里胡哨手游主界面感觉的朋友，可以在外观里<strong>一键切换</strong>。不喜欢随时切回来，已保存的其它外观预设都还在。
+    </p>
+    <ol class="steps">
+      <li>打开 <span class="path">外观</span> App。</li>
+      <li>在外观选项里挑 <span class="path">手游风</span> 应用，即刻生效。</li>
+    </ol>
+  </section>
+
+  <!-- 3 -->
+  <section class="item" id="i-xhs-share">
+    <div class="item-head">
+      <div class="item-num">03</div>
+      <div class="item-title">
+        <h2>小红书 · 直接分享帖子给角色 <span class="tag-pill">NEW</span></h2>
+        <div class="sub">刷到好东西，顺手丢给 ta。</div>
+      </div>
+    </div>
+    <p>
+      给配置了 <strong>小红书 Lite</strong> 的用户：现在刷到喜欢的帖子，可以<strong>直接分享给角色</strong>了——不用再复制链接、来回倒腾，看到顺眼的一键甩过去，ta 就能接着和你聊。
+    </p>
+    <div class="note">
+      <div class="label">前置条件</div>
+      <p>
+        本功能需要已<strong>配置小红书 Lite</strong>。没配过的话，先按应用内说明接好，再来用分享。
+      </p>
+    </div>
+  </section>
+
+  <div class="finale">
+    <p class="big">这次更新，想让「看 ta」更自在</p>
+    <p class="small">翻新后的查手机、可写回也可纯看的人格模拟、换个心情的手游风，还有顺手就能分享的小红书。</p>
+  </div>
+
+  <footer class="page">
+    <div class="ornament">· · ·</div>
+    SullyOS Changelog · 2026.06.21
+  </footer>
+
+</div>
+
+</body>
+</html>
