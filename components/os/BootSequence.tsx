@@ -100,7 +100,7 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
   return (
     <div
       onClick={skip}
-      aria-label="SullyOS"
+      aria-label="Morpho"
       className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
         background: '#05060f',

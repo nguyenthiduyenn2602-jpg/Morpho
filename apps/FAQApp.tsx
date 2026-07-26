@@ -317,7 +317,7 @@ const FAQApp: React.FC = () => {
                     </div>
 
                     <div className="mt-8 text-center text-[10px] text-slate-400">
-                        SullyOS Help Center • v1.1
+                        Morpho Help Center • v1.1
                     </div>
                 </div>
             ) : (
@@ -359,7 +359,7 @@ const FAQApp: React.FC = () => {
                     </div>
 
                     <div className="mt-8 text-center text-[10px] text-slate-400">
-                        SullyOS Changelog • 更多版本将在这里陆续归档
+                        Morpho Changelog • 更多版本将在这里陆续归档
                     </div>
                 </div>
             )}
