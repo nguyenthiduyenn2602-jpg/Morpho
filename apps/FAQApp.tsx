@@ -2,19 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { Sparkle } from '@phosphor-icons/react';
-import {
-    FAQ_TARGET_SECTION_KEY,
-    CHANGELOG_2026_04,
-    CHANGELOG_2026_05,
-    CHANGELOG_2026_05_10,
-    CHANGELOG_2026_05_17,
-    CHANGELOG_2026_05_27,
-    CHANGELOG_2026_06_05,
-    CHANGELOG_2026_06_14,
-    CHANGELOG_2026_06_21,
-    CHANGELOG_2026_06_26,
-    CHANGELOG_2026_07_10,
-} from '../components/UpdateNotificationEvent';
+import { FAQ_TARGET_SECTION_KEY } from '../components/UpdateNotificationEvent';
 
 const FAQ_DATA = [
     {
@@ -105,88 +93,7 @@ interface ChangelogEntry {
     accent: string;
 }
 
-const CHANGELOG_ENTRIES: ChangelogEntry[] = [
-    {
-        id: CHANGELOG_2026_07_10,
-        title: '2026 年 7 月 10 日 · 生活统计',
-        subtitle: '档案「生活统计」四模块 + 角色注入代记 · 彼方全服写诗 · 捏人换画风 + PSD 批量导入 + 手办区 · 神经链接角色分组 · 小屋装修大升级 + 家园「凌晨」段 · 记忆宫殿门牌（测试中）· 专属提示铃声 · 壁纸/小屋图改存 Blob · 一大批 iOS 适配与散修',
-        date: '2026-07-10',
-        src: 'changelogs/2026-7-10.html',
-        accent: 'from-rose-100 to-violet-100 border-rose-200',
-    },
-    {
-        id: CHANGELOG_2026_06_26,
-        title: '2026 年 6 月 26 日 · 梦境盲盒',
-        subtitle: '小屋梦境系统（进屋刷新 · 集齐 13 款梦境盲盒）· 查手机联系人模式 + 智能体（char 的小手机）· 见面状态栏与设置前移 · 日程窥得更细 · 时间感知归位神经链接 · TTS 新增鱼声 API',
-        date: '2026-06-26',
-        src: 'changelogs/2026-6-26.html',
-        accent: 'from-indigo-100 to-violet-100 border-indigo-200',
-    },
-    {
-        id: CHANGELOG_2026_06_21,
-        title: '2026 年 6 月 21 日 · 查手机翻新',
-        subtitle: '查手机 UI 翻新 + 新增「人格模拟」（可指定一场 Screenlife 演出，设置里可选是否发送给角色）· 外观新增手游风 · 小红书 Lite 可直接分享帖子给角色',
-        date: '2026-06-21',
-        src: 'changelogs/2026-6-21.html',
-        accent: 'from-violet-100 to-fuchsia-100 border-violet-200',
-    },
-    {
-        id: CHANGELOG_2026_06_14,
-        title: '2026 年 6 月 14 日 · 家园上线',
-        subtitle: '小屋翻新 · 「家园」多角色大世界（真实时间 / 模拟时间二选一）· 瑞幸咖啡点单',
-        date: '2026-06-14',
-        src: 'changelogs/2026-6-14.html',
-        accent: 'from-violet-100 to-purple-100 border-violet-200',
-    },
-    {
-        id: CHANGELOG_2026_06_05,
-        title: '2026 年 6 月 5 日 · 彼方上线',
-        subtitle: '角色自主登入的 VR 小世界 · 邮局漂流信 · 留言簿原话上墙 · 隐藏小人',
-        date: '2026-06-05',
-        src: 'changelogs/2026-6-5.html',
-        accent: 'from-indigo-100 to-purple-100 border-indigo-200',
-    },
-    {
-        id: CHANGELOG_2026_05_27,
-        title: '2026 年 5 月 27 日 · 小更新',
-        subtitle: '情绪 buff 也接入 Instant Push · 发完即走，聊天和情绪都不用一直开着 App（附配置视频）',
-        date: '2026-05-27',
-        src: 'changelogs/2026-5-27.html',
-        accent: 'from-rose-100 to-amber-100 border-rose-200',
-    },
-    {
-        id: CHANGELOG_2026_05_17,
-        title: '2026 年 5 月 17 日 · 小更新',
-        subtitle: 'Instant Push 上线 · 发完文本就能锁屏走人，AI 回复自己回来',
-        date: '2026-05-17',
-        src: 'changelogs/2026-5-17.html',
-        accent: 'from-teal-100 to-sky-100 border-teal-200',
-    },
-    {
-        id: CHANGELOG_2026_05_10,
-        title: '2026 年 5 月 10 日 · 小更新',
-        subtitle: '「心象」上线 · 模型思考链可视化 + 约会（见面模式）bug 修复',
-        date: '2026-05-10',
-        src: 'changelogs/2026-5-10.html',
-        accent: 'from-purple-100 to-indigo-100 border-purple-200',
-    },
-    {
-        id: CHANGELOG_2026_05,
-        title: '2026 年 5 月更新',
-        subtitle: 'GitHub 备份 · 音乐 App 网络优化 · 麦当劳 MCP · SULLY 默认皮肤 等',
-        date: '2026-05',
-        src: 'changelogs/2026-5.html',
-        accent: 'from-amber-100 to-orange-100 border-amber-200',
-    },
-    {
-        id: CHANGELOG_2026_04,
-        title: '2026 年 4 月更新',
-        subtitle: '向量记忆 · 更新说明与配置指南',
-        date: '2026-04',
-        src: 'changelogs/2026-4.html',
-        accent: 'from-indigo-100 to-purple-100 border-indigo-200',
-    },
-];
+const CHANGELOG_ENTRIES: ChangelogEntry[] = [];
 
 type Tab = 'faq' | 'changelog';
 
@@ -331,7 +238,12 @@ const FAQApp: React.FC = () => {
                         </p>
                     </div>
 
-                    <div className="space-y-3">
+                    {CHANGELOG_ENTRIES.length === 0 ? (
+                        <div className="text-center py-12 text-xs text-slate-400">
+                            暂无更新记录
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
                         {CHANGELOG_ENTRIES.map((entry) => (
                             <button
                                 key={entry.id}
@@ -356,7 +268,8 @@ const FAQApp: React.FC = () => {
                                 </div>
                             </button>
                         ))}
-                    </div>
+                        </div>
+                    )}
 
                     <div className="mt-8 text-center text-[10px] text-slate-400">
                         Morpho Changelog • 更多版本将在这里陆续归档

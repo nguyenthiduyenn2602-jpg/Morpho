@@ -204,7 +204,7 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
             textShadow: '0 0 36px rgba(170,150,255,0.55), 0 2px 14px rgba(0,0,0,0.4)',
             animation: cinematic ? 'bootLogoIn 1400ms cubic-bezier(0.22,1,0.36,1) 250ms both' : 'bootLogoIn 600ms ease-out both',
           }}>
-            Sully<span style={{ fontWeight: 500 }}>OS</span>
+            Morpho
           </div>
           <div className="mt-3 h-px w-28" style={{
             background: 'linear-gradient(90deg, transparent, rgba(200,190,255,0.85), transparent)',

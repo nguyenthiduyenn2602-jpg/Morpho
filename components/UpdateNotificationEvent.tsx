@@ -41,11 +41,9 @@ export const CHANGELOG_2026_06_26 = 'changelog-2026-06-26';
 export const CHANGELOG_2026_07_10 = 'changelog-2026-07-10';
 
 export const shouldShowUpdateNotification = (): boolean => {
-    try {
-        return !localStorage.getItem(UPDATE_NOTIFICATION_KEY_2026_07_10);
-    } catch {
-        return false;
-    }
+    // Morpho：原作者（SullyOS）的版本更新弹窗已关闭——它推送的是 SullyOS 自身更新，
+    // 且会引导打开已删除的 SullyOS changelog。Morpho 暂无自有更新推送需求。
+    return false;
 };
 
 interface UpdateNotificationPopupProps {
