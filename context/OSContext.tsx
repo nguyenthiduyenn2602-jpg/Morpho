@@ -389,18 +389,20 @@ const PREVIOUS_DEFAULT_WALLPAPER = [
   'linear-gradient(145deg, #f3ecdf 0%, #e9dfcf 52%, #dfd2bf 100%)',
 ].join(', ');
 
-// 默认桌面：仿 XP Bliss 的草地蓝天壁纸（用于「竖版电脑桌面」首屏）。
+// 默认桌面使用低对比暖米纸纹：只靠同色系层次与极细纤维感建立质感，
+// 不再用粉绿撞色渐变。字符串同时作为“仍在使用系统默认壁纸”的稳定标记。
 export const DEFAULT_WALLPAPER = [
-  'radial-gradient(130% 80% at 50% 6%, #7ec4f7 0%, #a9d8f9 35%, #dff0ff 55%, rgba(223,240,255,0) 58%)',
-  'linear-gradient(180deg, #8ecdf9 0%, #c9ecff 42%, #9ad67a 58%, #5fb83d 78%, #4a9a2d 100%)',
+  'radial-gradient(120% 85% at 12% 0%, rgba(255,255,255,0.64) 0%, rgba(255,255,255,0) 58%)',
+  'repeating-linear-gradient(0deg, rgba(76,69,60,0.010) 0px, rgba(76,69,60,0.010) 1px, transparent 1px, transparent 4px)',
+  'linear-gradient(145deg, #fdfcf9 0%, #f8f6f1 54%, #f1eee8 100%)',
 ].join(', ');
 
 /** 纸感桌面的唯一默认配色来源；外观 App 的“默认风格”也直接复用，避免再次漂回旧粉蓝配置。 */
 export const DEFAULT_PAPER_APPEARANCE = {
-  hue: 208,
-  saturation: 80,
-  lightness: 52,
-  contentColor: '#0b3d72',
+  hue: 88,
+  saturation: 14,
+  lightness: 46,
+  contentColor: '#4b4136',
   desktopVariant: 'paper',
 } as const;
 
@@ -516,12 +518,6 @@ const defaultTheme: OSTheme = {
   darkMode: false,
   preserveCustomIconOutlines: false,
   nowPlayingWidgetLight: true,
-  // 默认启用「本世纪初 QQ 复古」聊天皮肤
-  chatHeaderStyle: 'qq',
-  chatInputStyle: 'qq',
-  chatChromeStyle: 'qq',
-  chatSendButtonStyle: 'pill',
-  chatAvatarShape: 'square',
 };
 
 /** 锁屏壁纸使用独立资产槽；undefined 表示继续跟随桌面壁纸。 */

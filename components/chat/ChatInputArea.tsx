@@ -52,7 +52,7 @@ interface ChatInputAreaProps {
     // 思考过程展示（会话级）
     showThinkingChain?: boolean;
     // Input style
-    inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel' | 'qq';
+    inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
@@ -287,18 +287,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     const isDiscordStyle = inputStyle === 'discord';
     const isPixelStyle = inputStyle === 'pixel' || chromeStyle === 'pixel';
-    const isQQStyle = inputStyle === 'qq' || chromeStyle === 'qq';
     const shellClass = acnh
         ? 'bg-[#a8d6bb] border-t-[3px] border-[#86c29a] shadow-[0_-3px_0_rgba(110,160,130,0.18)]'
-        : isQQStyle
-          ? 'bg-[#c9dbf1] border-t border-[#7aa7d4] shadow-[0_-2px_6px_rgba(15,63,115,0.12)]'
-          : chromeStyle === 'pixel'
-          ? 'bg-[#eadfce] border-t-[3px] border-[#8f674a] shadow-[0_-4px_0_rgba(123,90,64,0.15)]'
-          : chromeStyle === 'flat'
-            ? 'bg-white border-t border-slate-200 shadow-none'
-            : chromeStyle === 'floating'
-              ? 'bg-white/80 backdrop-blur-2xl border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]'
-              : 'bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]';
+        : chromeStyle === 'pixel'
+        ? 'bg-[#eadfce] border-t-[3px] border-[#8f674a] shadow-[0_-4px_0_rgba(123,90,64,0.15)]'
+        : chromeStyle === 'flat'
+          ? 'bg-white border-t border-slate-200 shadow-none'
+          : chromeStyle === 'floating'
+            ? 'bg-white/80 backdrop-blur-2xl border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]'
+            : 'bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]';
     const actionButtonClass = acnh
         ? 'w-11 h-11 shrink-0 rounded-full bg-[#4cb89e] flex items-center justify-center text-white hover:bg-[#43ad93] transition-colors shadow-sm'
         : isPixelStyle
@@ -310,9 +307,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         acnh
             ? 'bg-[#fbf4de] border-2 border-[#e6dab4] rounded-full'
             :
-        inputStyle === 'qq'
-            ? 'bg-white border border-[#7aa7d4] rounded-md shadow-inner'
-            : inputStyle === 'rounded'
+        inputStyle === 'rounded'
             ? 'bg-slate-100 rounded-full'
             : inputStyle === 'flat'
               ? 'bg-transparent border-b border-slate-200 rounded-none'
@@ -329,9 +324,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         : 'bg-slate-100 rounded-[24px]';
     const sendButtonClass = acnh
         ? 'w-11 h-11 shrink-0 rounded-full bg-[#f3d06a] text-[#6b5a3e] flex items-center justify-center shadow-md'
-        : isQQStyle
-          ? 'h-11 min-w-[72px] shrink-0 rounded-md bg-gradient-to-r from-[#5fb0f0] to-[#2a6fb5] border border-[#0e3f73] px-4 text-[12px] font-bold text-white shadow-lg flex items-center justify-center'
-          :
+        :
         sendButtonStyle === 'pill'
             ? isPixelStyle
                 ? 'h-11 min-w-[72px] shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]'

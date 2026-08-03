@@ -37,7 +37,7 @@ interface ChatHeaderShellProps {
     onDeleteBuff?: (buffId: string) => void;
     /** 隐藏顶栏情绪 buff 栏（Appearance 里的「显示情绪栏」开关）。 */
     hideBuffs?: boolean;
-    headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel' | 'qq';
+    headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
     avatarShape?: 'circle' | 'rounded' | 'square';
     headerAlign?: 'left' | 'center';
     headerDensity?: 'compact' | 'default' | 'airy';
@@ -195,7 +195,6 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const isDarkHeader = headerStyle === 'discord';
     const isPixelHeader = headerStyle === 'pixel';
-    const isQQHeader = headerStyle === 'qq';
     const useCenteredLayout = headerAlign === 'center';
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     // 动森：情绪 buff 胶囊统一奶油底 + 棕字，和谐进绿顶栏（否则各 buff 自带的彩色底铺在绿上很糊）
@@ -207,9 +206,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         acnh
           ? 'bg-[#a8d6bb] border-b-[3px] border-[#86c29a] shadow-[0_3px_0_rgba(110,160,130,0.22)]'
           :
-        headerStyle === 'qq'
-          ? 'bg-gradient-to-r from-[#3f8fd6] via-[#2a6fb5] to-[#1f5a9b] border-b border-[#0e3f73] shadow-[0_2px_6px_rgba(15,63,115,0.35)]'
-          : headerStyle === 'gradient'
+        headerStyle === 'gradient'
             ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm'
             : headerStyle === 'minimal'
               ? 'bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
@@ -234,26 +231,22 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     // minHeight 是地板不是固定高度——border-box 下 padding 在它之上叠加把元素撑高、不挤压内容（区别于固定 h-NN 会劈开）。
     // Chat 在 SELF_SAFE_AREA_APPS 名单里，外壳不再加 safe-top，这里加一次不会重复。
     const headerSafeStyle: React.CSSProperties = { minHeight: headerBaseHeight, paddingTop: 'var(--safe-top)' };
-    const primaryTextClass = acnh ? 'text-[#6b5a3e]' : (isDarkHeader || isQQHeader) ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
-    const secondaryTextClass = acnh ? 'text-[#5a9e7a]' : isDarkHeader ? 'text-slate-400' : isQQHeader ? 'text-white/80' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
+    const primaryTextClass = acnh ? 'text-[#6b5a3e]' : isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
+    const secondaryTextClass = acnh ? 'text-[#5a9e7a]' : isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
     const iconButtonClass = acnh
         ? 'text-[#6b5a3e] hover:bg-black/5 rounded-full'
         : isDarkHeader
         ? 'text-slate-200 hover:bg-white/10 rounded-full'
-        : isQQHeader
-          ? 'text-white hover:bg-white/15 rounded-full'
-          : isPixelHeader
-            ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
-            : 'text-slate-500 hover:bg-slate-100 rounded-full';
+        : isPixelHeader
+          ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
+          : 'text-slate-500 hover:bg-slate-100 rounded-full';
     const actionButtonClass = acnh
         ? 'text-[#6b5a3e] hover:bg-black/5 rounded-full'
         : isDarkHeader
         ? 'text-sky-300 hover:bg-sky-400/10 rounded-full'
-        : isQQHeader
-          ? 'text-yellow-300 hover:bg-white/15 rounded-full'
-          : isPixelHeader
-            ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
-            : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
+        : isPixelHeader
+          ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
+          : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
 
     const onlineStatusNode = headerStyle === 'telegram'
         ? null
