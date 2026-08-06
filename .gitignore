@@ -33,3 +33,6 @@ xiaohongshu-skills/
 
 # git worktrees
 .worktrees/
+
+# vite 构建临时文件
+vite.config.ts.timestamp-*.mjs
