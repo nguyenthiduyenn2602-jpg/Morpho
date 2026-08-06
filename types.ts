@@ -2419,6 +2419,12 @@ export interface GroupProfile {
     memberBubbleIndependent?: boolean;
     /** 用户在本群的气泡主题 id（预设或 customThemes，取 user 侧）；undefined = 现状紫色 */
     userBubbleThemeId?: string;
+    /**
+     * 群内独立模型后端：按成员 id 存各自的 { baseUrl, apiKey, model }。
+     * 群聊轮询时优先用这套；某个成员没填则回退到全局 apiConfig。
+     * 与角色身上的 chatApiConfig 互不干扰——这里的配置只作用于本群，不污染角色私聊。
+     */
+    memberApiConfigs?: Record<string, APIConfig>;
     /** 群聊白框自定义 CSS（.sully-chat-* 钩子），与私聊 char.chromeCustomCss 同机制 */
     chromeCustomCss?: string;
     /** 群提示音（未绑定白框时的独立存储）；绑定时以 chromeCustomCss 里的 @sully-sound 注释为准 */

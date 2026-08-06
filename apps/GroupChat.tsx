@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory } from '../types';
+import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory, APIConfig } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
@@ -438,6 +438,10 @@ const GroupChat: React.FC = () => {
     const [tempRoundRobinHandoff, setTempRoundRobinHandoff] = useState(true);
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
+    // 群内独立模型后端：两个写死的成员位（角色1 / 角色2），各自可配 url/apiKey/model。
+    // 顺序即发言顺序：members[0] 先说，members[1] 接话并可点名接力。
+    const [tempMemberSlots, setTempMemberSlots] = useState<string[]>(['', '']);
+    const [tempMemberApi, setTempMemberApi] = useState<Record<string, APIConfig>>({});
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [memberGroupId, setMemberGroupId] = useState(GROUP_FILTER_ALL); // 建群选成员的分组筛选
     const [transferAmount, setTransferAmount] = useState('');
@@ -670,6 +674,16 @@ const GroupChat: React.FC = () => {
 
     const handleUpdateGroupInfo = async () => {
         if (!activeGroup) return;
+        // 两个写死的成员位：按顺序收成员，空位丢弃。
+        // 防御：保留原群第 3 个及以后的成员（兼容早期可能建过 3+ 人的群），避免保存时被丢掉。
+        const baseMembers = activeGroup.members ?? [];
+        const extra = baseMembers.slice(2).filter(id => !tempMemberSlots.includes(id));
+        const newMembers = [...tempMemberSlots.filter(Boolean), ...extra];
+        const newApi: Record<string, APIConfig> = {};
+        for (const id of newMembers) {
+            const c = tempMemberApi[id];
+            if (c && (c.apiKey || c.baseUrl || c.model)) newApi[id] = c;
+        }
         const updates = {
             name: tempGroupName || activeGroup.name,
             privateContextCap: tempPrivateContextCap,
@@ -679,6 +693,9 @@ const GroupChat: React.FC = () => {
             memberBubbleIndependent: tempMemberBubbleIndependent,
             // 空串 = 默认紫，存 undefined 保持向后兼容语义
             userBubbleThemeId: tempUserBubbleThemeId || undefined,
+            // 群内独立模型后端：只存被选中的成员；全空则 undefined，回落全局 API
+            members: newMembers,
+            memberApiConfigs: Object.keys(newApi).length ? newApi : undefined,
         };
         // 走 context 的 updateGroup：同步内存 groups + DB，避免退出后读回旧值
         await updateGroup(activeGroup.id, updates);
@@ -941,6 +958,9 @@ const GroupChat: React.FC = () => {
         setTempRoundRobinHandoff(activeGroup?.roundRobinHandoff !== false);
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
+        // 初始化两个写死的成员位 + 各自的群内 API 配置
+        setTempMemberSlots([activeGroup?.members?.[0] ?? '', activeGroup?.members?.[1] ?? '']);
+        setTempMemberApi(activeGroup?.memberApiConfigs ?? {});
         if (activeGroup) void loadTopicBoxStats(activeGroup);
         setModalType('settings');
         setShowPanel('none');
@@ -1300,7 +1320,9 @@ ${memberTimeline || '(暂无互动记录)'}
             addToast('这个群还没有有效成员', 'error');
             return;
         }
-        if (!apiConfig.apiKey && !groupMembers.some(m => m.chatApiConfig?.apiKey)) {
+        // 群内独立后端也算「已就绪」：memberApiConfigs 或角色自身 chatApiConfig 任一有 key 即可
+        const groupApiReady = groupMembers.some(m => activeGroup.memberApiConfigs?.[m.id]?.apiKey || m.chatApiConfig?.apiKey);
+        if (!apiConfig.apiKey && !groupApiReady) {
             addToast('请先在「设置」填好 API，或给群成员配置独立模型后端', 'error');
             return;
         }
@@ -1322,7 +1344,12 @@ ${memberTimeline || '(暂无互动记录)'}
             slot: RoundRobinSlot,
             calledBy?: string,
         ): Promise<string | null> => {
-            const cfg = member.chatApiConfig ?? apiConfig;
+            // 群内独立后端优先：memberApiConfigs[id] 有 key 就用它的 url/apiKey/model（缺哪样回落全局对应项）；
+            // 否则回退角色自身的 chatApiConfig；再没有才用全局 apiConfig。
+            const memberApi = activeGroup.memberApiConfigs?.[member.id];
+            const cfg: APIConfig = memberApi?.apiKey
+                ? { baseUrl: memberApi.baseUrl || apiConfig.baseUrl, apiKey: memberApi.apiKey, model: memberApi.model || apiConfig.model }
+                : (member.chatApiConfig ?? apiConfig);
             // 基于"此刻"的群历史构建上下文——包含本回合先发言成员的新消息。
             // 这里刻意不缓存 memberBlock：它内部要按当前群消息跑记忆宫殿检索和世界书触发，
             // 缓存会让接力位拿到"对方发言之前"的检索结果。多一次 DB 查询换准确性，值。
@@ -1834,6 +1861,60 @@ ${memberTimeline || '(暂无互动记录)'}
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* 成员与模型（群内独立 API） */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">成员与模型</label>
+                        <p className="text-[9px] text-slate-400 mb-3 leading-tight">从「神经链接」角色列表选两位 AI，各自填独立模型后端；某项留空则回退到「设置」里的全局 API。顺序即发言顺序（首位先说，末位可点名接力）。</p>
+                        {tempMemberSlots.map((slotId, i) => {
+                            const cfg = (slotId && tempMemberApi[slotId]) || { baseUrl: '', apiKey: '', model: '' };
+                            const setField = (field: 'baseUrl' | 'apiKey' | 'model', val: string) => {
+                                if (!slotId) return;
+                                setTempMemberApi(prev => ({ ...prev, [slotId]: { ...(prev[slotId] || { baseUrl: '', apiKey: '', model: '' }), [field]: val } }));
+                            };
+                            return (
+                                <div key={i} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 mb-3">
+                                    <div className="text-xs font-bold text-slate-700 mb-2">角色{i + 1}</div>
+                                    <select
+                                        value={slotId}
+                                        onChange={e => {
+                                            const next = [...tempMemberSlots];
+                                            next[i] = e.target.value;
+                                            setTempMemberSlots(next);
+                                        }}
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-violet-300 mb-2"
+                                    >
+                                        <option value="">— 未选择 —</option>
+                                        {characters.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        placeholder="API 地址 (URL)"
+                                        value={cfg.baseUrl}
+                                        disabled={!slotId}
+                                        onChange={e => setField('baseUrl', e.target.value)}
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 mb-2 disabled:bg-slate-100 disabled:text-slate-300"
+                                    />
+                                    <input
+                                        placeholder="API Key"
+                                        type="password"
+                                        value={cfg.apiKey}
+                                        disabled={!slotId}
+                                        onChange={e => setField('apiKey', e.target.value)}
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 mb-2 disabled:bg-slate-100 disabled:text-slate-300"
+                                    />
+                                    <input
+                                        placeholder="模型 (model)"
+                                        value={cfg.model}
+                                        disabled={!slotId}
+                                        onChange={e => setField('model', e.target.value)}
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 disabled:bg-slate-100 disabled:text-slate-300"
+                                    />
+                                </div>
+                            );
+                        })}
                     </div>
 
                     {/* Bubble Appearance */}

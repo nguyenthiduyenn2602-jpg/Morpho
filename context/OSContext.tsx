@@ -1478,6 +1478,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         setGroups(dbGroups);
+        // 内置群聊「群聊测试」：固定 2 个 AI（先写死），角色1 默认选 Morpho，角色2 空着由用户在群设置里挑。
+        // 群内独立模型后端（memberApiConfigs）只存本群，不碰角色身上的 chatApiConfig；某人没填则回退全局 API。
+        // 只播种一次并打 localStorage 标记，用户删掉不再复活，否则留个删不干净的钉子很烦。
+        try {
+          const MORPHO_ID = 'char-morpho-builtin';
+          const BUILTIN_GROUP_ID = 'group-morpho-builtin';
+          const groupSeeded = localStorage.getItem('os_morpho_group_seeded') === '1';
+          const hasBuiltin = dbGroups.some(g => g.id === BUILTIN_GROUP_ID);
+          if (!groupSeeded && !hasBuiltin) {
+            const builtinGroup: GroupProfile = {
+              id: BUILTIN_GROUP_ID,
+              name: '群聊测试',
+              members: [MORPHO_ID], // 角色1 = Morpho；角色2 由用户在群设置挑选
+              avatar: generateAvatar('群聊测试'),
+              createdAt: Date.now(),
+              replyMode: 'roundRobin',
+              roundRobinHandoff: true,
+            };
+            await DB.saveGroup(builtinGroup);
+            setGroups([...dbGroups, builtinGroup]);
+          }
+          localStorage.setItem('os_morpho_group_seeded', '1');
+        } catch (err) {
+          console.warn('[OSContext] 内置群聊播种失败（不影响启动）', err);
+        }
         setCharacterGroups(dbCharGroups);
         setWorldbooks(dbWorldbooks);
         setNovels(dbNovels);
