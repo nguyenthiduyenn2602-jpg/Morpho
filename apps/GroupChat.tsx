@@ -13,11 +13,11 @@ import { processImage } from '../utils/file';
 import { stickerNameFromUrl } from '../utils/messageFormat';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { resolveChatTheme } from '../utils/groupChat/theme';
-import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../utils/groupChat/parse';
+import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox, parseHandoff, matchHandoffName, clampBubbleLines } from '../utils/groupChat/parse';
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
-import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock } from '../utils/groupChat/prompts';
+import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -362,6 +362,11 @@ const GroupMessageItem = React.memo(({
     );
 });
 
+// 轮询模式单次发言的硬性行数上限（一行 = 一个气泡）。
+// 提示词里给的是"目标 3-5 行"，但模型经常不听，一激动能吐十几行刷屏 ——
+// 这里是代码侧的兜底闸门，超出部分直接截掉。下限不管：AI 少说两句本来就自然。
+const ROUND_ROBIN_MAX_LINES = 8;
+
 // --- Main Component ---
 
 const GroupChat: React.FC = () => {
@@ -429,6 +434,8 @@ const GroupChat: React.FC = () => {
     const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
     const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
+    // 圆桌接力开关（仅轮询模式下有意义）：undefined 视为开，所以默认 true
+    const [tempRoundRobinHandoff, setTempRoundRobinHandoff] = useState(true);
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
@@ -668,6 +675,7 @@ const GroupChat: React.FC = () => {
             privateContextCap: tempPrivateContextCap,
             memberTimelineCap: tempMemberTimelineCap,
             replyMode: tempReplyMode,
+            roundRobinHandoff: tempRoundRobinHandoff,
             memberBubbleIndependent: tempMemberBubbleIndependent,
             // 空串 = 默认紫，存 undefined 保持向后兼容语义
             userBubbleThemeId: tempUserBubbleThemeId || undefined,
@@ -930,6 +938,7 @@ const GroupChat: React.FC = () => {
         setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
         setTempMemberTimelineCap(activeGroup?.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP);
         setTempReplyMode(activeGroup?.replyMode ?? 'director');
+        setTempRoundRobinHandoff(activeGroup?.roundRobinHandoff !== false);
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
         if (activeGroup) void loadTopicBoxStats(activeGroup);
@@ -1275,13 +1284,23 @@ ${memberTimeline || '(暂无互动记录)'}
         }
     };
 
-    // 轮询模式：按成员固定顺序逐个调用，后发言者能看到前面成员本轮刚说的话
-    // （串号天然无解可能 → 天然解决），角色可输出 [[SKIP]] 本轮沉默。
+    // 轮询模式（圆桌接力）：按【群成员配置顺序】逐个调用，后发言者能看到前面成员本回合刚说的话
+    // （串号天然无解可能 → 天然解决）。首轮最后一位可用 [[TO: 名字]] 点名一位成员追加一次发言，
+    // 被点名者有权 [[SKIP]] 婉拒；接力位禁止再点名 —— 整回合调用数硬上界 = 成员数 + 1，
+    // 杜绝两个 AI 互相点名把用户晾在一边的失控局面。
     // 单成员失败只跳过该成员，不杀整轮。
     const triggerRoundRobin = async (currentMsgs: Message[]) => {
         if (!activeGroup) return;
-        const membersWithKey = characters.filter(c => activeGroup.members.includes(c.id));
-        if (!apiConfig.apiKey && !membersWithKey.some(m => m.chatApiConfig?.apiKey)) {
+        // 顺序必须按 activeGroup.members 排，不能 filter 全局 characters ——
+        // 后者的顺序取决于全局角色列表，用户在群里怎么排都不生效，首发/接话位会随机漂移。
+        const groupMembers = activeGroup.members
+            .map(id => characters.find(c => c.id === id))
+            .filter((c): c is CharacterProfile => !!c);
+        if (groupMembers.length === 0) {
+            addToast('这个群还没有有效成员', 'error');
+            return;
+        }
+        if (!apiConfig.apiKey && !groupMembers.some(m => m.chatApiConfig?.apiKey)) {
             addToast('请先在「设置」填好 API，或给群成员配置独立模型后端', 'error');
             return;
         }
@@ -1292,88 +1311,136 @@ ${memberTimeline || '(暂无互动记录)'}
         const failed: string[] = [];
         let tokenPrompt = 0;
         let tokenCompletion = 0;
+        let roundMsgs = [...currentMsgs];
+
+        const handoffEnabled = activeGroup.roundRobinHandoff !== false && groupMembers.length > 1;
+
+        // 一次发言 = 一次 API 调用 = 一段完整发言（3-5 行气泡）。
+        // 返回值：这次点名的目标名（只有 reply 位可能非空），跳过或未点名返回 null。
+        const speakOnce = async (
+            member: CharacterProfile,
+            slot: RoundRobinSlot,
+            calledBy?: string,
+        ): Promise<string | null> => {
+            const cfg = member.chatApiConfig ?? apiConfig;
+            // 基于"此刻"的群历史构建上下文——包含本回合先发言成员的新消息。
+            // 这里刻意不缓存 memberBlock：它内部要按当前群消息跑记忆宫殿检索和世界书触发，
+            // 缓存会让接力位拿到"对方发言之前"的检索结果。多一次 DB 查询换准确性，值。
+            const { header, sharedScene } = buildGroupSystemHeader(roundMsgs, groupMembers);
+            const memberBlock = await buildMemberBlock(member, roundMsgs, sharedScene);
+            const liveRoundMsgs = roundMsgs.filter(m => m.id > (activeGroup.archivedThroughMessageId || 0));
+            const history = buildGroupHistoryBlock(liveRoundMsgs.slice(-contextLimit), characters, emojis, userProfile.name);
+            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
+            const htmlPromptExt = activeGroup.htmlModeEnabled
+                ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
+                : '';
+            const handoffCandidates = slot === 'reply' && handoffEnabled
+                ? groupMembers.filter(m => m.id !== member.id).map(m => m.name)
+                : [];
+            const instruction = buildRoundRobinInstruction(member.name, history, emojiContextStr, {
+                slot,
+                handoffCandidates,
+                calledBy,
+                maxLines: ROUND_ROBIN_MAX_LINES,
+            });
+            const prompt = `${header}${memberBlock}\n\n${instruction}${htmlPromptExt}\n`;
+
+            const data = await completeGroupChatWithMcp({
+                url: `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+                body: {
+                    model: cfg.model,
+                    messages: [{ role: "user", content: buildUserMessageContent(prompt, history) }],
+                    temperature: 0.9,
+                    max_tokens: 2000
+                },
+                groupId: activeGroup.id,
+                userName: userProfile.name,
+                signal: abort.signal,
+                onStatus: status => setMcpStatus(status ? `${member.name}：${status}` : ''),
+            });
+
+            // Token 统计：整回合累加显示（含接力那次）
+            if (data.usage?.total_tokens) {
+                tokenPrompt += data.usage.prompt_tokens || 0;
+                tokenCompletion += data.usage.completion_tokens || 0;
+                setLastTokenUsage(tokenPrompt + tokenCompletion);
+                setTokenBreakdown({
+                    prompt: tokenPrompt,
+                    completion: tokenCompletion,
+                    total: tokenPrompt + tokenCompletion,
+                    msgCount: roundMsgs.length,
+                    pass: 'round-robin',
+                });
+            }
+
+            let text = String(data.choices?.[0]?.message?.content ?? '').trim();
+            // 剥模型自作主张加的名字前缀（提示词禁止了，但仍要兜底）
+            if (text.startsWith(`${member.name}:`) || text.startsWith(`${member.name}：`)) {
+                text = text.slice(member.name.length + 1).trim();
+            }
+            // 先剥点名标记再判 SKIP：只吐一个 [[TO: X]] 却没正文的，等同于没话说。
+            // 标记必须在入库前剥净，否则群里会冒出一个写着 [[TO: 某某]] 的气泡。
+            const handoff = parseHandoff(text);
+            const { skipped, content } = stripSkipMarker(handoff.content);
+            if (skipped) return null;
+
+            await dispatchMemberActions([{ charId: member.id, content: clampBubbleLines(content, ROUND_ROBIN_MAX_LINES) }], {
+                groupId: activeGroup.id,
+                memberIds: activeGroup.members,
+                characters,
+                emojis,
+                categories,
+                refresh: () => refreshMessages(activeGroup.id),
+                addToast,
+                signal: abort.signal,
+                resolveQuote,
+                userName: userProfile.name,
+                htmlMode: !!activeGroup.htmlModeEnabled,
+            });
+
+            // 刷新滚动历史给下一位发言者
+            roundMsgs = await DB.getGroupMessages(activeGroup.id);
+
+            // 发言间随机间隔，增强真实感
+            if (!abort.signal.aborted) {
+                await new Promise(r => setTimeout(r, 300 + Math.random() * 300));
+            }
+
+            // 点名权只属于 reply 位；其它位置就算模型硬输出 [[TO:]] 也一律无视
+            return slot === 'reply' ? handoff.target : null;
+        };
 
         try {
-            const groupMembers = characters.filter(c => activeGroup.members.includes(c.id));
-            let roundMsgs = [...currentMsgs];
-
-            for (const member of groupMembers) {
-                const cfg = member.chatApiConfig ?? apiConfig;
+            // ① 首轮：每位成员按群配置顺序各发言一次。
+            //    最后一位拿点名权 —— 2 人群正好退化成「A 首发 → B 接话」，即目标形态。
+            let nominated: string | null = null;
+            for (let i = 0; i < groupMembers.length; i++) {
                 if (abort.signal.aborted) break;
+                const member = groupMembers[i];
+                const isLast = i === groupMembers.length - 1;
+                const slot: RoundRobinSlot = isLast && groupMembers.length > 1 ? 'reply' : 'opening';
                 try {
-                    // 每位成员基于"此刻"的群历史构建上下文——包含本轮先发言成员的新消息
-                    const { header, sharedScene } = buildGroupSystemHeader(roundMsgs, groupMembers);
-                    const memberBlock = await buildMemberBlock(member, roundMsgs, sharedScene);
-                    const liveRoundMsgs = roundMsgs.filter(m => m.id > (activeGroup.archivedThroughMessageId || 0));
-                    const history = buildGroupHistoryBlock(liveRoundMsgs.slice(-contextLimit), characters, emojis, userProfile.name);
-                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
-                    const htmlPromptExt = activeGroup.htmlModeEnabled
-                        ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
-                        : '';
-                    const prompt = `${header}${memberBlock}\n\n${buildRoundRobinInstruction(member.name, history, emojiContextStr)}${htmlPromptExt}\n`;
-
-                    const data = await completeGroupChatWithMcp({
-                        url: `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
-                        body: {
-                            model: cfg.model,
-                            messages: [{ role: "user", content: buildUserMessageContent(prompt, history) }],
-                            temperature: 0.9,
-                            max_tokens: 2000
-                        },
-                        groupId: activeGroup.id,
-                        userName: userProfile.name,
-                        signal: abort.signal,
-                        onStatus: status => setMcpStatus(status ? `${member.name}：${status}` : ''),
-                    });
-
-                    // Token 统计：整轮累加显示
-                    if (data.usage?.total_tokens) {
-                        tokenPrompt += data.usage.prompt_tokens || 0;
-                        tokenCompletion += data.usage.completion_tokens || 0;
-                        setLastTokenUsage(tokenPrompt + tokenCompletion);
-                        setTokenBreakdown({
-                            prompt: tokenPrompt,
-                            completion: tokenCompletion,
-                            total: tokenPrompt + tokenCompletion,
-                            msgCount: roundMsgs.length,
-                            pass: 'round-robin',
-                        });
-                    }
-
-                    let text = String(data.choices?.[0]?.message?.content ?? '').trim();
-                    // 剥模型自作主张加的名字前缀（提示词禁止了，但仍要兜底）
-                    if (text.startsWith(`${member.name}:`) || text.startsWith(`${member.name}：`)) {
-                        text = text.slice(member.name.length + 1).trim();
-                    }
-                    const { skipped, content } = stripSkipMarker(text);
-                    if (skipped) continue; // 本轮潜水
-
-                    await dispatchMemberActions([{ charId: member.id, content }], {
-                        groupId: activeGroup.id,
-                        memberIds: activeGroup.members,
-                        characters,
-                        emojis,
-                        categories,
-                        refresh: () => refreshMessages(activeGroup.id),
-                        addToast,
-                        signal: abort.signal,
-                        resolveQuote,
-                        userName: userProfile.name,
-                        htmlMode: !!activeGroup.htmlModeEnabled,
-                    });
-
-                    // 刷新滚动历史给下一位成员
-                    roundMsgs = await DB.getGroupMessages(activeGroup.id);
-
-                    // 成员间随机间隔，增强真实感
-                    if (!abort.signal.aborted) {
-                        await new Promise(r => setTimeout(r, 300 + Math.random() * 300));
-                    }
+                    const target = await speakOnce(member, slot);
+                    if (target) nominated = target;
                 } catch (e: any) {
                     if (e?.name === 'AbortError') break;
                     console.error(`[GroupChat] 轮询模式 ${member.name} 回复失败:`, e);
                     failed.push(member.name);
+                }
+            }
+
+            // ② 接力位：被点名者追加一次发言，说完硬停 —— 不读它的 [[TO:]]，回合到此结束。
+            const lastSpeaker = groupMembers[groupMembers.length - 1];
+            const nominee = handoffEnabled ? matchHandoffName(nominated, groupMembers) : null;
+            if (nominee && nominee.id !== lastSpeaker.id && !abort.signal.aborted) {
+                try {
+                    await speakOnce(nominee, 'callback', lastSpeaker.name);
+                } catch (e: any) {
+                    if (e?.name !== 'AbortError') {
+                        console.error(`[GroupChat] 圆桌接力 ${nominee.name} 回应失败:`, e);
+                        failed.push(nominee.name);
+                    }
                 }
             }
 
@@ -1748,9 +1815,25 @@ ${memberTimeline || '(暂无互动记录)'}
                                 className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'roundRobin' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                             >
                                 <div className="text-xs font-bold text-slate-700">轮询模式</div>
-                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">每位成员单独调用一次 API，按顺序逐个发言（每人必发言）。更真实、彻底防串号，但更慢，token 消耗约为导演模式 × 成员数。</p>
+                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">每位成员单独调用一次 API，按【群成员顺序】逐个发言（每人必发言）。后发言者能看到前面成员刚说的话。更真实、彻底防串号，但更慢，token 消耗约为导演模式 × 成员数。</p>
                             </div>
                         </div>
+
+                        {/* 圆桌接力：只在轮询模式下有意义，导演模式下不显示 */}
+                        {tempReplyMode === 'roundRobin' && (
+                            <div className="flex items-center justify-between mt-3 pt-3 border-t border-dashed border-slate-100">
+                                <div className="flex-1 pr-3">
+                                    <div className="text-xs font-bold text-slate-700">圆桌接力</div>
+                                    <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">最后一位发言者若明确想听某人回应，可点名 ta 追加发言一次；被点名者也可以选择不理。回合上限 = 成员数 + 1 次调用，不会无限对聊。关掉则每人各说一次就结束。</p>
+                                </div>
+                                <div
+                                    onClick={() => setTempRoundRobinHandoff(v => !v)}
+                                    className={`w-11 h-6 rounded-full cursor-pointer transition-colors relative shrink-0 ${tempRoundRobinHandoff ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                >
+                                    <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${tempRoundRobinHandoff ? 'left-[22px]' : 'left-0.5'}`} />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Bubble Appearance */}

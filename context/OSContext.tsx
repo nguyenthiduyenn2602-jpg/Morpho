@@ -1412,6 +1412,36 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         }
 
+        // 内置测试角色 Morpho：人设留空，专门用来试群聊调度（圆桌接力的首发/接话/接力位）。
+        // 只播种一次并打 localStorage 标记 —— 用户删掉它就不该再复活，否则删不干净很烦人。
+        // 空 description/systemPrompt 是刻意的：不给任何人格倾向，才能干净地观察调度行为本身。
+        try {
+            const MORPHO_ID = 'char-morpho-builtin';
+            const seeded = localStorage.getItem('os_morpho_char_seeded') === '1';
+            if (!seeded && !finalChars.some(c => c.id === MORPHO_ID)) {
+                const morpho: CharacterProfile = {
+                    id: MORPHO_ID,
+                    name: 'Morpho',
+                    avatar: generateAvatar('Morpho'),
+                    description: '',
+                    systemPrompt: '',
+                    memories: [],
+                    contextLimit: DEFAULT_MANUAL_CONTEXT_LIMIT,
+                    contextRangeMode: 'manual',
+                    contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
+                    emotionConfig: { enabled: true },
+                };
+                await DB.saveCharacter(morpho);
+                finalChars = [...finalChars, morpho];
+                localStorage.setItem('os_morpho_char_seeded', '1');
+            } else if (!seeded) {
+                // 角色已存在（例如从备份导入），补个标记免得下次重复判断
+                localStorage.setItem('os_morpho_char_seeded', '1');
+            }
+        } catch (err) {
+            console.warn('[OSContext] 内置角色 Morpho 播种失败（不影响启动）', err);
+        }
+
         let resetAutoContextCount = 0;
         let migratedContextCount = 0;
         finalChars = finalChars.map(c => {

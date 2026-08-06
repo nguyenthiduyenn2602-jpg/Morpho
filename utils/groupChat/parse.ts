@@ -56,12 +56,108 @@ export function parseDirectorActions(raw: string): DirectorAction[] {
 }
 
 /**
- * [[SKIP]] 输出剥离兜底（提示词已不再教这个标记——轮询模式现在要求每位成员必发言）：
- * 模型若仍吐出 [[SKIP]] 或空内容，剥净后没剩正文 = 本轮跳过该成员。
+ * [[SKIP]] 输出剥离：常规发言位不教这个标记（轮到谁谁就得说点什么），
+ * 但「圆桌接力」的 callback 位会显式教它——被点名者有权不理。
+ * 模型吐出 [[SKIP]] 或空内容，剥净后没剩正文 = 本轮跳过该成员。
  */
 export function stripSkipMarker(raw: string): { skipped: boolean; content: string } {
     const content = stripFences(raw).replace(/\[\[\s*SKIP\s*\]\]/gi, '').trim();
     return { skipped: content === '', content };
+}
+
+export interface HandoffParsed {
+    /** 被点名者的名字（未点名 = null）；还需经 matchHandoffName 落到真实成员上 */
+    target: string | null;
+    /** 剥净标记后的正文 */
+    content: string;
+}
+
+/**
+ * 名字规整：模型爱把点名写成 `[[TO: @小北]]`、`[[TO: 「小北」]]`、`[[TO: 小北。]]`，
+ * 这里把 @ 前缀、各式引号和尾部标点削掉，只留干净名字。
+ */
+const normalizeHandoffName = (raw: string): string =>
+    String(raw ?? '')
+        .trim()
+        .replace(/^[@＠]+/, '')
+        .replace(/^["'“”‘’「」『』《》\s]+|["'“”‘’「」『』《》\s]+$/g, '')
+        .replace(/[。，,.!！?？;；:：、~～]+$/, '')
+        .trim();
+
+/**
+ * 解析「圆桌接力」点名标记 [[TO: 名字]]。
+ *
+ * 只认第一个标记——模型偶尔会一口气点两个人，多余的一律无视（回合上界由调度层锁死，
+ * 但这里也不给它多塞的机会）。标记必须剥干净：不剥的话它会作为独立一行进 DB，
+ * 群里就会冒出一个写着 `[[TO: 小北]]` 的气泡。
+ *
+ * 名字限死 40 字符且不跨行，避免模型输出没闭合的 `[[TO:` 时把后面整段正文吞掉。
+ */
+export function parseHandoff(raw: string): HandoffParsed {
+    const text = String(raw ?? '');
+    const first = text.match(/\[\[\s*TO\s*[:：]\s*([^\]\n]{1,40}?)\s*\]\]/i);
+    const name = first ? normalizeHandoffName(first[1]) : '';
+    const content = text
+        .replace(/\[\[\s*TO\s*[:：]\s*[^\]\n]{0,40}?\s*\]\]/gi, '')
+        .replace(/[ \t]+$/gm, '')   // 标记在行尾时留下的尾随空格
+        .replace(/\n{3,}/g, '\n\n') // 标记独占一行时留下的空行
+        .trim();
+    return { target: name || null, content };
+}
+
+/**
+ * 把 [[TO:]] 里的名字落到真实成员上。三层匹配，逐层放宽：
+ * 精确 → 忽略大小写与空格 → 互相包含（模型写"小北北"或只写"北"都能兜住）。
+ * 匹配不到返回 null —— 宁可不接力，也不能点错人。
+ */
+export function matchHandoffName<T extends { id: string; name: string }>(
+    target: string | null,
+    candidates: T[],
+): T | null {
+    const q = normalizeHandoffName(target ?? '');
+    if (!q || candidates.length === 0) return null;
+
+    const exact = candidates.find(c => c.name === q);
+    if (exact) return exact;
+
+    const fold = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+    const folded = fold(q);
+    const ci = candidates.find(c => fold(c.name) === folded);
+    if (ci) return ci;
+
+    // 包含匹配容易误伤（"北"既像"北极星"又像"小北"），只在唯一命中时才认
+    const loose = candidates.filter(c => {
+        const n = fold(c.name);
+        return n.includes(folded) || folded.includes(n);
+    });
+    return loose.length === 1 ? loose[0] : null;
+}
+
+/**
+ * 气泡行数上限截断：提示词给的是"目标行数"，但模型经常不听，一激动能吐十几行刷屏。
+ * 下限不管——少说两句本来就自然，多说一堆才出戏。
+ *
+ * 空行不计数（只是排版），超限后连同尾部空行一起丢弃。
+ * 含 [html] 卡片时整段放行：HTML 是多行结构，按行砍会把卡片拦腰截成一堆碎标签。
+ */
+export function clampBubbleLines(content: string, maxLines = 8): string {
+    const text = String(content ?? '');
+    if (!text) return '';
+    if (/\[html/i.test(text)) return text;
+
+    const lines = text.split('\n');
+    const kept: string[] = [];
+    let spoken = 0;
+    for (const line of lines) {
+        if (line.trim() === '') {
+            if (spoken > 0 && spoken < maxLines) kept.push(line);
+            continue;
+        }
+        if (spoken >= maxLines) break;
+        kept.push(line);
+        spoken++;
+    }
+    return kept.join('\n').trim();
 }
 
 export interface GroupTopicBoxParsed {
