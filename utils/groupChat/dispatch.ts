@@ -2,7 +2,7 @@
 // 表情包、气泡分段、打字延迟），导演模式与轮询模式共用。
 import { DB } from '../db';
 import { CharacterProfile, EmojiCategory, Message, Toast } from '../../types';
-import { DirectorAction } from './parse';
+import { DirectorAction, parseQuotedBubbleLines } from './parse';
 import {
     GroupPacketMeta,
     PacketReceiptMeta,
@@ -83,15 +83,6 @@ export async function dispatchMemberActions(actions: DirectorAction[], ctx: Disp
             if (!publicContent) continue;
         }
 
-        // 0.5 [[QUOTE: 原话片段]]：AI 想针对某条具体发言回复。两层容错精神——
-        // 匹配不到目标就静默剥除标记，绝不因引用失败丢正文
-        let quoteReplyTo: { id: number; content: string; name: string } | undefined;
-        const quoteMatch = publicContent.match(/\[\[\s*QUOTE\s*[:：]\s*([\s\S]*?)\]\]/i);
-        if (quoteMatch) {
-            publicContent = publicContent.replace(quoteMatch[0], '').trim();
-            quoteReplyTo = resolveQuote?.(quoteMatch[1].trim());
-        }
-
         // 0.7 红包命令：[[GRAB_PACKET]] / [[RETURN_PACKET]] / [[SEND_PACKET: …]]。
         // 找不到适用包 / 目标名解析失败 → 静默剥标记保正文
         const packetExtract = extractPacketCommands(publicContent);
@@ -159,10 +150,9 @@ export async function dispatchMemberActions(actions: DirectorAction[], ctx: Disp
         const textContent = contentForText.replace(/\[\[SEND_EMOJI:.*?\]\]/g, '').trim();
 
         if (textContent) {
-            // Primary: split on line breaks
-            let chunks = textContent.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
-                .map(c => c.trim())
-                .filter(c => c.length > 0);
+            // Primary: split on line breaks and bind every [[QUOTE: …]] marker
+            // to its own following bubble. This supports multiple quotes in one turn.
+            let chunks = parseQuotedBubbleLines(textContent);
 
             // Fallback: split on spaces between CJK characters (中文里空格=AI想换行)
             if (chunks.length <= 1 && textContent.trim().length > 50) {
@@ -172,32 +162,39 @@ export async function dispatchMemberActions(actions: DirectorAction[], ctx: Disp
                 // mark split points with \x01, restore left char via $1. Left/right sets
                 // differ, so they can't be merged. Byte-equivalent (see lookbehindFree.test.ts).
                 const SPLIT = String.fromCharCode(1);
-                chunks = textContent
+                const only = chunks[0];
+                const splitContent = only?.content || '';
+                chunks = splitContent
                     .replace(/([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/g, `$1${SPLIT}`)
                     .split(SPLIT)
                     .map(c => c.trim())
-                    .filter(c => c.length > 0);
+                    .filter(c => c.length > 0)
+                    .map((content, index) => ({
+                        content,
+                        ...(index === 0 && only?.quoteSnippet ? { quoteSnippet: only.quoteSnippet } : {}),
+                    }));
             }
 
-            if (chunks.length === 0) chunks.push(textContent); // Fallback
+            if (chunks.length === 0) chunks.push({ content: textContent }); // Fallback
 
             for (const chunk of chunks) {
                 if (signal?.aborted) return;
                 // Typing delay
-                const delay = Math.max(500, chunk.length * 50 + Math.random() * 200);
+                const delay = Math.max(500, chunk.content.length * 50 + Math.random() * 200);
                 await new Promise(r => setTimeout(r, delay));
                 if (signal?.aborted) return;
+
+                // 匹配不到目标也只是不挂引用；标记已剥除，绝不泄漏成普通气泡。
+                const quoteReplyTo = chunk.quoteSnippet ? resolveQuote?.(chunk.quoteSnippet) : undefined;
 
                 await DB.saveMessage({
                     charId: targetId,
                     groupId,
                     role: 'assistant',
                     type: 'text',
-                    content: chunk,
-                    // 引用只挂第一条文字气泡
+                    content: chunk.content,
                     ...(quoteReplyTo ? { replyTo: quoteReplyTo } : {}),
                 });
-                quoteReplyTo = undefined;
                 await refresh();
             }
         }

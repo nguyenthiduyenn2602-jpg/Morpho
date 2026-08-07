@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { parseDirectorActions, parseSummaryYaml, parseGroupTopicBox } from './parse';
+import { parseDirectorActions, parseSummaryYaml, parseGroupTopicBox, parseQuotedBubbleLines } from './parse';
+
+describe('parseQuotedBubbleLines', () => {
+    it('binds multiple quote markers to their own following bubbles', () => {
+        expect(parseQuotedBubbleLines([
+            '[[QUOTE: 谁想来品鉴？]]',
+            '学姐，你这公开招标的架势，谁敢接茬啊。',
+            '也就包租公这种勇士。',
+            '[[QUOTE: 我现在就拿备用钥匙上去]]',
+            '行，包租公，你这业务范围扩展得挺快啊。',
+        ].join('\n'))).toEqual([
+            { content: '学姐，你这公开招标的架势，谁敢接茬啊。', quoteSnippet: '谁想来品鉴？' },
+            { content: '也就包租公这种勇士。' },
+            { content: '行，包租公，你这业务范围扩展得挺快啊。', quoteSnippet: '我现在就拿备用钥匙上去' },
+        ]);
+    });
+
+    it('supports inline quotes and strips an unmatched marker-only tail', () => {
+        expect(parseQuotedBubbleLines('[[QUOTE: 原话]]正文\n[[QUOTE: 不存在]]')).toEqual([
+            { content: '正文', quoteSnippet: '原话' },
+        ]);
+    });
+});
 
 describe('parseDirectorActions', () => {
     it('标准 JSON 数组直接解析', () => {

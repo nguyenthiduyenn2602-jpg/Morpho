@@ -6,6 +6,36 @@ export interface DirectorAction {
     content: string;
 }
 
+export interface QuotedBubbleLine {
+    content: string;
+    /** `[[QUOTE: …]]` applies to this bubble only. */
+    quoteSnippet?: string;
+}
+
+/**
+ * Split a member's multiline reply into bubbles while preserving every quote.
+ * A marker binds to the next non-empty bubble and is always stripped, even if
+ * its target cannot later be resolved.
+ */
+export function parseQuotedBubbleLines(raw: string): QuotedBubbleLine[] {
+    const lines = String(raw ?? '').split(/(?:\r\n|\r|\n|\u2028|\u2029)+/);
+    const result: QuotedBubbleLine[] = [];
+    let pendingQuote: string | undefined;
+    const quoteRe = /\[\[\s*QUOTE\s*[:：]\s*([\s\S]*?)\]\]/gi;
+
+    for (const rawLine of lines) {
+        const matches = [...rawLine.matchAll(quoteRe)];
+        if (matches.length > 0) {
+            pendingQuote = matches[matches.length - 1][1].trim() || undefined;
+        }
+        const content = rawLine.replace(quoteRe, '').trim();
+        if (!content) continue;
+        result.push({ content, ...(pendingQuote ? { quoteSnippet: pendingQuote } : {}) });
+        pendingQuote = undefined;
+    }
+    return result;
+}
+
 /** 剥掉 markdown 代码围栏（```json / ```yaml / ``` 等），LLM 很爱裹这个 */
 const stripFences = (raw: string): string =>
     String(raw ?? '')
