@@ -19,6 +19,7 @@ import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
 import { resolveRoundRobinOrder } from '../utils/groupChat/roundRobin';
+import { hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig } from '../utils/groupChat/apiConfig';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -369,6 +370,13 @@ const GroupMessageItem = React.memo(({
 const ROUND_ROBIN_FIRST_PASS_MAX_LINES = 5;
 const ROUND_ROBIN_SECOND_PASS_MAX_LINES = 3;
 
+type MemberApiTestState = {
+    status: 'idle' | 'testing' | 'success' | 'error';
+    signature: string;
+    message?: string;
+    verifiedAt?: number;
+};
+
 // --- Main Component ---
 
 const GroupChat: React.FC = () => {
@@ -442,6 +450,7 @@ const GroupChat: React.FC = () => {
     // 两个写死成员位只决定成员与后端；每轮首发者由用户 @ 或浏览器随机决定。
     const [tempMemberSlots, setTempMemberSlots] = useState<string[]>(['', '']);
     const [tempMemberApi, setTempMemberApi] = useState<Record<string, APIConfig>>({});
+    const [memberApiTestStates, setMemberApiTestStates] = useState<Record<string, MemberApiTestState>>({});
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [memberGroupId, setMemberGroupId] = useState(GROUP_FILTER_ALL); // 建群选成员的分组筛选
     const [transferAmount, setTransferAmount] = useState('');
@@ -672,6 +681,75 @@ const GroupChat: React.FC = () => {
         addToast('群聊已创建', 'success');
     };
 
+    const isMemberApiDraftVerified = (memberId: string, config?: APIConfig): boolean => {
+        if (!isMemberApiConfigComplete(config)) return false;
+        const signature = memberApiConfigFingerprint(config);
+        const local = memberApiTestStates[memberId];
+        if (local?.signature === signature) {
+            if (local.status === 'success') return true;
+            if (local.status === 'testing' || local.status === 'error') return false;
+        }
+        return activeGroup?.memberApiVerifications?.[memberId]?.signature === signature;
+    };
+
+    const canSaveMemberApiDrafts = tempMemberSlots.filter(Boolean).every(memberId => {
+        const config = tempMemberApi[memberId];
+        if (!hasMemberApiConfig(config)) return true; // 全空 = 使用全局 API
+        return isMemberApiConfigComplete(config) && isMemberApiDraftVerified(memberId, config);
+    });
+
+    const testMemberApiConnection = async (memberId: string) => {
+        const config = normalizeMemberApiConfig(tempMemberApi[memberId]);
+        const signature = memberApiConfigFingerprint(config);
+        if (!isMemberApiConfigComplete(config)) {
+            setMemberApiTestStates(prev => ({
+                ...prev,
+                [memberId]: { status: 'error', signature, message: '请先完整填写 URL、API Key 和模型名' },
+            }));
+            return;
+        }
+
+        setMemberApiTestStates(prev => ({ ...prev, [memberId]: { status: 'testing', signature, message: '正在连接模型…' } }));
+        try {
+            const response = await fetch(`${config.baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+                body: JSON.stringify({
+                    model: config.model,
+                    messages: [{ role: 'user', content: 'Reply with OK.' }],
+                    temperature: 0,
+                    max_tokens: 32,
+                    stream: false,
+                }),
+            });
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}${body ? `：${body.slice(0, 120)}` : ''}`);
+            }
+            const data = await safeResponseJson(response);
+            const reply = String(data.choices?.[0]?.message?.content ?? '').trim();
+            const verifiedAt = Date.now();
+            setMemberApiTestStates(prev => ({
+                ...prev,
+                [memberId]: {
+                    status: 'success',
+                    signature,
+                    verifiedAt,
+                    message: reply ? `连接成功 · ${reply.slice(0, 36)}` : '连接成功',
+                },
+            }));
+        } catch (error: any) {
+            setMemberApiTestStates(prev => ({
+                ...prev,
+                [memberId]: {
+                    status: 'error',
+                    signature,
+                    message: `连接失败：${String(error?.message || error).slice(0, 160)}`,
+                },
+            }));
+        }
+    };
+
     const handleUpdateGroupInfo = async () => {
         if (!activeGroup) return;
         // 两个写死的成员位：按顺序收成员，空位丢弃。
@@ -680,9 +758,27 @@ const GroupChat: React.FC = () => {
         const extra = baseMembers.slice(2).filter(id => !tempMemberSlots.includes(id));
         const newMembers = [...tempMemberSlots.filter(Boolean), ...extra];
         const newApi: Record<string, APIConfig> = {};
+        const newVerifications: NonNullable<GroupProfile['memberApiVerifications']> = {};
         for (const id of newMembers) {
             const c = tempMemberApi[id];
-            if (c && (c.apiKey || c.baseUrl || c.model)) newApi[id] = c;
+            if (!hasMemberApiConfig(c)) continue;
+            if (!isMemberApiConfigComplete(c)) {
+                addToast(`${characters.find(ch => ch.id === id)?.name || '群成员'} 的 API 配置未填写完整`, 'error');
+                return;
+            }
+            if (tempMemberSlots.includes(id) && !isMemberApiDraftVerified(id, c)) {
+                addToast(`请先检测 ${characters.find(ch => ch.id === id)?.name || '群成员'} 的 API 连接`, 'error');
+                return;
+            }
+            const normalized = normalizeMemberApiConfig(c);
+            const signature = memberApiConfigFingerprint(normalized);
+            newApi[id] = normalized;
+            const local = memberApiTestStates[id];
+            if (local?.status === 'success' && local.signature === signature) {
+                newVerifications[id] = { signature, verifiedAt: local.verifiedAt || Date.now() };
+            } else if (activeGroup.memberApiVerifications?.[id]?.signature === signature) {
+                newVerifications[id] = activeGroup.memberApiVerifications[id];
+            }
         }
         const updates = {
             name: tempGroupName || activeGroup.name,
@@ -695,6 +791,7 @@ const GroupChat: React.FC = () => {
             // 群内独立模型后端：只存被选中的成员；全空则 undefined，回落全局 API
             members: newMembers,
             memberApiConfigs: Object.keys(newApi).length ? newApi : undefined,
+            memberApiVerifications: Object.keys(newVerifications).length ? newVerifications : undefined,
         };
         // 走 context 的 updateGroup：同步内存 groups + DB，避免退出后读回旧值
         await updateGroup(activeGroup.id, updates);
@@ -959,6 +1056,7 @@ const GroupChat: React.FC = () => {
         // 初始化两个写死的成员位 + 各自的群内 API 配置
         setTempMemberSlots([activeGroup?.members?.[0] ?? '', activeGroup?.members?.[1] ?? '']);
         setTempMemberApi(activeGroup?.memberApiConfigs ?? {});
+        setMemberApiTestStates({});
         if (activeGroup) void loadTopicBoxStats(activeGroup);
         setModalType('settings');
         setShowPanel('none');
@@ -1799,7 +1897,7 @@ ${memberTimeline || '(暂无互动记录)'}
             {/* --- Modals --- */}
 
             {/* Group Settings Modal */}
-            <Modal isOpen={modalType === 'settings'} title="群组设置" onClose={() => setModalType('none')} footer={<button onClick={handleUpdateGroupInfo} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg shadow-violet-200">保存修改</button>}>
+            <Modal isOpen={modalType === 'settings'} title="群组设置" onClose={() => setModalType('none')} footer={<button onClick={handleUpdateGroupInfo} disabled={!canSaveMemberApiDrafts} className={`w-full py-3 text-white font-bold rounded-2xl transition-all ${canSaveMemberApiDrafts ? 'bg-violet-500 shadow-lg shadow-violet-200 active:scale-95' : 'bg-slate-300 cursor-not-allowed'}`}>{canSaveMemberApiDrafts ? '保存修改' : '请先检测成员 API'}</button>}>
                 <div className="space-y-6">
                     {/* Header Info */}
                     <div className="flex justify-center">
@@ -1849,13 +1947,32 @@ ${memberTimeline || '(暂无互动记录)'}
                         <p className="text-[9px] text-slate-400 mb-3 leading-tight">从「神经链接」角色列表选两位 AI，各自填独立模型后端；某项留空则回退到「设置」里的全局 API。成员栏顺序不再锁定首发者：用户 @ 优先，否则每回合随机。</p>
                         {tempMemberSlots.map((slotId, i) => {
                             const cfg = (slotId && tempMemberApi[slotId]) || { baseUrl: '', apiKey: '', model: '' };
+                            const signature = memberApiConfigFingerprint(cfg);
+                            const testState = slotId ? memberApiTestStates[slotId] : undefined;
+                            const stateMatchesDraft = testState?.signature === signature;
+                            const testing = !!(stateMatchesDraft && testState?.status === 'testing');
+                            const verified = !!slotId && isMemberApiDraftVerified(slotId, cfg);
+                            const currentError = stateMatchesDraft && testState?.status === 'error' ? testState.message : '';
+                            const hasDraft = hasMemberApiConfig(cfg);
+                            const complete = isMemberApiConfigComplete(cfg);
                             const setField = (field: 'baseUrl' | 'apiKey' | 'model', val: string) => {
                                 if (!slotId) return;
-                                setTempMemberApi(prev => ({ ...prev, [slotId]: { ...(prev[slotId] || { baseUrl: '', apiKey: '', model: '' }), [field]: val } }));
+                                const next = { ...(tempMemberApi[slotId] || { baseUrl: '', apiKey: '', model: '' }), [field]: val };
+                                setTempMemberApi(prev => ({ ...prev, [slotId]: next }));
+                                setMemberApiTestStates(prev => ({
+                                    ...prev,
+                                    [slotId]: { status: 'idle', signature: memberApiConfigFingerprint(next) },
+                                }));
                             };
                             return (
-                                <div key={i} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 mb-3">
-                                    <div className="text-xs font-bold text-slate-700 mb-2">角色{i + 1}</div>
+                                <div key={i} className={`rounded-xl border p-3 mb-3 transition-colors ${verified ? 'border-emerald-200 bg-emerald-50/40' : currentError ? 'border-red-200 bg-red-50/30' : 'border-slate-200 bg-slate-50/60'}`}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-xs font-bold text-slate-700">角色{i + 1}</div>
+                                        <div className={`flex items-center gap-1.5 text-[10px] font-bold ${verified ? 'text-emerald-600' : testing ? 'text-amber-500' : currentError ? 'text-red-500' : 'text-slate-400'}`}>
+                                            <span className={`w-2 h-2 rounded-full ${verified ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]' : testing ? 'bg-amber-400 animate-pulse' : currentError ? 'bg-red-400' : 'bg-slate-300'}`} />
+                                            {verified ? '连接正常' : testing ? '检测中' : currentError ? '连接失败' : hasDraft ? '待检测' : '使用全局 API'}
+                                        </div>
+                                    </div>
                                     <select
                                         value={slotId}
                                         onChange={e => {
@@ -1890,8 +2007,21 @@ ${memberTimeline || '(暂无互动记录)'}
                                         value={cfg.model}
                                         disabled={!slotId}
                                         onChange={e => setField('model', e.target.value)}
-                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 disabled:bg-slate-100 disabled:text-slate-300"
+                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 disabled:bg-slate-100 disabled:text-slate-300 mb-2"
                                     />
+                                    <button
+                                        type="button"
+                                        disabled={!slotId || !complete || testing}
+                                        onClick={() => slotId && void testMemberApiConnection(slotId)}
+                                        className={`w-full py-2 rounded-lg text-[11px] font-bold border transition-all ${!slotId || !complete || testing ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : verified ? 'border-emerald-200 bg-emerald-50 text-emerald-700 active:scale-[0.98]' : 'border-violet-200 bg-violet-50 text-violet-700 active:scale-[0.98]'}`}
+                                    >
+                                        {testing ? '正在检测连接…' : verified ? '重新检测连接' : '检测连接'}
+                                    </button>
+                                    {(currentError || (stateMatchesDraft && testState?.status === 'success' && testState.message)) && (
+                                        <p className={`mt-2 text-[10px] leading-4 break-all ${currentError ? 'text-red-500' : 'text-emerald-600'}`}>
+                                            {currentError || testState?.message}
+                                        </p>
+                                    )}
                                 </div>
                             );
                         })}

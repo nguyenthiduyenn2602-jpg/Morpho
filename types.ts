@@ -2420,6 +2420,8 @@ export interface GroupProfile {
      * 与角色身上的 chatApiConfig 互不干扰——这里的配置只作用于本群，不污染角色私聊。
      */
     memberApiConfigs?: Record<string, APIConfig>;
+    /** 群内独立后端最近一次成功连通测试；signature 绑定当时的 URL/Key/model，任一字段变化即失效。 */
+    memberApiVerifications?: Record<string, { signature: string; verifiedAt: number }>;
     /** 群聊白框自定义 CSS（.sully-chat-* 钩子），与私聊 char.chromeCustomCss 同机制 */
     chromeCustomCss?: string;
     /** 群提示音（未绑定白框时的独立存储）；绑定时以 chromeCustomCss 里的 @sully-sound 注释为准 */
