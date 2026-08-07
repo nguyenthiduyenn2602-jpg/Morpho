@@ -2405,12 +2405,7 @@ export interface GroupProfile {
      * roundRobin = 每位成员单独调用一次 API，按成员顺序逐个发言（更真实、防串号，token ≈ 成员数倍）。
      */
     replyMode?: 'director' | 'roundRobin';
-    /**
-     * 圆桌接力（仅 roundRobin 模式生效）：首轮最后一位发言者可用 [[TO: 名字]] 点名一位成员
-     * 追加一次发言，被点名者有权 [[SKIP]] 婉拒，且回应后禁止再点名。
-     * 整回合 API 调用数硬上界 = 成员数 + 1，不会无限对聊。
-     * undefined 视为开启；显式 false 才关（关掉 = 退回"每人各说一次就结束"）。
-     */
+    /** @deprecated 旧版 [[TO: 名字]] 单次接力开关；双轮圆桌调度不再读取该字段。 */
     roundRobinHandoff?: boolean;
     /**
      * 成员独立气泡：true = 每位成员的气泡用其私聊 bubbleStyle 主题的 AI 侧；

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGroupHistoryBlock, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
+import { buildGroupHistoryBlock, buildRoundRobinInstruction, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
 import type { Message, CharacterProfile } from '../../types';
 
 const char = (id: string, name: string): CharacterProfile => ({ id, name } as CharacterProfile);
@@ -37,5 +37,29 @@ describe('buildGroupHistoryBlock 时间跳变分隔行', () => {
 
     it('阈值常量为 3 小时', () => {
         expect(GROUP_HISTORY_GAP_THRESHOLD_MS).toBe(3 * 60 * 60 * 1000);
+    });
+});
+
+describe('buildRoundRobinInstruction 双轮圆桌', () => {
+    const history = { text: '用户: 讨论一下方案', attachedImages: [], attachedImagesNote: '' };
+
+    it('第一轮允许完整发言并限制最多 5 行', () => {
+        const opening = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'opening', maxLines: 5 });
+        const reply = buildRoundRobinInstruction('小北', history, '无', { slot: 'reply', maxLines: 5 });
+        expect(opening).toContain('第一轮第一个');
+        expect(reply).toContain('第一轮第二个');
+        expect(opening).toContain('最多 5 行');
+        expect(opening).not.toContain('[[SKIP]]');
+    });
+
+    it('第二轮要求精简、允许跳过且不再使用点名接力', () => {
+        const followup = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'followup', maxLines: 3 });
+        const closing = buildRoundRobinInstruction('小北', history, '无', { slot: 'closing', maxLines: 3 });
+        expect(followup).toContain('第二轮短回应');
+        expect(followup).toContain('[[SKIP]]');
+        expect(followup).toContain('最多 3 行');
+        expect(closing).toContain('第二轮最后一个');
+        expect(closing).toContain('等待用户');
+        expect(closing).toContain('不要输出 `[[TO: 名字]]`');
     });
 });

@@ -13,11 +13,12 @@ import { processImage } from '../utils/file';
 import { stickerNameFromUrl } from '../utils/messageFormat';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { resolveChatTheme } from '../utils/groupChat/theme';
-import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox, parseHandoff, matchHandoffName, clampBubbleLines } from '../utils/groupChat/parse';
+import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox, parseHandoff, clampBubbleLines } from '../utils/groupChat/parse';
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
+import { resolveRoundRobinOrder } from '../utils/groupChat/roundRobin';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -365,7 +366,8 @@ const GroupMessageItem = React.memo(({
 // 轮询模式单次发言的硬性行数上限（一行 = 一个气泡）。
 // 提示词里给的是"目标 3-5 行"，但模型经常不听，一激动能吐十几行刷屏 ——
 // 这里是代码侧的兜底闸门，超出部分直接截掉。下限不管：AI 少说两句本来就自然。
-const ROUND_ROBIN_MAX_LINES = 8;
+const ROUND_ROBIN_FIRST_PASS_MAX_LINES = 5;
+const ROUND_ROBIN_SECOND_PASS_MAX_LINES = 3;
 
 // --- Main Component ---
 
@@ -434,12 +436,10 @@ const GroupChat: React.FC = () => {
     const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
     const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
-    // 圆桌接力开关（仅轮询模式下有意义）：undefined 视为开，所以默认 true
-    const [tempRoundRobinHandoff, setTempRoundRobinHandoff] = useState(true);
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
     // 群内独立模型后端：两个写死的成员位（角色1 / 角色2），各自可配 url/apiKey/model。
-    // 顺序即发言顺序：members[0] 先说，members[1] 接话并可点名接力。
+    // 两个写死成员位只决定成员与后端；每轮首发者由用户 @ 或浏览器随机决定。
     const [tempMemberSlots, setTempMemberSlots] = useState<string[]>(['', '']);
     const [tempMemberApi, setTempMemberApi] = useState<Record<string, APIConfig>>({});
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
@@ -689,7 +689,6 @@ const GroupChat: React.FC = () => {
             privateContextCap: tempPrivateContextCap,
             memberTimelineCap: tempMemberTimelineCap,
             replyMode: tempReplyMode,
-            roundRobinHandoff: tempRoundRobinHandoff,
             memberBubbleIndependent: tempMemberBubbleIndependent,
             // 空串 = 默认紫，存 undefined 保持向后兼容语义
             userBubbleThemeId: tempUserBubbleThemeId || undefined,
@@ -955,7 +954,6 @@ const GroupChat: React.FC = () => {
         setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
         setTempMemberTimelineCap(activeGroup?.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP);
         setTempReplyMode(activeGroup?.replyMode ?? 'director');
-        setTempRoundRobinHandoff(activeGroup?.roundRobinHandoff !== false);
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
         // 初始化两个写死的成员位 + 各自的群内 API 配置
@@ -1304,22 +1302,25 @@ ${memberTimeline || '(暂无互动记录)'}
         }
     };
 
-    // 轮询模式（圆桌接力）：按【群成员配置顺序】逐个调用，后发言者能看到前面成员本回合刚说的话
-    // （串号天然无解可能 → 天然解决）。首轮最后一位可用 [[TO: 名字]] 点名一位成员追加一次发言，
-    // 被点名者有权 [[SKIP]] 婉拒；接力位禁止再点名 —— 整回合调用数硬上界 = 成员数 + 1，
-    // 杜绝两个 AI 互相点名把用户晾在一边的失控局面。
+    // 轮询模式（双轮圆桌）：用户明确 @ 谁就由谁首发；没有 @ 时浏览器只随机一次首发者，
+    // 随后固定执行「A 完整 → B 完整 → A 精简 → B 精简」。每次调用前都从 DB 读取完整最新
+    // 群历史并重建该角色上下文，所以后发言者能看到本回合此前的所有新消息。
+    // 当前产品固定两个成员，因此整回合最多 4 次 API 调用；第二轮可 [[SKIP]]，第四次后硬停。
     // 单成员失败只跳过该成员，不杀整轮。
     const triggerRoundRobin = async (currentMsgs: Message[]) => {
         if (!activeGroup) return;
-        // 顺序必须按 activeGroup.members 排，不能 filter 全局 characters ——
-        // 后者的顺序取决于全局角色列表，用户在群里怎么排都不生效，首发/接话位会随机漂移。
-        const groupMembers = activeGroup.members
+        const configuredMembers = activeGroup.members
             .map(id => characters.find(c => c.id === id))
             .filter((c): c is CharacterProfile => !!c);
-        if (groupMembers.length === 0) {
+        if (configuredMembers.length === 0) {
             addToast('这个群还没有有效成员', 'error');
             return;
         }
+        const latestUserText = [...currentMsgs]
+            .reverse()
+            .find(m => m.role === 'user' && (!m.type || m.type === 'text'))?.content || '';
+        // 只在回合开始时决定一次，之后四次调用都复用同一顺序。
+        const groupMembers = resolveRoundRobinOrder(configuredMembers, String(latestUserText));
         // 群内独立后端也算「已就绪」：memberApiConfigs 或角色自身 chatApiConfig 任一有 key 即可
         const groupApiReady = groupMembers.some(m => activeGroup.memberApiConfigs?.[m.id]?.apiKey || m.chatApiConfig?.apiKey);
         if (!apiConfig.apiKey && !groupApiReady) {
@@ -1335,15 +1336,14 @@ ${memberTimeline || '(暂无互动记录)'}
         let tokenCompletion = 0;
         let roundMsgs = [...currentMsgs];
 
-        const handoffEnabled = activeGroup.roundRobinHandoff !== false && groupMembers.length > 1;
-
-        // 一次发言 = 一次 API 调用 = 一段完整发言（3-5 行气泡）。
-        // 返回值：这次点名的目标名（只有 reply 位可能非空），跳过或未点名返回 null。
+        // 一次发言 = 一次 API 调用。第一轮完整表达，第二轮由 prompt 要求精简。
         const speakOnce = async (
             member: CharacterProfile,
             slot: RoundRobinSlot,
-            calledBy?: string,
-        ): Promise<string | null> => {
+        ): Promise<void> => {
+            const maxLines = slot === 'opening' || slot === 'reply'
+                ? ROUND_ROBIN_FIRST_PASS_MAX_LINES
+                : ROUND_ROBIN_SECOND_PASS_MAX_LINES;
             // 群内独立后端优先：memberApiConfigs[id] 有 key 就用它的 url/apiKey/model（缺哪样回落全局对应项）；
             // 否则回退角色自身的 chatApiConfig；再没有才用全局 apiConfig。
             const memberApi = activeGroup.memberApiConfigs?.[member.id];
@@ -1361,14 +1361,9 @@ ${memberTimeline || '(暂无互动记录)'}
             const htmlPromptExt = activeGroup.htmlModeEnabled
                 ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
                 : '';
-            const handoffCandidates = slot === 'reply' && handoffEnabled
-                ? groupMembers.filter(m => m.id !== member.id).map(m => m.name)
-                : [];
             const instruction = buildRoundRobinInstruction(member.name, history, emojiContextStr, {
                 slot,
-                handoffCandidates,
-                calledBy,
-                maxLines: ROUND_ROBIN_MAX_LINES,
+                maxLines,
             });
             const prompt = `${header}${memberBlock}\n\n${instruction}${htmlPromptExt}\n`;
 
@@ -1406,13 +1401,12 @@ ${memberTimeline || '(暂无互动记录)'}
             if (text.startsWith(`${member.name}:`) || text.startsWith(`${member.name}：`)) {
                 text = text.slice(member.name.length + 1).trim();
             }
-            // 先剥点名标记再判 SKIP：只吐一个 [[TO: X]] 却没正文的，等同于没话说。
-            // 标记必须在入库前剥净，否则群里会冒出一个写着 [[TO: 某某]] 的气泡。
+            // 新调度不依赖 [[TO:]]；仍剥掉模型偶尔沿用旧格式吐出的标记，避免显示脏气泡。
             const handoff = parseHandoff(text);
             const { skipped, content } = stripSkipMarker(handoff.content);
-            if (skipped) return null;
+            if (skipped) return;
 
-            await dispatchMemberActions([{ charId: member.id, content: clampBubbleLines(content, ROUND_ROBIN_MAX_LINES) }], {
+            await dispatchMemberActions([{ charId: member.id, content: clampBubbleLines(content, maxLines) }], {
                 groupId: activeGroup.id,
                 memberIds: activeGroup.members,
                 characters,
@@ -1434,40 +1428,34 @@ ${memberTimeline || '(暂无互动记录)'}
                 await new Promise(r => setTimeout(r, 300 + Math.random() * 300));
             }
 
-            // 点名权只属于 reply 位；其它位置就算模型硬输出 [[TO:]] 也一律无视
-            return slot === 'reply' ? handoff.target : null;
         };
 
         try {
-            // ① 首轮：每位成员按群配置顺序各发言一次。
-            //    最后一位拿点名权 —— 2 人群正好退化成「A 首发 → B 接话」，即目标形态。
-            let nominated: string | null = null;
+            // ① 第一轮：两位成员按 @/随机确定的顺序完整发言。
             for (let i = 0; i < groupMembers.length; i++) {
                 if (abort.signal.aborted) break;
                 const member = groupMembers[i];
-                const isLast = i === groupMembers.length - 1;
-                const slot: RoundRobinSlot = isLast && groupMembers.length > 1 ? 'reply' : 'opening';
+                const slot: RoundRobinSlot = i === 0 ? 'opening' : 'reply';
                 try {
-                    const target = await speakOnce(member, slot);
-                    if (target) nominated = target;
+                    await speakOnce(member, slot);
                 } catch (e: any) {
                     if (e?.name === 'AbortError') break;
-                    console.error(`[GroupChat] 轮询模式 ${member.name} 回复失败:`, e);
+                    console.error(`[GroupChat] 第一轮 ${member.name} 回复失败:`, e);
                     failed.push(member.name);
                 }
             }
 
-            // ② 接力位：被点名者追加一次发言，说完硬停 —— 不读它的 [[TO:]]，回合到此结束。
-            const lastSpeaker = groupMembers[groupMembers.length - 1];
-            const nominee = handoffEnabled ? matchHandoffName(nominated, groupMembers) : null;
-            if (nominee && nominee.id !== lastSpeaker.id && !abort.signal.aborted) {
+            // ② 第二轮：保持相同顺序各短回应一次。每次仍读取完整上下文，最后一位说完硬停。
+            for (let i = 0; i < groupMembers.length; i++) {
+                if (abort.signal.aborted) break;
+                const member = groupMembers[i];
+                const slot: RoundRobinSlot = i === groupMembers.length - 1 ? 'closing' : 'followup';
                 try {
-                    await speakOnce(nominee, 'callback', lastSpeaker.name);
+                    await speakOnce(member, slot);
                 } catch (e: any) {
-                    if (e?.name !== 'AbortError') {
-                        console.error(`[GroupChat] 圆桌接力 ${nominee.name} 回应失败:`, e);
-                        failed.push(nominee.name);
-                    }
+                    if (e?.name === 'AbortError') break;
+                    console.error(`[GroupChat] 第二轮 ${member.name} 回复失败:`, e);
+                    failed.push(member.name);
                 }
             }
 
@@ -1842,23 +1830,15 @@ ${memberTimeline || '(暂无互动记录)'}
                                 className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'roundRobin' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                             >
                                 <div className="text-xs font-bold text-slate-700">轮询模式</div>
-                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">每位成员单独调用一次 API，按【群成员顺序】逐个发言（每人必发言）。后发言者能看到前面成员刚说的话。更真实、彻底防串号，但更慢，token 消耗约为导演模式 × 成员数。</p>
+                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">两位成员分别使用自己的 API 完成两轮发言：第一轮各自完整回应，第二轮各自简短补充。你明确 @ 谁就由谁首发；没有 @ 时浏览器随机首发。每次发言都能看到本回合此前的完整消息，最多 4 次调用后停止。</p>
                             </div>
                         </div>
 
-                        {/* 圆桌接力：只在轮询模式下有意义，导演模式下不显示 */}
+                        {/* 双轮圆桌说明：轮询模式固定执行，不再依赖模型输出点名标记 */}
                         {tempReplyMode === 'roundRobin' && (
-                            <div className="flex items-center justify-between mt-3 pt-3 border-t border-dashed border-slate-100">
-                                <div className="flex-1 pr-3">
-                                    <div className="text-xs font-bold text-slate-700">圆桌接力</div>
-                                    <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">最后一位发言者若明确想听某人回应，可点名 ta 追加发言一次；被点名者也可以选择不理。回合上限 = 成员数 + 1 次调用，不会无限对聊。关掉则每人各说一次就结束。</p>
-                                </div>
-                                <div
-                                    onClick={() => setTempRoundRobinHandoff(v => !v)}
-                                    className={`w-11 h-6 rounded-full cursor-pointer transition-colors relative shrink-0 ${tempRoundRobinHandoff ? 'bg-violet-500' : 'bg-slate-200'}`}
-                                >
-                                    <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${tempRoundRobinHandoff ? 'left-[22px]' : 'left-0.5'}`} />
-                                </div>
+                            <div className="mt-3 pt-3 border-t border-dashed border-slate-100">
+                                <div className="text-xs font-bold text-slate-700">双轮圆桌</div>
+                                <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">固定顺序为「首发完整 → 另一位完整 → 首发精简 → 另一位精简」。第二轮确实无话可补时角色可以跳过；最后一次结束后等待你继续发言。</p>
                             </div>
                         )}
                     </div>
@@ -1866,7 +1846,7 @@ ${memberTimeline || '(暂无互动记录)'}
                     {/* 成员与模型（群内独立 API） */}
                     <div className="pt-2 border-t border-slate-100">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">成员与模型</label>
-                        <p className="text-[9px] text-slate-400 mb-3 leading-tight">从「神经链接」角色列表选两位 AI，各自填独立模型后端；某项留空则回退到「设置」里的全局 API。顺序即发言顺序（首位先说，末位可点名接力）。</p>
+                        <p className="text-[9px] text-slate-400 mb-3 leading-tight">从「神经链接」角色列表选两位 AI，各自填独立模型后端；某项留空则回退到「设置」里的全局 API。成员栏顺序不再锁定首发者：用户 @ 优先，否则每回合随机。</p>
                         {tempMemberSlots.map((slotId, i) => {
                             const cfg = (slotId && tempMemberApi[slotId]) || { baseUrl: '', apiKey: '', model: '' };
                             const setField = (field: 'baseUrl' | 'apiKey' | 'model', val: string) => {
