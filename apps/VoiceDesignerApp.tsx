@@ -528,7 +528,7 @@ const VoiceDesignerApp: React.FC = () => {
                 {['', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'].map(em => (
                   <button key={em} onClick={() => setEmotion(em)}
                     className={`text-[10px] px-2.5 py-1.5 rounded-full font-semibold transition-colors ${emotion === em ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                    {em === '' ? '自动' : em === 'happy' ? '开心' : em === 'sad' ? '伤感' : em === 'angry' ? '生气' : em === 'fearful' ? '恐惧' : em === 'disgusted' ? '厌恶' : em === 'surprised' ? '惊讶' : '平静'}
+                    {em === '' ? '关闭' : em === 'happy' ? '开心' : em === 'sad' ? '伤感' : em === 'angry' ? '生气' : em === 'fearful' ? '恐惧' : em === 'disgusted' ? '厌恶' : em === 'surprised' ? '惊讶' : '平静'}
                   </button>
                 ))}
               </div>

@@ -187,6 +187,7 @@ const renderAssistantLine = (text: string, accent = '#8b5cf6') => {
 };
 const buildCallPrompt = (userName: string, charName?: string, coreContext?: string, voiceLang?: string) => {
   const resolvedCharName = charName || '你的角色';
+  const dynamicEmotionTagsEnabled = getTtsProvider() === 'fishaudio';
   const time = RealtimeContextManager.getTimeContext();
   const specialDates = RealtimeContextManager.checkSpecialDates();
   const timeContext = [
@@ -241,14 +242,14 @@ const buildCallPrompt = (userName: string, charName?: string, coreContext?: stri
 聊得来的时候可以说多一点，没必要每次都控制字数。
 关键是：**让对方觉得你真的在听、真的在聊，而不是在执行对话任务。**
 
-### 让声音有情绪（重要——直接写进文本，不要靠旁白）
+### 让声音有语气（重要——直接写进文本，不要靠旁白）
 
-你的话会被转成真实语音，所以**情绪和语气要由你自己标出来**，不要写中文舞台指示（系统不会朗读它们，只会被删掉）。两种工具：
+你的话会被转成真实语音。不要写中文舞台指示（系统不会朗读它们，只会被删掉）。
 
-1) **整段情绪**（可选，最多一个）：如果这通回复整体有明显情绪，**只在整段回复的最最开头**放一个标签，从这些里选一个：
+${dynamicEmotionTagsEnabled ? `1) **整段情绪**（可选，最多一个）：如果这通回复整体有明显情绪，**只在整段回复的最最开头**放一个标签，从这些里选一个：
 \`[happy] [sad] [angry] [fearful] [disgusted] [surprised] [calm] [fluent]\`
    例：\`[angry] 你昨晚十二点半还喝咖啡？不要命了是吧。\`
-   **铁律**：整段回复最多一个，且必须在最开头。**绝对不要每段都标、不要标在句子中间、不要标在第二段以后**——放错位置只会被删掉、还会让声音忽高忽低。情绪不强就别标。
+   **铁律**：整段回复最多一个，且必须在最开头。**绝对不要每段都标、不要标在句子中间、不要标在第二段以后**。情绪不强就别标。` : `1) **不要输出整段情绪标签**：不要写 [happy]、[sad]、[angry]、[calm] 等标签，也不要给 <语音> 添加 emotion 属性。MiniMax 的动态情感增强已关闭；用自然台词和标点表达语气。`}
 
 2) **句中语气声**（要克制）：偶尔想要笑、叹气这种真实反应，直接写官方英文标签（**别写中文的（轻笑）（叹气）**）：
 \`(chuckle) (laughs) (sighs) (coughs) (groans) (breath) (pant) (gasps) (sniffs) (snorts) (hissing) (emm)\`
@@ -269,19 +270,19 @@ ${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' 
 
 你的回复格式必须是：
 1. 先用中文自然地写出你要说的话（给对方看的文字，中文舞台指示写在这里没关系）
-2. 然后换行，在 <语音> 标签里写出这句话的${langLabel}翻译——这才是真正会被读出来的部分。可选地用 emotion 属性标整句情绪：\`<语音 emotion="happy">…</语音>\`（情绪只能取 happy/sad/angry/fearful/disgusted/surprised/calm/fluent）
+2. 然后换行，在 <语音> 标签里写出这句话的${langLabel}翻译——这才是真正会被读出来的部分。${dynamicEmotionTagsEnabled ? '可选地用 emotion 属性标整句情绪：\`<语音 emotion="happy">…</语音>\`（情绪只能取 happy/sad/angry/fearful/disgusted/surprised/calm/fluent）' : '不要给 <语音> 添加 emotion 属性。'}
 
 示例：
 啊，我知道了
-<语音 emotion="happy">Ok, I get it (chuckle)</语音>
+<语音${dynamicEmotionTagsEnabled ? ' emotion="happy"' : ''}>Ok, I get it (chuckle)</语音>
 
 你说真的？那也太离谱了吧。
-<语音 emotion="surprised">Wait... are you serious? That's insane.</语音>
+<语音${dynamicEmotionTagsEnabled ? ' emotion="surprised"' : ''}>Wait... are you serious? That's insane.</语音>
 
 要求：
 - <语音> 里的翻译要自然口语化，不要机翻味，要符合你的角色性格
 - <语音> 里只写会被朗读的文字；想要笑/叹气等真实语气，用官方英文标签 (laughs)/(sighs)/(chuckle) 等，**不要写中文（轻笑）**，也不要写中文舞台旁白
-- 每条消息只有一个 <语音> 标签，emotion 属性可选；情绪不强就别加
+- 每条消息只有一个 <语音> 标签${dynamicEmotionTagsEnabled ? '，emotion 属性可选；情绪不强就别加' : '，不要添加 emotion 属性'}
 - 中文部分和 <语音> 部分表达的意思要一致` : '';
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
@@ -394,10 +395,11 @@ const CallApp: React.FC = () => {
     }
     return extras;
   };
-  const resolveVoiceSettingFields = (emotionOverride?: string) => {
+  const resolveVoiceSettingFields = () => {
     const vp = selectedChar?.voiceProfile;
-    // Per-utterance emotion from <语音 emotion="…"> wins over the static voiceProfile emotion.
-    const emotion = (emotionOverride && VALID_EMOTIONS.has(emotionOverride)) ? emotionOverride : (vp?.emotion || '');
+    // MiniMax has no neutral/zero emotion value. Only send an explicitly selected
+    // fixed character emotion; LLM per-turn tags must not override the off state.
+    const emotion = vp?.emotion && VALID_EMOTIONS.has(vp.emotion) ? vp.emotion : '';
     return {
       // Clamp speed & pitch to safe human-like ranges
       speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),
@@ -552,7 +554,7 @@ const CallApp: React.FC = () => {
             const model = resolveModel();
             const ttsPayload: any = {
               model, text: speechText, stream: false, output_format: 'url',
-              voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(greetingEmotion) },
+              voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields() },
               audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
               ...(voiceLang ? { language_boost: voiceLang } : {}),
               ...buildTtsExtras(),
@@ -842,7 +844,7 @@ const CallApp: React.FC = () => {
           text: chunk,
           stream: false,
           output_format: 'url',
-          voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(turnEmotion) },
+          voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields() },
           audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
           ...(voiceLang ? { language_boost: voiceLang } : {}),
           ...buildTtsExtras(),
@@ -1052,7 +1054,7 @@ const CallApp: React.FC = () => {
             const model = resolveModel();
             const ttsPayload: any = {
               model, text: speechText, stream: false, output_format: 'url',
-              voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(rerollEmotion) },
+              voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields() },
               audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
               ...(voiceLang ? { language_boost: voiceLang } : {}),
               ...buildTtsExtras(),

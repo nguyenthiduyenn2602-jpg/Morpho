@@ -275,13 +275,14 @@ export const buildTtsExtras = (vp: CharacterProfile['voiceProfile']) => {
 
 /**
  * Build voice_setting fields (speed, vol, pitch, emotion) with safe ranges.
- * `emotionOverride` (validated MiniMax emotion, e.g. from a <语音 emotion="…"> tag)
- * wins over the character's static voiceProfile.emotion. Invalid values are ignored.
+ *
+ * MiniMax has no neutral/zero emotion value: the only reliable way to disable
+ * emotion enhancement is to omit the field. Therefore only the character's
+ * explicitly selected fixed emotion is sent. Per-message LLM tags must never
+ * silently turn the default/off state back into dynamic emotion.
  */
-export const buildVoiceSettings = (vp: CharacterProfile['voiceProfile'], emotionOverride?: string) => {
-  const emotion = (emotionOverride && VALID_EMOTIONS.has(emotionOverride))
-    ? emotionOverride
-    : (vp?.emotion || '');
+export const buildVoiceSettings = (vp: CharacterProfile['voiceProfile']) => {
+  const emotion = vp?.emotion && VALID_EMOTIONS.has(vp.emotion) ? vp.emotion : '';
   return {
     // Clamp speed to 0.75–1.4 for natural human feel (API allows 0.5–2)
     speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),
@@ -352,7 +353,7 @@ export async function synthesizeSpeechDetailed(
     text: processedText,
     voice_setting: {
       voice_id: vp?.voiceId || '',
-      ...buildVoiceSettings(vp, options?.emotion),
+      ...buildVoiceSettings(vp),
     },
     audio_setting: { format: 'mp3' },
     ...buildTtsExtras(vp),

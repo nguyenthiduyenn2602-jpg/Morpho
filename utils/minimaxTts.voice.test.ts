@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { stripEmotionTags, cleanTextForTts, parseVoiceOutput, insertSpeechBreaks, cleanVoiceMarkupForDisplay } from './minimaxTts';
+import { stripEmotionTags, cleanTextForTts, parseVoiceOutput, insertSpeechBreaks, cleanVoiceMarkupForDisplay, buildVoiceSettings } from './minimaxTts';
+
+describe('buildVoiceSettings', () => {
+  it('omits emotion when the character setting is off', () => {
+    expect(buildVoiceSettings(undefined)).not.toHaveProperty('emotion');
+  });
+
+  it('only sends an explicitly selected valid fixed emotion', () => {
+    expect(buildVoiceSettings({ emotion: 'calm' } as any)).toHaveProperty('emotion', 'calm');
+    expect(buildVoiceSettings({ emotion: 'neutral' } as any)).not.toHaveProperty('emotion');
+  });
+});
 
 describe('stripEmotionTags', () => {
   it('removes [emotion] / 【emotion】 tags anywhere, leaves prose', () => {
