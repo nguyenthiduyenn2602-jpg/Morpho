@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildImageGenerationDecisionPrompt,
     extractImageGenerationDirective,
@@ -6,13 +6,16 @@ import {
     isExplicitImageRequest,
     isImageApiVerified,
     normalizeImageApiBase,
+    pollMxApiImageTask,
 } from './imageGeneration';
 
 describe('imageGeneration', () => {
-    it('normalizes root and endpoint URLs to an OpenAI-compatible v1 base', () => {
-        expect(normalizeImageApiBase('https://api.denxio.com')).toBe('https://api.denxio.com/v1');
-        expect(normalizeImageApiBase('https://api.denxio.com/v1/')).toBe('https://api.denxio.com/v1');
-        expect(normalizeImageApiBase('https://api.denxio.com/v1/images/edits')).toBe('https://api.denxio.com/v1');
+    afterEach(() => vi.restoreAllMocks());
+
+    it('normalizes MXAPI root and endpoint URLs to the site base', () => {
+        expect(normalizeImageApiBase('https://open.mxapi.org')).toBe('https://open.mxapi.org');
+        expect(normalizeImageApiBase('https://open.mxapi.org/api/v2/')).toBe('https://open.mxapi.org');
+        expect(normalizeImageApiBase('https://open.mxapi.org/api/v2/gpt-image-2')).toBe('https://open.mxapi.org');
     });
 
     it('extracts and strips a generation control block', () => {
@@ -36,10 +39,10 @@ describe('imageGeneration', () => {
     });
 
     it('invalidates the connection light when credentials change', () => {
-        const base = { baseUrl: 'https://api.denxio.com', apiKey: 'secret', model: 'gpt-image-2' };
+        const base = { baseUrl: 'https://open.mxapi.org', apiKey: 'secret', channel: 'default' as const };
         const verified = { ...base, verifiedAt: Date.now(), verifiedSignature: imageApiSignature(base) };
         expect(isImageApiVerified(verified)).toBe(true);
-        expect(isImageApiVerified({ ...verified, model: 'another-model' })).toBe(false);
+        expect(isImageApiVerified({ ...verified, channel: 'official' })).toBe(false);
     });
 
     it('injects the real user name instead of a literal worldbook macro', () => {
@@ -50,5 +53,34 @@ describe('imageGeneration', () => {
         expect(prompt).toContain('沈欢');
         expect(prompt).not.toContain('{{user}}');
         expect(prompt).toContain('必须使用');
+    });
+
+    it('polls an MXAPI task until the generated image URL is ready', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(JSON.stringify({ code: 200, data: { status: 'processing' } }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                code: 200,
+                data: { status: 'completed', result: { images: ['https://cdn.example/result.png'] } },
+            }), { status: 200 }));
+
+        await expect(pollMxApiImageTask('https://open.mxapi.org', 'key', 'task 1', {
+            intervalMs: 0,
+            maxAttempts: 2,
+        })).resolves.toBe('https://cdn.example/result.png');
+        expect(fetchMock).toHaveBeenLastCalledWith(
+            'https://open.mxapi.org/api/v2/gpt-image/task?task_id=task%201',
+            { headers: { Authorization: 'Bearer key' } },
+        );
+    });
+
+    it('surfaces the MXAPI task error instead of polling forever', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+            code: 200,
+            data: { status: 'failed', error_msg: '上游生成失败' },
+        }), { status: 200 }));
+        await expect(pollMxApiImageTask('https://open.mxapi.org', 'key', 'bad', {
+            intervalMs: 0,
+            maxAttempts: 1,
+        })).rejects.toThrow('上游生成失败');
     });
 });

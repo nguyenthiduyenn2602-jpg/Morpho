@@ -8,8 +8,10 @@ import type { Message } from '../types';
 import { DB } from './db';
 import { dataUrlToBlob, getBlobForRef, isBlobRef, putImageBlob } from './blobRef';
 
-export const DEFAULT_IMAGE_API_URL = 'https://api.denxio.com';
-export const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
+export const DEFAULT_IMAGE_API_URL = 'https://open.mxapi.org';
+export const DEFAULT_IMAGE_CHANNEL = 'default' as const;
+export const IMAGE_POLL_INTERVAL_MS = 5_000;
+export const IMAGE_POLL_MAX_ATTEMPTS = 120;
 export const IMAGE_GENERATION_OPEN = '[[GENERATE_IMAGE]]';
 export const IMAGE_GENERATION_CLOSE = '[[/GENERATE_IMAGE]]';
 
@@ -21,15 +23,13 @@ export interface ImageGenerationDirective {
 const DIRECTIVE_RE = /\[\[GENERATE_IMAGE\]\]\s*([\s\S]*?)\s*\[\[\/GENERATE_IMAGE\]\]/i;
 
 export function normalizeImageApiBase(value: string): string {
-    let base = (value || DEFAULT_IMAGE_API_URL).trim().replace(/\/+$/, '');
-    base = base.replace(/\/v1\/images\/(?:generations|edits)$/i, '/v1');
-    if (!/\/v1$/i.test(base)) base += '/v1';
-    return base;
+    const base = (value || DEFAULT_IMAGE_API_URL).trim().replace(/\/+$/, '');
+    return base.replace(/\/api\/v[12](?:\/.*)?$/i, '');
 }
 
 /** FNV-1a；只用于判断绿灯是否仍对应当前配置，不是安全散列。 */
-export function imageApiSignature(config: Pick<ImageGenerationApiConfig, 'baseUrl' | 'apiKey' | 'model'>): string {
-    const input = `${normalizeImageApiBase(config.baseUrl)}\u0000${config.model.trim()}\u0000${config.apiKey}`;
+export function imageApiSignature(config: Pick<ImageGenerationApiConfig, 'baseUrl' | 'apiKey' | 'channel'>): string {
+    const input = `${normalizeImageApiBase(config.baseUrl)}\u0000${config.channel}\u0000${config.apiKey}`;
     let hash = 0x811c9dc5;
     for (let i = 0; i < input.length; i++) {
         hash ^= input.charCodeAt(i);
@@ -48,12 +48,13 @@ export function isImageApiVerified(config?: ImageGenerationApiConfig): boolean {
 
 export async function testImageApiConnection(config: ImageGenerationApiConfig): Promise<void> {
     if (!config.apiKey.trim()) throw new Error('请先填写 API Key');
-    if (!config.model.trim()) throw new Error('请先填写模型名');
-    const response = await fetch(`${normalizeImageApiBase(config.baseUrl)}/models`, {
+    const response = await fetch(`${normalizeImageApiBase(config.baseUrl)}/api/v2/points/balance`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${config.apiKey.trim()}` },
     });
     if (!response.ok) throw new Error(await readApiError(response, `连接失败（HTTP ${response.status}）`));
+    const data = await response.json().catch(() => null);
+    if (data?.code !== 200 || !data?.data) throw new Error(data?.message || '连接成功，但余额接口返回格式不正确');
 }
 
 /** 默认关闭主动发图时的客户端保险丝：只允许最新用户消息明确索图。 */
@@ -135,9 +136,8 @@ export async function generateCharacterImage(
     api: ImageGenerationApiConfig,
     char: CharacterProfile,
     request: ImageGenerationDirective,
-): Promise<Blob> {
+): Promise<Blob | string> {
     if (!api.apiKey.trim()) throw new Error('生图 API Key 尚未配置');
-    if (!api.model.trim()) throw new Error('生图模型尚未配置');
     const cfg = char.imageGeneration;
     if (!cfg?.enabled) throw new Error('当前角色尚未开启生图');
 
@@ -148,51 +148,52 @@ export async function generateCharacterImage(
         : null;
     const prompt = buildGenerationPrompt(char, cfg, request, !!referenceBlob);
     const base = normalizeImageApiBase(api.baseUrl);
-    let response: Response;
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${api.apiKey.trim()}`,
+        'X-Channel': api.channel || DEFAULT_IMAGE_CHANNEL,
+    };
+    let temporaryReferenceUrl = '';
 
-    if (referenceBlob) {
-        const form = new FormData();
-        form.append('model', api.model.trim());
-        form.append('prompt', prompt);
-        form.append('size', '1536x1536');
-        form.append('quality', 'medium');
-        form.append('image', referenceBlob, `reference.${mimeExtension(referenceBlob.type)}`);
-        response = await fetch(`${base}/images/edits`, {
+    try {
+        if (referenceBlob) {
+            temporaryReferenceUrl = await uploadMxApiReference(base, api.apiKey, referenceBlob);
+        }
+
+        const response = await fetch(`${base}/api/v2/gpt-image-2`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${api.apiKey.trim()}` },
-            body: form,
-        });
-    } else {
-        response = await fetch(`${base}/images/generations`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${api.apiKey.trim()}`,
-            },
+            headers,
             body: JSON.stringify({
-                model: api.model.trim(),
                 prompt,
-                size: '1536x1536',
-                quality: 'medium',
-                n: 1,
-                response_format: 'b64_json',
+                image_size: '1536x1536',
+                aspect_ratio: '1:1',
+                resolution: '2K',
+                quality: api.channel === 'official' ? 'medium' : 'low',
+                reference_images: temporaryReferenceUrl ? [temporaryReferenceUrl] : [],
             }),
         });
-    }
+        if (!response.ok) throw new Error(await readApiError(response, `提交生图任务失败（HTTP ${response.status}）`));
+        const submitted = await response.json();
+        const taskId = submitted?.data?.task_id;
+        if (!taskId) throw new Error(submitted?.message || 'MXAPI 未返回生图任务编号');
 
-    if (!response.ok) throw new Error(await readApiError(response, `生图失败（HTTP ${response.status}）`));
-    const data = await response.json();
-    return imageResponseToBlob(data);
+        const imageUrl = await pollMxApiImageTask(base, api.apiKey, String(taskId));
+        return await downloadGeneratedImage(imageUrl);
+    } finally {
+        if (temporaryReferenceUrl) {
+            await deleteMxApiReference(base, api.apiKey, temporaryReferenceUrl);
+        }
+    }
 }
 
 /** 同一个 blobref 同时写入角色图片消息与相册，避免 2K base64 双份占用。 */
 export async function persistGeneratedCharacterImage(
-    blob: Blob,
+    image: Blob | string,
     char: CharacterProfile,
     contextMessages: Message[],
     request: ImageGenerationDirective,
 ): Promise<string> {
-    const ref = await putImageBlob(blob);
+    const ref = typeof image === 'string' ? image : await putImageBlob(image);
     const now = Date.now();
     const recentChat = contextMessages.slice(-10).map(message => {
         const sender = message.role === 'user' ? '用户' : char.name;
@@ -216,21 +217,80 @@ export async function persistGeneratedCharacterImage(
     return ref;
 }
 
-async function imageResponseToBlob(data: any): Promise<Blob> {
-    const first = data?.data?.[0] || data?.images?.[0] || data?.output?.[0] || data;
-    const b64 = first?.b64_json || first?.base64 || first?.image_base64 || data?.b64_json;
-    if (typeof b64 === 'string' && b64) {
-        const clean = b64.includes(',') ? b64.slice(b64.indexOf(',') + 1) : b64;
-        const bytes = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
-        return new Blob([bytes], { type: 'image/png' });
+async function uploadMxApiReference(base: string, apiKey: string, blob: Blob): Promise<string> {
+    const form = new FormData();
+    form.append('image', blob, `reference.${mimeExtension(blob.type)}`);
+    const response = await fetch(`${base}/api/v2/upload/temp-image`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        body: form,
+    });
+    if (!response.ok) throw new Error(await readApiError(response, `参考图上传失败（HTTP ${response.status}）`));
+    const data = await response.json();
+    const value = data?.data?.url;
+    if (typeof value !== 'string' || !value.trim()) throw new Error(data?.message || '参考图上传成功，但未返回图片地址');
+    return new URL(value, `${base}/`).toString();
+}
+
+async function deleteMxApiReference(base: string, apiKey: string, imageUrl: string): Promise<void> {
+    try {
+        const filename = decodeURIComponent(new URL(imageUrl).pathname.split('/').pop() || '');
+        if (!filename) return;
+        await fetch(`${base}/api/v2/upload/delete-temp-image`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey.trim()}`,
+            },
+            body: JSON.stringify({ filename }),
+        });
+    } catch (error) {
+        console.warn('[image-generation] 临时参考图清理失败，将由服务端按过期策略处理', error);
     }
-    const url = first?.url || first?.image_url || data?.url;
-    if (typeof url === 'string' && url) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`图片下载失败（HTTP ${response.status}）`);
-        return response.blob();
+}
+
+export async function pollMxApiImageTask(
+    baseUrl: string,
+    apiKey: string,
+    taskId: string,
+    options: { intervalMs?: number; maxAttempts?: number } = {},
+): Promise<string> {
+    const base = normalizeImageApiBase(baseUrl);
+    const intervalMs = options.intervalMs ?? IMAGE_POLL_INTERVAL_MS;
+    const maxAttempts = options.maxAttempts ?? IMAGE_POLL_MAX_ATTEMPTS;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0 && intervalMs > 0) await delay(intervalMs);
+        const response = await fetch(`${base}/api/v2/gpt-image/task?task_id=${encodeURIComponent(taskId)}`, {
+            headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        });
+        if (!response.ok) throw new Error(await readApiError(response, `查询生图任务失败（HTTP ${response.status}）`));
+        const data = await response.json();
+        const task = data?.data;
+        const status = String(task?.status || '').toLowerCase();
+        if (status === 'completed' || status === 'success' || status === 'succeeded') {
+            const imageUrl = task?.result?.images?.[0];
+            if (typeof imageUrl !== 'string' || !imageUrl) throw new Error('生图任务已完成，但响应中没有图片地址');
+            return new URL(imageUrl, `${base}/`).toString();
+        }
+        if (status === 'failed' || status === 'error' || status === 'cancelled' || status === 'canceled') {
+            throw new Error(task?.error_msg || task?.error || data?.message || '生图任务失败');
+        }
     }
-    throw new Error('生图接口已返回，但响应中没有图片数据');
+    throw new Error('生图等待超时，请稍后重试；若任务已扣费，可到 MXAPI 后台查看结果');
+}
+
+async function downloadGeneratedImage(imageUrl: string): Promise<Blob | string> {
+    try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (!blob.type.startsWith('image/')) throw new Error('返回内容不是图片');
+        return blob;
+    } catch (error) {
+        console.warn('[image-generation] 结果图片无法下载到本地，改为保存远程地址', error);
+        return imageUrl;
+    }
 }
 
 async function readApiError(response: Response, fallback: string): Promise<string> {
@@ -247,6 +307,10 @@ function mimeExtension(mime: string): string {
     if (/png/i.test(mime)) return 'png';
     if (/webp/i.test(mime)) return 'webp';
     return 'jpg';
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function localDateKey(timestamp: number): string {

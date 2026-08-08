@@ -182,14 +182,18 @@ export type MinimaxRegion = 'domestic' | 'overseas';
 // 全局二选一：切换后所有语音场景（聊天语音条 / 约会 / 电话）统一用同一家。
 export type TtsProvider = 'minimax' | 'fishaudio';
 
-/** OpenAI Images 兼容生图后端。API 凭据跟随完整备份，但绝不写入源码。 */
+export type ImageGenerationChannel = 'default' | 'official';
+
+/** MXAPI GPT Image 2 生图后端。API 凭据跟随完整备份，但绝不写入源码。 */
 export interface ImageGenerationApiConfig {
   baseUrl: string;
   apiKey: string;
-  model: string;
-  /** 最近一次通过 /models 连通性检测的时间。 */
+  channel: ImageGenerationChannel;
+  /** 旧版 OpenAI 兼容配置遗留字段，只用于无损读取旧备份。 */
+  model?: string;
+  /** 最近一次通过余额接口连通性检测的时间。 */
   verifiedAt?: number;
-  /** 不含密钥明文的配置指纹；URL / Key / 模型变化后绿灯自动失效。 */
+  /** 不含密钥明文的配置指纹；URL / Key / 通道变化后绿灯自动失效。 */
   verifiedSignature?: string;
 }
 

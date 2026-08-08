@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Camera, CheckCircle, ImageSquare, SpinnerGap, Trash, XCircle } from '@phosphor-icons/react';
-import type { APIConfig, CharacterProfile, ImageGenerationApiConfig } from '../../types';
+import type { APIConfig, CharacterProfile, ImageGenerationApiConfig, ImageGenerationChannel } from '../../types';
 import { processImageToBlob } from '../../utils/file';
 import { putImageBlob } from '../../utils/blobRef';
 import TokenImg from '../os/TokenImg';
 import {
     DEFAULT_IMAGE_API_URL,
-    DEFAULT_IMAGE_MODEL,
+    DEFAULT_IMAGE_CHANNEL,
     imageApiSignature,
     isImageApiVerified,
     testImageApiConnection,
@@ -37,9 +37,10 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
 }) => {
     const savedApi = apiConfig.imageGeneration;
     const savedChar = char.imageGeneration;
-    const [baseUrl, setBaseUrl] = useState(savedApi?.baseUrl || DEFAULT_IMAGE_API_URL);
+    const savedMxApiUrl = savedApi?.channel ? savedApi.baseUrl : DEFAULT_IMAGE_API_URL;
+    const [baseUrl, setBaseUrl] = useState(savedMxApiUrl);
     const [apiKey, setApiKey] = useState(savedApi?.apiKey || '');
-    const [model, setModel] = useState(savedApi?.model || DEFAULT_IMAGE_MODEL);
+    const [channel, setChannel] = useState<ImageGenerationChannel>(savedApi?.channel || DEFAULT_IMAGE_CHANNEL);
     const [enabled, setEnabled] = useState(!!savedChar?.enabled);
     const [allowProactive, setAllowProactive] = useState(!!savedChar?.allowProactive);
     const [anchors, setAnchors] = useState(savedChar?.appearanceAnchors || '');
@@ -49,9 +50,9 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
 
     useEffect(() => {
         if (!isOpen) return;
-        setBaseUrl(savedApi?.baseUrl || DEFAULT_IMAGE_API_URL);
+        setBaseUrl(savedApi?.channel ? savedApi.baseUrl : DEFAULT_IMAGE_API_URL);
         setApiKey(savedApi?.apiKey || '');
-        setModel(savedApi?.model || DEFAULT_IMAGE_MODEL);
+        setChannel(savedApi?.channel || DEFAULT_IMAGE_CHANNEL);
         setEnabled(!!savedChar?.enabled);
         setAllowProactive(!!savedChar?.allowProactive);
         setAnchors(savedChar?.appearanceAnchors || '');
@@ -61,10 +62,10 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
     const draftApi = useMemo<ImageGenerationApiConfig>(() => ({
         baseUrl: baseUrl.trim() || DEFAULT_IMAGE_API_URL,
         apiKey: apiKey.trim(),
-        model: model.trim() || DEFAULT_IMAGE_MODEL,
+        channel,
         verifiedAt: savedApi?.verifiedAt,
         verifiedSignature: savedApi?.verifiedSignature,
-    }), [baseUrl, apiKey, model, savedApi?.verifiedAt, savedApi?.verifiedSignature]);
+    }), [baseUrl, apiKey, channel, savedApi?.verifiedAt, savedApi?.verifiedSignature]);
     const connected = isImageApiVerified(draftApi);
 
     if (!isOpen) return null;
@@ -176,8 +177,11 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
                         <label className="block text-xs font-semibold text-slate-500">API Key
                             <input type="password" autoComplete="off" className={`${inputClass} mt-1.5`} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
                         </label>
-                        <label className="block text-xs font-semibold text-slate-500">模型
-                            <input className={`${inputClass} mt-1.5`} value={model} onChange={e => setModel(e.target.value)} placeholder={DEFAULT_IMAGE_MODEL} />
+                        <label className="block text-xs font-semibold text-slate-500">通道
+                            <select className={`${inputClass} mt-1.5`} value={channel} onChange={e => setChannel(e.target.value as ImageGenerationChannel)}>
+                                <option value="default">default · 特价通道（固定 low 质量）</option>
+                                <option value="official">official · 官方通道（medium 质量）</option>
+                            </select>
                         </label>
                         <button type="button" disabled={testing} onClick={testAndSave} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3 text-sm font-bold text-white disabled:opacity-60">
                             {testing && <SpinnerGap className="animate-spin" />}
@@ -228,7 +232,7 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
                     <button type="button" onClick={() => save(true)} className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg shadow-slate-300">
                         保存设置
                     </button>
-                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1536×1536 medium 图片。API Key 只保存在你的本地数据与完整备份中。</p>
+                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1536×1536 图片；default 使用 low，official 使用 medium。参考图仅在生成期间临时上传。API Key 只保存在你的本地数据与完整备份中。</p>
                 </div>
             </div>
         </div>
