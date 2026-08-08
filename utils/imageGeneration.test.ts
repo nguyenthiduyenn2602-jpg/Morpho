@@ -53,6 +53,8 @@ describe('imageGeneration', () => {
         expect(prompt).toContain('沈欢');
         expect(prompt).not.toContain('{{user}}');
         expect(prompt).toContain('必须使用');
+        expect(prompt).toContain('先以角色当前的语气自然回复');
+        expect(prompt).toContain('回复末尾附加');
     });
 
     it('polls an MXAPI task until the generated image URL is ready', async () => {

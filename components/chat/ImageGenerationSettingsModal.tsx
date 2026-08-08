@@ -1,9 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Camera, CheckCircle, ImageSquare, SpinnerGap, Trash, XCircle } from '@phosphor-icons/react';
+import { CheckCircle, ImageSquare, LinkSimple, SpinnerGap, Trash, XCircle } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, ImageGenerationApiConfig, ImageGenerationChannel } from '../../types';
-import { processImageToBlob } from '../../utils/file';
-import { putImageBlob } from '../../utils/blobRef';
-import TokenImg from '../os/TokenImg';
 import {
     DEFAULT_IMAGE_API_URL,
     DEFAULT_IMAGE_CHANNEL,
@@ -37,6 +34,7 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
 }) => {
     const savedApi = apiConfig.imageGeneration;
     const savedChar = char.imageGeneration;
+    const savedReferenceUrl = /^https?:\/\//i.test(savedChar?.referenceImage || '') ? savedChar!.referenceImage! : '';
     const savedMxApiUrl = savedApi?.channel ? savedApi.baseUrl : DEFAULT_IMAGE_API_URL;
     const [baseUrl, setBaseUrl] = useState(savedMxApiUrl);
     const [apiKey, setApiKey] = useState(savedApi?.apiKey || '');
@@ -44,9 +42,11 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
     const [enabled, setEnabled] = useState(!!savedChar?.enabled);
     const [allowProactive, setAllowProactive] = useState(!!savedChar?.allowProactive);
     const [anchors, setAnchors] = useState(savedChar?.appearanceAnchors || '');
-    const [referenceImage, setReferenceImage] = useState(savedChar?.referenceImage || '');
+    const [referenceImage, setReferenceImage] = useState(savedReferenceUrl);
+    const [referencePreview, setReferencePreview] = useState(savedReferenceUrl);
+    const [referenceStatus, setReferenceStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(savedReferenceUrl ? 'loading' : 'idle');
+    const [previewNonce, setPreviewNonce] = useState(0);
     const [testing, setTesting] = useState(false);
-    const [uploading, setUploading] = useState(false);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -56,7 +56,11 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
         setEnabled(!!savedChar?.enabled);
         setAllowProactive(!!savedChar?.allowProactive);
         setAnchors(savedChar?.appearanceAnchors || '');
-        setReferenceImage(savedChar?.referenceImage || '');
+        const nextReference = /^https?:\/\//i.test(savedChar?.referenceImage || '') ? savedChar!.referenceImage! : '';
+        setReferenceImage(nextReference);
+        setReferencePreview(nextReference);
+        setReferenceStatus(nextReference ? 'loading' : 'idle');
+        setPreviewNonce(value => value + 1);
     }, [isOpen, char.id, savedApi, savedChar]);
 
     const draftApi = useMemo<ImageGenerationApiConfig>(() => ({
@@ -70,14 +74,33 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
 
     if (!isOpen) return null;
 
+    const validatedReference = (): string | null => {
+        const value = referenceImage.trim();
+        if (!value) return '';
+        try {
+            const parsed = new URL(value);
+            if (!/^https?:$/.test(parsed.protocol)) throw new Error();
+        } catch {
+            addToast('参考图必须是完整的 http(s) 图片 URL', 'error');
+            return null;
+        }
+        if (referenceStatus !== 'success' || referencePreview !== value) {
+            addToast('请先点“加载预览”，确认参考图可以正常打开', 'error');
+            return null;
+        }
+        return value;
+    };
+
     const save = (close = true) => {
+        const referenceUrl = validatedReference();
+        if (referenceUrl === null) return;
         updateApiConfig({ imageGeneration: draftApi });
         updateCharacter(char.id, {
             imageGeneration: {
                 enabled,
                 allowProactive,
                 appearanceAnchors: anchors.trim(),
-                referenceImage: referenceImage || undefined,
+                referenceImage: referenceUrl || undefined,
             },
         });
         addToast('生图设置已保存', 'success');
@@ -85,6 +108,8 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
     };
 
     const testAndSave = async () => {
+        const referenceUrl = validatedReference();
+        if (referenceUrl === null) return;
         setTesting(true);
         try {
             await testImageApiConnection(draftApi);
@@ -99,7 +124,7 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
                     enabled,
                     allowProactive,
                     appearanceAnchors: anchors.trim(),
-                    referenceImage: referenceImage || undefined,
+                    referenceImage: referenceUrl || undefined,
                 },
             });
             addToast('生图 API 已连通并保存', 'success');
@@ -110,17 +135,24 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
         }
     };
 
-    const onReferenceFile = async (file?: File) => {
-        if (!file) return;
-        setUploading(true);
+    const loadReferencePreview = () => {
+        const value = referenceImage.trim();
+        if (!value) {
+            setReferencePreview('');
+            setReferenceStatus('idle');
+            return;
+        }
         try {
-            const blob = await processImageToBlob(file, { maxWidth: 2048, quality: 0.92, forceJpeg: true });
-            setReferenceImage(await putImageBlob(blob));
-            addToast('参考图已载入，记得保存设置', 'success');
-        } catch (error: any) {
-            addToast(error?.message || '参考图处理失败', 'error');
-        } finally {
-            setUploading(false);
+            const parsed = new URL(value);
+            if (!/^https?:$/.test(parsed.protocol)) throw new Error();
+            setReferenceImage(value);
+            setReferencePreview(value);
+            setReferenceStatus('loading');
+            setPreviewNonce(nonce => nonce + 1);
+        } catch {
+            setReferencePreview('');
+            setReferenceStatus('error');
+            addToast('请输入完整的 http(s) 图片 URL', 'error');
         }
     };
 
@@ -205,34 +237,55 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
                     <section className="space-y-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
                         <div>
                             <h3 className="font-bold text-slate-800">参考图（可选）</h3>
-                            <p className="mt-1 text-[11px] text-slate-400">上传后优先保留这张图的面部身份；不上传也可以只按锚点生成。</p>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">填写一条无需登录、可公开访问的图片直链。加载成功后会显示预览，生图时直接把该 URL 交给模型。</p>
                         </div>
-                        {referenceImage ? (
+                        <div className="flex gap-2">
+                            <input
+                                className={inputClass}
+                                value={referenceImage}
+                                onChange={e => {
+                                    setReferenceImage(e.target.value);
+                                    setReferencePreview('');
+                                    setReferenceStatus('idle');
+                                }}
+                                placeholder="https://example.com/character.jpg"
+                                inputMode="url"
+                            />
+                            <button type="button" onClick={loadReferencePreview} className="flex shrink-0 items-center gap-1 rounded-2xl bg-pink-500 px-3 text-xs font-bold text-white">
+                                <LinkSimple weight="bold" /> 加载
+                            </button>
+                        </div>
+                        {referencePreview ? (
                             <div className="relative overflow-hidden rounded-2xl bg-slate-100">
-                                <TokenImg value={referenceImage} className="h-56 w-full object-contain" alt="角色参考图" />
-                                <button type="button" onClick={() => setReferenceImage('')} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur">
+                                <img
+                                    key={previewNonce}
+                                    src={referencePreview}
+                                    className="h-56 w-full object-contain"
+                                    alt="角色参考图预览"
+                                    referrerPolicy="no-referrer"
+                                    onLoad={() => setReferenceStatus('success')}
+                                    onError={() => setReferenceStatus('error')}
+                                />
+                                <button type="button" onClick={() => { setReferenceImage(''); setReferencePreview(''); setReferenceStatus('idle'); }} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur">
                                     <Trash weight="bold" />
                                 </button>
+                                <span className={`absolute bottom-2 left-2 rounded-full px-2.5 py-1 text-[11px] font-bold backdrop-blur ${referenceStatus === 'success' ? 'bg-emerald-500/90 text-white' : referenceStatus === 'error' ? 'bg-rose-500/90 text-white' : 'bg-black/55 text-white'}`}>
+                                    {referenceStatus === 'success' ? '加载成功' : referenceStatus === 'error' ? '加载失败' : '正在加载…'}
+                                </span>
                             </div>
                         ) : (
-                            <label className="flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-pink-200 bg-pink-50/50 text-pink-500">
-                                {uploading ? <SpinnerGap className="h-7 w-7 animate-spin" /> : <ImageSquare className="h-7 w-7" weight="duotone" />}
-                                <span className="text-xs font-bold">{uploading ? '正在处理…' : '上传一张人物参考图'}</span>
-                                <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={e => onReferenceFile(e.target.files?.[0])} />
-                            </label>
+                            <div className="flex h-28 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 text-slate-300">
+                                <ImageSquare className="h-7 w-7" weight="duotone" />
+                                <span className="text-xs font-bold">加载成功后在这里显示预览</span>
+                            </div>
                         )}
-                        {referenceImage && (
-                            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-pink-200 py-2.5 text-xs font-bold text-pink-500">
-                                <Camera /> 更换参考图
-                                <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={e => onReferenceFile(e.target.files?.[0])} />
-                            </label>
-                        )}
+                        {referenceStatus === 'error' && <p className="text-xs text-rose-500">图片无法打开。请确认它是图片直链，并且没有登录或防盗链限制。</p>}
                     </section>
 
                     <button type="button" onClick={() => save(true)} className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg shadow-slate-300">
                         保存设置
                     </button>
-                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1536×1536 图片；default 使用 low，official 使用 medium。参考图仅在生成期间临时上传。API Key 只保存在你的本地数据与完整备份中。</p>
+                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1536×1536 图片；default 使用 low，official 使用 medium。API Key 只保存在你的本地数据与完整备份中。</p>
                 </div>
             </div>
         </div>

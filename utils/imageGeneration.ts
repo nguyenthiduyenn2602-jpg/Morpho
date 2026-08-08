@@ -6,7 +6,7 @@ import type {
 } from '../types';
 import type { Message } from '../types';
 import { DB } from './db';
-import { dataUrlToBlob, getBlobForRef, isBlobRef, putImageBlob } from './blobRef';
+import { putImageBlob } from './blobRef';
 
 export const DEFAULT_IMAGE_API_URL = 'https://open.mxapi.org';
 export const DEFAULT_IMAGE_CHANNEL = 'default' as const;
@@ -77,7 +77,7 @@ export function buildImageGenerationDecisionPrompt(
 ## 本地私聊生图工具（严格规则）
 你可以决定是否给 ${userProfile.name} 发一张图片。${proactiveRule}
 
-需要发图时，你的整条输出必须只有下面这个控制块，不得附带寒暄、解释、Markdown 或其他气泡：
+需要发图时，先以角色当前的语气自然回复 ${userProfile.name}，可以是一至三个简短气泡；然后在回复末尾附加下面的控制块。控制块不会显示给用户，不要在正文中解释工具、API 或提示词：
 ${IMAGE_GENERATION_OPEN}
 {"prompt":"用简洁、可视化的语言描述画面、环境、表情、姿势、镜头和光线；不要重复人物固定长相","selfie":true}
 ${IMAGE_GENERATION_CLOSE}
@@ -141,26 +141,15 @@ export async function generateCharacterImage(
     const cfg = char.imageGeneration;
     if (!cfg?.enabled) throw new Error('当前角色尚未开启生图');
 
-    const referenceBlob = cfg.referenceImage
-        ? (isBlobRef(cfg.referenceImage)
-            ? await getBlobForRef(cfg.referenceImage)
-            : (cfg.referenceImage.startsWith('data:') ? dataUrlToBlob(cfg.referenceImage) : null))
-        : null;
-    const prompt = buildGenerationPrompt(char, cfg, request, !!referenceBlob);
+    const referenceUrl = /^https?:\/\//i.test(cfg.referenceImage || '') ? cfg.referenceImage!.trim() : '';
+    const prompt = buildGenerationPrompt(char, cfg, request, !!referenceUrl);
     const base = normalizeImageApiBase(api.baseUrl);
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${api.apiKey.trim()}`,
         'X-Channel': api.channel || DEFAULT_IMAGE_CHANNEL,
     };
-    let temporaryReferenceUrl = '';
-
-    try {
-        if (referenceBlob) {
-            temporaryReferenceUrl = await uploadMxApiReference(base, api.apiKey, referenceBlob);
-        }
-
-        const response = await fetch(`${base}/api/v2/gpt-image-2`, {
+    const response = await fetch(`${base}/api/v2/gpt-image-2`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -169,21 +158,16 @@ export async function generateCharacterImage(
                 aspect_ratio: '1:1',
                 resolution: '2K',
                 quality: api.channel === 'official' ? 'medium' : 'low',
-                reference_images: temporaryReferenceUrl ? [temporaryReferenceUrl] : [],
+                reference_images: referenceUrl ? [referenceUrl] : [],
             }),
         });
-        if (!response.ok) throw new Error(await readApiError(response, `提交生图任务失败（HTTP ${response.status}）`));
-        const submitted = await response.json();
-        const taskId = submitted?.data?.task_id;
-        if (!taskId) throw new Error(submitted?.message || 'MXAPI 未返回生图任务编号');
+    if (!response.ok) throw new Error(await readApiError(response, `提交生图任务失败（HTTP ${response.status}）`));
+    const submitted = await response.json();
+    const taskId = submitted?.data?.task_id;
+    if (!taskId) throw new Error(submitted?.message || 'MXAPI 未返回生图任务编号');
 
-        const imageUrl = await pollMxApiImageTask(base, api.apiKey, String(taskId));
-        return await downloadGeneratedImage(imageUrl);
-    } finally {
-        if (temporaryReferenceUrl) {
-            await deleteMxApiReference(base, api.apiKey, temporaryReferenceUrl);
-        }
-    }
+    const imageUrl = await pollMxApiImageTask(base, api.apiKey, String(taskId));
+    return await downloadGeneratedImage(imageUrl);
 }
 
 /** 同一个 blobref 同时写入角色图片消息与相册，避免 2K base64 双份占用。 */
@@ -215,38 +199,6 @@ export async function persistGeneratedCharacterImage(
         chatContext: recentChat,
     });
     return ref;
-}
-
-async function uploadMxApiReference(base: string, apiKey: string, blob: Blob): Promise<string> {
-    const form = new FormData();
-    form.append('image', blob, `reference.${mimeExtension(blob.type)}`);
-    const response = await fetch(`${base}/api/v2/upload/temp-image`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey.trim()}` },
-        body: form,
-    });
-    if (!response.ok) throw new Error(await readApiError(response, `参考图上传失败（HTTP ${response.status}）`));
-    const data = await response.json();
-    const value = data?.data?.url;
-    if (typeof value !== 'string' || !value.trim()) throw new Error(data?.message || '参考图上传成功，但未返回图片地址');
-    return new URL(value, `${base}/`).toString();
-}
-
-async function deleteMxApiReference(base: string, apiKey: string, imageUrl: string): Promise<void> {
-    try {
-        const filename = decodeURIComponent(new URL(imageUrl).pathname.split('/').pop() || '');
-        if (!filename) return;
-        await fetch(`${base}/api/v2/upload/delete-temp-image`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey.trim()}`,
-            },
-            body: JSON.stringify({ filename }),
-        });
-    } catch (error) {
-        console.warn('[image-generation] 临时参考图清理失败，将由服务端按过期策略处理', error);
-    }
 }
 
 export async function pollMxApiImageTask(
@@ -301,12 +253,6 @@ async function readApiError(response: Response, fallback: string): Promise<strin
         try { return (await response.text()).slice(0, 300) || fallback; }
         catch { return fallback; }
     }
-}
-
-function mimeExtension(mime: string): string {
-    if (/png/i.test(mime)) return 'png';
-    if (/webp/i.test(mime)) return 'webp';
-    return 'jpg';
 }
 
 function delay(ms: number): Promise<void> {

@@ -201,7 +201,7 @@ export interface ImageGenerationApiConfig {
 export interface CharacterImageGenerationConfig {
   enabled: boolean;
   appearanceAnchors?: string;
-  /** blobref / data URL。参考图可选。 */
+  /** 可公开访问的 http(s) 图片 URL。参考图可选。 */
   referenceImage?: string;
   /** 默认 false：只响应用户明确索图；true 时允许角色在本地聊天中偶尔主动发图。 */
   allowProactive?: boolean;

@@ -56,6 +56,7 @@ import {
     isExplicitImageRequest,
     persistGeneratedCharacterImage,
 } from '../utils/imageGeneration';
+import type { ImageGenerationDirective } from '../utils/imageGeneration';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -1542,6 +1543,7 @@ export const useChatAI = ({
                     setStreamingThinking('');
                 }
             };
+            let pendingGeneratedImage: { image: Blob | string; directive: ImageGenerationDirective } | null = null;
             let rawAiContent = data.choices?.[0]?.message?.content || '';
             if (localImageGenerationEnabled) {
                 const parsedImage = extractImageGenerationDirective(rawAiContent);
@@ -1551,15 +1553,13 @@ export const useChatAI = ({
                         || isExplicitImageRequest(latestUserText);
                     // 默认关闭主动发图时，客户端再做一次语义保险丝，避免模型误触而产生费用。
                     if (mayGenerate) {
-                        rawAiContent = '';
+                        rawAiContent = parsedImage.cleaned || '……给你看。';
                         setSearchStatus(`${char.name} 正在生成图片…`);
                         try {
                             const imageApi = apiConfig.imageGeneration;
                             if (!imageApi) throw new Error('请先在「＋ → 生图」中配置图片 API');
-                            const blob = await generateCharacterImage(imageApi, charForGen, parsedImage.directive);
-                            await persistGeneratedCharacterImage(blob, charForGen, contextMsgs, parsedImage.directive);
-                            setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
-                            addToast('图片已生成并保存到相册', 'success');
+                            const image = await generateCharacterImage(imageApi, charForGen, parsedImage.directive);
+                            pendingGeneratedImage = { image, directive: parsedImage.directive };
                         } catch (error: any) {
                             addToast(error?.message || '图片生成失败', 'error');
                         } finally {
@@ -1613,6 +1613,18 @@ export const useChatAI = ({
                 skipSecondPassLLM: false,
                 directives: [],
             });
+
+            // 先让角色的自然回复落库，再追加图片，聊天顺序才像真人先说话后发图。
+            if (pendingGeneratedImage) {
+                await persistGeneratedCharacterImage(
+                    pendingGeneratedImage.image,
+                    charForGen,
+                    contextMsgs,
+                    pendingGeneratedImage.directive,
+                );
+                setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
+                addToast('图片已生成并保存到相册', 'success');
+            }
 
             // 本地路径回复已全部落库。OSContext 监听这个事件 bump lastMsgTimestamp——
             // 当前挂载的 Chat（可能是切走又切回后新 mount 的实例，本闭包的 setMessages
