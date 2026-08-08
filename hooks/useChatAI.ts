@@ -49,6 +49,13 @@ import {
     getMemoryPalaceHighWaterMarkForContext,
     loadCharacterContextRange,
 } from '../utils/chatContextRange';
+import {
+    buildImageGenerationDecisionPrompt,
+    extractImageGenerationDirective,
+    generateCharacterImage,
+    isExplicitImageRequest,
+    persistGeneratedCharacterImage,
+} from '../utils/imageGeneration';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -754,6 +761,8 @@ export const useChatAI = ({
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
             const luckinMiniSnap = luckinMiniAppRef?.current;
             const luckinMiniOpen = !!luckinMiniSnap?.open;
+            // 生图只存在于本地主回复路径：Instant Push ready 时连决策指令都不送进 worker。
+            const localImageGenerationEnabled = !!charForGen.imageGeneration?.enabled && !isInstantConfigReady();
 
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,
@@ -796,6 +805,9 @@ export const useChatAI = ({
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                 luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
                 luckinChat: luckinChatRef?.current?.active ? luckinChatRef.current : undefined,
+                extraSystemPrompt: localImageGenerationEnabled
+                    ? buildImageGenerationDecisionPrompt(charForGen, userProfile)
+                    : undefined,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
@@ -1530,7 +1542,36 @@ export const useChatAI = ({
                     setStreamingThinking('');
                 }
             };
-            const rawAiContent = data.choices?.[0]?.message?.content || '';
+            let rawAiContent = data.choices?.[0]?.message?.content || '';
+            if (localImageGenerationEnabled) {
+                const parsedImage = extractImageGenerationDirective(rawAiContent);
+                if (parsedImage.directive) {
+                    const latestUserText = [...contextMsgs].reverse().find(message => message.role === 'user')?.content || '';
+                    const mayGenerate = !!charForGen.imageGeneration?.allowProactive
+                        || isExplicitImageRequest(latestUserText);
+                    // 默认关闭主动发图时，客户端再做一次语义保险丝，避免模型误触而产生费用。
+                    if (mayGenerate) {
+                        rawAiContent = '';
+                        setSearchStatus(`${char.name} 正在生成图片…`);
+                        try {
+                            const imageApi = apiConfig.imageGeneration;
+                            if (!imageApi) throw new Error('请先在「＋ → 生图」中配置图片 API');
+                            const blob = await generateCharacterImage(imageApi, charForGen, parsedImage.directive);
+                            await persistGeneratedCharacterImage(blob, charForGen, contextMsgs, parsedImage.directive);
+                            setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
+                            addToast('图片已生成并保存到相册', 'success');
+                        } catch (error: any) {
+                            addToast(error?.message || '图片生成失败', 'error');
+                        } finally {
+                            setSearchStatus('');
+                        }
+                    } else {
+                        rawAiContent = parsedImage.cleaned;
+                    }
+                } else {
+                    rawAiContent = parsedImage.cleaned;
+                }
+            }
             const xhsCaches: XhsCaches = {
                 xsecTokenCache: xsecTokenCacheRef.current,
                 noteTitleCache: noteTitleCacheRef.current,

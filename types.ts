@@ -182,6 +182,27 @@ export type MinimaxRegion = 'domestic' | 'overseas';
 // 全局二选一：切换后所有语音场景（聊天语音条 / 约会 / 电话）统一用同一家。
 export type TtsProvider = 'minimax' | 'fishaudio';
 
+/** OpenAI Images 兼容生图后端。API 凭据跟随完整备份，但绝不写入源码。 */
+export interface ImageGenerationApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** 最近一次通过 /models 连通性检测的时间。 */
+  verifiedAt?: number;
+  /** 不含密钥明文的配置指纹；URL / Key / 模型变化后绿灯自动失效。 */
+  verifiedSignature?: string;
+}
+
+/** 每个角色独立的形象锚点与触发策略。 */
+export interface CharacterImageGenerationConfig {
+  enabled: boolean;
+  appearanceAnchors?: string;
+  /** blobref / data URL。参考图可选。 */
+  referenceImage?: string;
+  /** 默认 false：只响应用户明确索图；true 时允许角色在本地聊天中偶尔主动发图。 */
+  allowProactive?: boolean;
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
@@ -217,6 +238,8 @@ export interface APIConfig {
   stream?: boolean;
   // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
   temperature?: number;
+  /** 私聊本地生图使用的独立后端。 */
+  imageGeneration?: ImageGenerationApiConfig;
 }
 
 export interface InstantPushConfig {
@@ -2089,6 +2112,9 @@ export interface CharacterProfile {
   /** 多模型群聊：该角色独立使用的聊天模型后端（baseUrl/apiKey/model）。
    *  不填则群聊轮询时回退到全局 apiConfig。DeepSeek / GLM 等各自用自家密钥。 */
   chatApiConfig?: APIConfig;
+
+  /** 私聊本地生图设置；群聊与 Instant Push 均不读取。 */
+  imageGeneration?: CharacterImageGenerationConfig;
 
   impression?: UserImpression;
 

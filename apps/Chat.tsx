@@ -40,6 +40,7 @@ import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
+import ImageGenerationSettingsModal from '../components/chat/ImageGenerationSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
@@ -71,7 +72,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -160,6 +161,7 @@ const Chat: React.FC = () => {
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showThinkingChainModal, setShowThinkingChainModal] = useState(false);
+    const [showImageGenerationModal, setShowImageGenerationModal] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -1310,6 +1312,12 @@ const Chat: React.FC = () => {
                 // 「展示思考」按钮 → 打开思考链设置 modal（开关 / 卡片风格 / 配色 / 追加提示词）
                 if (!char) break;
                 setShowThinkingChainModal(true);
+                break;
+            }
+            case 'image-generation': {
+                if (!char) break;
+                setShowPanel('none');
+                setShowImageGenerationModal(true);
                 break;
             }
         }
@@ -3412,6 +3420,7 @@ const Chat: React.FC = () => {
                     isProactiveActive={isProactiveActive}
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
+                    imageGenerationEnabled={!!char.imageGeneration?.enabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -3442,6 +3451,19 @@ const Chat: React.FC = () => {
                         updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig!, enabled: false } });
                         addToast('已停止主动消息', 'info');
                     }}
+                />
+            )}
+
+            {char && (
+                <ImageGenerationSettingsModal
+                    isOpen={showImageGenerationModal}
+                    onClose={() => setShowImageGenerationModal(false)}
+                    char={char}
+                    apiConfig={apiConfig}
+                    instantActive={isInstantConfigReady()}
+                    updateCharacter={updateCharacter}
+                    updateApiConfig={updateApiConfig}
+                    addToast={addToast}
                 />
             )}
 

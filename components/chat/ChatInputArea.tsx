@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal, Camera } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -45,6 +45,8 @@ interface ChatInputAreaProps {
     htmlModeEnabled?: boolean;
     // 思考过程展示（会话级）
     showThinkingChain?: boolean;
+    // 当前角色本地生图开关
+    imageGenerationEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -66,6 +68,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     isProactiveActive,
     htmlModeEnabled = false,
     showThinkingChain = false,
+    imageGenerationEnabled = false,
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
@@ -708,6 +711,21 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
                           {/* Page 1: 外部服务 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                            <button
+                              onClick={() => onPanelAction('image-generation')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  imageGenerationEnabled
+                                    ? (isDiscordStyle ? 'bg-pink-500/20 text-pink-300 border-pink-400/40' : 'bg-pink-100 text-pink-600 border-pink-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-500 border-pink-100')
+                              }`}>
+                                  <Camera className="w-6 h-6" weight="fill" />
+                                  {imageGenerationEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-pink-400 border-slate-900' : 'bg-pink-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">生图</span>
+                            </button>
+
                             {/* Proactive Message Button（从第一页移到第二页） */}
                             <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 {acnh ? <AcnhActionTile kind="proactive" /> : (

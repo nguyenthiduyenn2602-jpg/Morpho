@@ -5,6 +5,8 @@ import { DB } from '../utils/db';
 import { GalleryImage, CharacterProfile } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
 import ConfirmDialog from '../components/os/ConfirmDialog';
+import TokenImg from '../components/os/TokenImg';
+import { resolveRefToDataUrl } from '../utils/blobRef';
 
 const Gallery: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast } = useOS();
@@ -143,7 +145,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             {
                                 type: 'image_url',
                                 image_url: {
-                                    url: selectedImage.url
+                                    url: await resolveRefToDataUrl(selectedImage.url)
                                 }
                             }
                         ]
@@ -293,7 +295,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 <div className="grid grid-cols-3 gap-1">
                     {images.map(img => (
                         <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
-                            <img src={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
+                            <TokenImg value={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
                             {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
                             {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
                         </div>
@@ -324,8 +326,8 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
 
             {/* Main Image */}
             <div className="flex-1 min-h-0 w-full flex items-center justify-center bg-black relative overflow-hidden">
-                <img
-                    src={selectedImage.url}
+                <TokenImg
+                    value={selectedImage.url}
                     className="max-w-full max-h-full object-contain"
                     alt="Detail"
                 />

@@ -22,6 +22,7 @@ export const CARD_STRIPPED_FIELDS = [
   'embeddingConfig',
   'proactiveConfig',
   'activeMsg2Config',
+  'imageGeneration',        // 本地参考脸与生图偏好，不随分享角色卡外发
 
   // 2) 美化
   'embeddedTheme',           // CharacterExportData 上的内嵌主题（导入侧一并剥离）

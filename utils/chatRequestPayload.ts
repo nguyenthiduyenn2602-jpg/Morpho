@@ -75,6 +75,8 @@ export interface BuildChatPayloadInput {
     translationConfig?: TranslationConfig | { enabled: boolean; sourceLang: string; targetLang: string };
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: { enabled: boolean; customPrompt?: string };
+    /** 仅调用方明确允许时注入的额外工具说明（例如本地私聊生图）。 */
+    extraSystemPrompt?: string;
     mcdMiniSnap?: McdMiniAppSnapshot;
     luckinMiniSnap?: LuckinMiniAppSnapshot;
     /** 瑞幸聊天点单模式 (点"瑞一杯"激活, 角色直接调真实工具) */
@@ -225,6 +227,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         char, userProfile, groups, historyMsgs, contextLimit,
         realtimeConfig, innerState,
         translationConfig, htmlMode, thinkingChain, mcdMiniSnap, luckinMiniSnap, luckinChat,
+        extraSystemPrompt,
     } = input;
     // 角色可见性必须在统一载荷层再次收口。UI 聊天、1.0 本地主动消息、2.0 推送、
     // 彼方/小小窝等调用方各自维护筛选很容易漏掉一条路径；一旦把全量表情传进来，
@@ -337,6 +340,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         if (extra) {
             systemPrompt += `\n\n## 用户对内心独白的额外要求\n${extra}`;
         }
+    }
+
+    if (extraSystemPrompt?.trim()) {
+        systemPrompt += `\n\n${extraSystemPrompt.trim()}`;
     }
 
     // ── 7. 历史消息构造 ───────────────────────────────────
