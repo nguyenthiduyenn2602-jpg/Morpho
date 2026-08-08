@@ -128,6 +128,8 @@ ${hasReference
 ${request.selfie
     ? 'This is a selfie. Use a believable handheld/front-camera composition, natural eye contact and a candid phone-photo feeling. The photographed person must match the reference identity.'
     : 'Use the requested camera viewpoint and scene while keeping the same character identity.'}
+VISUAL STYLE:
+Default to a refined semi-realistic pseudo-impasto digital painting style (伪厚涂), with natural skin texture, soft painterly shading and cohesive brushwork. Give the background an appropriate depth-of-field treatment so the character remains the visual focus, using subtle blur or bokeh where suitable.
 Clothing is flexible and may follow the scene; appearance anchors are guidance, not a rigid costume lock.
 No captions, watermarks, UI, split panels or extra duplicate people unless the scene explicitly requires them.`;
 }
@@ -154,8 +156,8 @@ export async function generateCharacterImage(
             headers,
             body: JSON.stringify({
                 prompt,
-                image_size: '1536x1536',
-                aspect_ratio: '1:1',
+                image_size: '1152x2048',
+                aspect_ratio: '9:16',
                 resolution: '2K',
                 quality: api.channel === 'official' ? 'medium' : 'low',
                 reference_images: referenceUrl ? [referenceUrl] : [],

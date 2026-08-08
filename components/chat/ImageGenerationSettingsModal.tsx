@@ -285,7 +285,7 @@ const ImageGenerationSettingsModal: React.FC<Props> = ({
                     <button type="button" onClick={() => save(true)} className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg shadow-slate-300">
                         保存设置
                     </button>
-                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1536×1536 图片；default 使用 low，official 使用 medium。API Key 只保存在你的本地数据与完整备份中。</p>
+                    <p className="text-center text-[10px] leading-relaxed text-slate-400">默认生成 1152×2048（9:16）竖版图片；default 使用 low，official 使用 medium。API Key 只保存在你的本地数据与完整备份中。</p>
                 </div>
             </div>
         </div>
