@@ -1319,7 +1319,6 @@ const Chat: React.FC = () => {
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
     // mcdMiniAppRef 声明在文件靠前 (传给 useChatAI), 这里仅占位
-    const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
 
     // 瑞幸聊天点单模式: 激活态用 React state (临时会话态, 不落库)
     const [luckinMode, setLuckinMode] = useState(false);
@@ -1327,7 +1326,6 @@ const Chat: React.FC = () => {
     const [showLuckinHelp, setShowLuckinHelp] = useState(false); // 瑞一杯使用说明
     const luckinActivated = luckinMode;
     const [luckinAppOpen, setLuckinAppOpen] = useState(false); // 旧小程序壳, 现已不主动开
-    const luckinConfiguredFlag = useMemo(() => isLuckinConfigured(), [showPanel, luckinActivated]);
 
     const activateLuckin = useCallback(() => {
         if (!isLuckinConfigured()) { addToast('请先到设置 → 瑞幸 启用并填入 MCP Token', 'info'); return; }
@@ -3412,10 +3410,6 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
-                    mcdConfigured={mcdConfiguredFlag}
-                    mcdActivated={mcdActivated}
-                    luckinConfigured={luckinConfiguredFlag}
-                    luckinActivated={luckinActivated}
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
                     inputStyle={osTheme.chatInputStyle}
