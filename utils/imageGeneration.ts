@@ -123,7 +123,7 @@ ${request.prompt}
 
 IDENTITY PRIORITY:
 ${hasReference
-    ? 'The supplied reference image is the primary identity reference. Preserve the same recognizable face, facial proportions, eyes, nose, mouth, face shape and overall identity. Do not replace the person with a merely similar-looking person.'
+    ? 'Use the supplied reference image only for facial identity. Preserve the same recognizable face, facial proportions, bone structure, eyes, nose, mouth, face shape and distinctive facial features. Do not replace the person with a merely similar-looking person. Do not inherit the reference image\'s hairstyle, hair color, clothing, accessories, pose, composition, background, lighting or visual style; determine those from the identity anchors and current scene request instead.'
     : 'Keep the person internally consistent with the identity anchors. Do not invent conflicting hair color, eye color or defining features.'}
 ${request.selfie
     ? 'This is a selfie. Use a believable handheld/front-camera composition, natural eye contact and a candid phone-photo feeling. The photographed person must match the reference identity.'
