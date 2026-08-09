@@ -798,14 +798,6 @@ const ForwardCard: React.FC<{
 
 type TransferStatus = 'pending' | 'accepted' | 'returned';
 
-const SullyPayMark: React.FC<{ className?: string }> = ({ className }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
-        <path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" />
-        <path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" />
-        <path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" />
-    </svg>
-);
-
 // ─── 生活记录代记卡（角色 [[LIFE:...]] 落库后插入；用户可确认 / 否决）───
 const LIFE_CARD_STYLE: Record<string, { icon: string; ring: string; bg: string; label: string }> = {
     period: { icon: '🌙', ring: '#fda4af', bg: 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)', label: '生理期' },
@@ -928,7 +920,7 @@ const TransferCard: React.FC<{
                         {actor}{accepted ? '已收款' : '退回了转账'}
                     </div>
                     {amount !== undefined && (
-                        <div className="text-[10px] text-slate-400">₩ {amount}</div>
+                        <div className="text-[10px] text-slate-400">¥ {amount}</div>
                     )}
                 </div>
             </div>
@@ -940,7 +932,12 @@ const TransferCard: React.FC<{
     // 用户是「收到方」才出现接收/退回入口：即这条是角色发来的、且仍待处理。
     const canResolve = !isUser && !resolved && !!onResolveTransfer;
 
-    const statusBadge = status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '';
+    const statusBadge = status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '待接收';
+    const cardTone = status === 'accepted'
+        ? 'from-[#214d52] via-[#327a73] to-[#65a78f]'
+        : status === 'returned'
+            ? 'from-[#4c4f5b] via-[#737684] to-[#9a9ca7]'
+            : 'from-[#27234f] via-[#4b3d86] to-[#7969ad]';
 
     const handleResolve = (action: 'accepted' | 'returned') => {
         onResolveTransfer?.(m, action);
@@ -952,24 +949,23 @@ const TransferCard: React.FC<{
             {commonLayout(
                 <div
                     onClick={(e) => { if (selectionMode) return; e.stopPropagation(); setOpen(true); }}
-                    className={`w-64 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform ${
-                        resolved ? 'bg-gradient-to-br from-amber-300/80 to-orange-400/80' : 'bg-gradient-to-br from-amber-400 to-orange-500'
-                    }`}
+                    className={`w-64 rounded-[22px] p-4 text-white shadow-[0_18px_34px_rgba(47,38,94,0.24)] relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform bg-gradient-to-br ${cardTone}`}
                 >
-                    <div className="absolute top-0 right-0 p-4 opacity-20"><SullyPayMark className="w-12 h-12" /></div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-white/20 rounded-full"><SullyPayMark className="w-5 h-5" /></div>
-                        <span className="font-medium text-white/90">Sully Pay</span>
+                    <div className="absolute -top-4 -right-2 text-7xl opacity-10 rotate-12 select-none" aria-hidden="true">🦋</div>
+                    <div className="relative flex items-center justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 bg-white/15 border border-white/20 rounded-full flex items-center justify-center text-lg leading-none" aria-hidden="true">🦋</div>
+                            <span className="font-medium text-white/90">Morpho Pay</span>
+                        </div>
+                        <span className="text-[9px] bg-white/15 border border-white/15 backdrop-blur-sm px-2 py-1 rounded-full">{statusBadge}</span>
                     </div>
-                    <div className="text-2xl font-bold tracking-tight mb-1">₩ {amount}</div>
+                    <div className="relative text-2xl font-bold tracking-tight mt-5 mb-1">¥ {amount}</div>
                     {note ? (
-                        <div className="text-[11px] text-white/80 truncate mb-0.5">{note}</div>
+                        <div className="relative text-[11px] text-white/80 truncate mb-0.5">{note}</div>
                     ) : null}
-                    <div className="flex items-center justify-between">
+                    <div className="relative flex items-center justify-between mt-4 pt-3 border-t border-white/15">
                         <div className="text-[10px] text-white/70">转账给{counterparty}</div>
-                        {statusBadge && (
-                            <span className="text-[9px] bg-white/25 backdrop-blur-sm px-1.5 py-0.5 rounded-full">{statusBadge}</span>
-                        )}
+                        <div className="text-[9px] text-white/55">轻触查看详情</div>
                     </div>
                 </div>
             )}
@@ -981,14 +977,14 @@ const TransferCard: React.FC<{
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部金额区 */}
-                        <div className="bg-gradient-to-br from-amber-400 to-orange-500 px-6 pt-7 pb-8 text-white relative overflow-hidden">
-                            <div className="absolute -top-4 -right-4 opacity-15"><SullyPayMark className="w-28 h-28" /></div>
+                        <div className={`bg-gradient-to-br ${cardTone} px-6 pt-7 pb-8 text-white relative overflow-hidden`}>
+                            <div className="absolute -top-7 -right-5 text-9xl opacity-10 rotate-12 select-none" aria-hidden="true">🦋</div>
                             <div className="flex items-center gap-2 mb-5">
-                                <div className="p-1.5 bg-white/20 rounded-full"><SullyPayMark className="w-4 h-4" /></div>
-                                <span className="text-sm font-medium text-white/90">Sully Pay 转账</span>
+                                <div className="w-8 h-8 bg-white/15 border border-white/20 rounded-full flex items-center justify-center text-base leading-none" aria-hidden="true">🦋</div>
+                                <span className="text-sm font-medium text-white/90">Morpho Pay</span>
                             </div>
                             <div className="text-[11px] text-white/70 mb-1">{isUser ? `你向${charName}转账` : `${charName}向你转账`}</div>
-                            <div className="text-4xl font-bold tracking-tight">₩ {amount}</div>
+                            <div className="text-4xl font-bold tracking-tight">¥ {amount}</div>
                         </div>
 
                         {/* 详情区 */}
@@ -1010,7 +1006,7 @@ const TransferCard: React.FC<{
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-slate-400">状态</span>
                                 <span className={`font-medium ${
-                                    status === 'accepted' ? 'text-emerald-600' : status === 'returned' ? 'text-slate-500' : 'text-amber-600'
+                                    status === 'accepted' ? 'text-emerald-600' : status === 'returned' ? 'text-slate-500' : 'text-violet-600'
                                 }`}>
                                     {status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '等待对方处理'}
                                 </span>
@@ -1024,7 +1020,7 @@ const TransferCard: React.FC<{
                                     >退回</button>
                                     <button
                                         onClick={() => handleResolve('accepted')}
-                                        className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-amber-400 to-orange-500 shadow-md active:scale-95 transition-transform"
+                                        className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-[#4b3d86] to-[#7969ad] shadow-md active:scale-95 transition-transform"
                                     >接收</button>
                                 </div>
                             ) : (

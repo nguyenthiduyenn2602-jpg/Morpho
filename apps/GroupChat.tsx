@@ -75,11 +75,11 @@ const GroupPacketCard = ({ msg, nameOf, onOpen }: {
     // 旧数据（无 packet 判别字段）：legacy 简卡，渲染不变语义
     if (!meta?.packet) {
         return (
-            <div className="w-60 bg-[#fb923c] text-white p-3 rounded-xl flex items-center gap-3 shadow-md relative overflow-hidden">
-                <div className="text-2xl">🧧</div>
+            <div className="w-60 bg-gradient-to-br from-[#27234f] via-[#4b3d86] to-[#7969ad] text-white p-3 rounded-xl flex items-center gap-3 shadow-md relative overflow-hidden">
+                <div className="w-9 h-9 rounded-full bg-white/15 border border-white/20 flex items-center justify-center text-lg">🦋</div>
                 <div className="z-10">
                     <div className="font-bold text-sm tracking-wide">红包 / 转账</div>
-                    <div className="text-[10px] opacity-90">Sully Pay</div>
+                    <div className="text-[10px] opacity-90">Morpho Pay</div>
                 </div>
             </div>
         );
