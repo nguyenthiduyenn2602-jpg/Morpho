@@ -951,6 +951,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    if (source === 'story_theater_memory') return `[剧情：${m.metadata?.theaterTitle || '共同经历'}]`;
                     return '[聊天]';
                 })();
                 

@@ -99,6 +99,37 @@ export async function vectorizeAndStore(
  * 这样硅基 `Pro/BAAI/bge-m3` → 火山 `BAAI/bge-m3` 这类「同一开源模型、
  * 仅换服务商/档位」的切换不会触发无谓重建（向量空间一致）。
  */
+export interface UpdateStoredMemoryNodeResult {
+    node: MemoryNode;
+    reembedded: boolean;
+}
+
+/** 保存记忆节点；正文变化时沿用原 id 重建向量，避免新正文配旧向量。 */
+export async function updateStoredMemoryNode(
+    nodeId: string,
+    updates: Partial<MemoryNode>,
+    embeddingConfig?: EmbeddingConfig,
+    remoteVectorConfig?: RemoteVectorConfig,
+): Promise<UpdateStoredMemoryNodeResult> {
+    const existing = await MemoryNodeDB.getById(nodeId);
+    if (!existing) throw new Error('这条记忆已经不存在了');
+
+    const updated: MemoryNode = { ...existing, ...updates, id: existing.id, charId: existing.charId };
+    if (!updated.content.trim()) throw new Error('记忆内容不能为空');
+    const contentChanged = updated.content !== existing.content;
+
+    if (!contentChanged) {
+        await MemoryNodeDB.save(updated);
+        return { node: updated, reembedded: false };
+    }
+    if (!embeddingConfig?.baseUrl || !embeddingConfig.apiKey || !embeddingConfig.model) {
+        throw new Error('请先配置 Embedding API，修改正文后需要同步更新向量');
+    }
+    updated.embedded = false;
+    await vectorizeAndStore([updated], embeddingConfig, remoteVectorConfig, { skipDedup: true });
+    return { node: { ...updated, embedded: true }, reembedded: true };
+}
+
 function normalizeModelName(model: string): string {
     return model
         .replace(/^Pro\//i, '')   // 硅基付费档前缀

@@ -9,7 +9,7 @@ import {
     LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot,
     LifeRecord, MedPlan, LifeRecordSettings, CharacterGroup,
     VRWorldNovel, VRNovelAnnotation, CustomCreatorPart, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
-    WorldProfile, WorldEpisode
+    WorldProfile, WorldEpisode, StoryTheaterEntry, StoryTheaterPreset, StoryTheaterMask
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { exportSignalLocal, importSignalLocal } from './vrWorld/signal';
@@ -23,7 +23,9 @@ const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
 // 合并后统一推到 67——建表全部走幂等的 if(!contains)，任一侧的 v66 老库升级时都会补齐缺的那组表。
 // v68：character_groups 角色分组（神经链接"文件夹"，见 types.ts CharacterGroup）。
-const DB_VERSION = 68;
+// v69：见面·剧情条目与糯米机原生预设。正文继续复用 messages 表，避免再造会话存储。
+// v70：剧场面具箱（原创人物面具）；角色面具仍只存 characterId，不复制神经链接资料。
+const DB_VERSION = 70;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -77,6 +79,9 @@ const STORE_WORLD_EPISODES = 'world_episodes';    // 家园·演绎历史（每�
 const STORE_LIFE_RECORDS = 'life_records';        // 生活记录：生理期/药盒打卡/锻炼（记账走 bank_transactions）
 const STORE_MED_PLANS = 'med_plans';              // 药盒计划（每天几点吃什么药）
 const STORE_LIFE_SETTINGS = 'life_record_settings'; // 生活记录设置单例（id='main'：周期长度等）
+const STORE_STORY_THEATERS = 'story_theaters';       // 见面·剧情条目（消息用 story-theater:${id}）
+const STORE_STORY_THEATER_PRESETS = 'story_theater_presets'; // 糯米机原生剧情预设
+const STORE_STORY_THEATER_MASKS = 'story_theater_masks'; // 剧场原创人物面具
 
 // API 调用记录：保留近 5 天，超期丢弃；再加一个硬上限防止异常情况撑爆
 const API_CALL_LOG_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
@@ -337,6 +342,9 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
       createStore(STORE_MED_PLANS, { keyPath: 'id' });
       createStore(STORE_LIFE_SETTINGS, { keyPath: 'id' });
+      createStore(STORE_STORY_THEATERS, { keyPath: 'id' });
+      createStore(STORE_STORY_THEATER_PRESETS, { keyPath: 'id' });
+      createStore(STORE_STORY_THEATER_MASKS, { keyPath: 'id' });
 
       createStore(STORE_HOTNEWS, { keyPath: 'id' });
 
@@ -1914,6 +1922,93 @@ export const DB = {
       transaction.objectStore(STORE_WORLDBOOKS).delete(id);
   },
 
+  // --- 见面 · 剧情剧场 ---
+  getStoryTheaters: async (): Promise<StoryTheaterEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_STORY_THEATERS)) return [];
+      return new Promise((resolve, reject) => {
+          const request = db.transaction(STORE_STORY_THEATERS, 'readonly').objectStore(STORE_STORY_THEATERS).getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: StoryTheaterEntry, b: StoryTheaterEntry) => b.updatedAt - a.updatedAt));
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveStoryTheater: async (entry: StoryTheaterEntry): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATERS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATERS).put(entry);
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('saveStoryTheater aborted'));
+      });
+  },
+
+  deleteStoryTheater: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATERS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATERS).delete(id);
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('deleteStoryTheater aborted'));
+      });
+  },
+
+  getStoryTheaterPresets: async (): Promise<StoryTheaterPreset[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_STORY_THEATER_PRESETS)) return [];
+      return new Promise((resolve, reject) => {
+          const request = db.transaction(STORE_STORY_THEATER_PRESETS, 'readonly').objectStore(STORE_STORY_THEATER_PRESETS).getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: StoryTheaterPreset, b: StoryTheaterPreset) => b.updatedAt - a.updatedAt));
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveStoryTheaterPreset: async (preset: StoryTheaterPreset): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATER_PRESETS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATER_PRESETS).put(preset);
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('saveStoryTheaterPreset aborted'));
+      });
+  },
+
+  deleteStoryTheaterPreset: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATER_PRESETS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATER_PRESETS).delete(id);
+  },
+
+  getStoryTheaterMasks: async (): Promise<StoryTheaterMask[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_STORY_THEATER_MASKS)) return [];
+      return new Promise((resolve, reject) => {
+          const request = db.transaction(STORE_STORY_THEATER_MASKS, 'readonly').objectStore(STORE_STORY_THEATER_MASKS).getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: StoryTheaterMask, b: StoryTheaterMask) => b.updatedAt - a.updatedAt));
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveStoryTheaterMask: async (mask: StoryTheaterMask): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATER_MASKS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATER_MASKS).put(mask);
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('saveStoryTheaterMask aborted'));
+      });
+  },
+
+  deleteStoryTheaterMask: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_STORY_THEATER_MASKS, 'readwrite');
+      transaction.objectStore(STORE_STORY_THEATER_MASKS).delete(id);
+  },
+
   getAllNovels: async (): Promise<NovelBook[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_NOVELS)) return [];
@@ -2576,7 +2671,7 @@ export const DB = {
           });
       };
 
-      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
+      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_CHAR_GROUPS),
           getAllFromStore(STORE_MESSAGES),
@@ -2597,6 +2692,9 @@ export const DB = {
           getAllFromStore(STORE_COURSES),
           getAllFromStore(STORE_GAMES),
           getAllFromStore(STORE_WORLDBOOKS),
+          getAllFromStore(STORE_STORY_THEATERS),
+          getAllFromStore(STORE_STORY_THEATER_PRESETS),
+          getAllFromStore(STORE_STORY_THEATER_MASKS),
           getAllFromStore(STORE_NOVELS),
           getAllFromStore(STORE_BANK_TX),
           getAllFromStore(STORE_BANK_DATA),
@@ -2638,7 +2736,7 @@ export const DB = {
       const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
-          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
+          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels,
           bankState: mainState ? { ...mainState, id: undefined } : undefined,
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,
@@ -2698,7 +2796,7 @@ export const DB = {
           STORE_CHARACTERS, STORE_CHAR_GROUPS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES,
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
-          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS, STORE_SONGS,
+          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_STORY_THEATERS, STORE_STORY_THEATER_PRESETS, STORE_STORY_THEATER_MASKS, STORE_NOVELS, STORE_SONGS,
           STORE_BANK_TX, STORE_BANK_DATA,
           STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
           STORE_QUIZZES,
@@ -3043,6 +3141,18 @@ export const DB = {
           await clearAndAdd(STORE_WORLDBOOKS, data.worldbooks, '世界书', false);
           data.worldbooks = undefined as any;
       }, data.worldbooks?.length || 0);
+      await runSection('剧情剧场', data.storyTheaters !== undefined, async () => {
+          await clearAndAdd(STORE_STORY_THEATERS, data.storyTheaters, '剧情剧场', false);
+          data.storyTheaters = undefined as any;
+      }, data.storyTheaters?.length || 0);
+      await runSection('剧情预设', data.storyTheaterPresets !== undefined, async () => {
+          await clearAndAdd(STORE_STORY_THEATER_PRESETS, data.storyTheaterPresets, '剧情预设', false);
+          data.storyTheaterPresets = undefined as any;
+      }, data.storyTheaterPresets?.length || 0);
+      await runSection('剧场面具箱', data.storyTheaterMasks !== undefined, async () => {
+          await clearAndAdd(STORE_STORY_THEATER_MASKS, data.storyTheaterMasks, '剧场面具箱', true);
+          data.storyTheaterMasks = undefined as any;
+      }, data.storyTheaterMasks?.length || 0);
       await runSection('小说', data.novels !== undefined, async () => {
           await clearAndAdd(STORE_NOVELS, data.novels, '小说', false);
           data.novels = undefined as any;

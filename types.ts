@@ -1835,6 +1835,117 @@ export interface DateState {
 }
 
 
+// ─── 见面 · 剧情剧场 ────────────────────────────────────────────────
+
+/** 独立剧场达到水位后，旧正文的归档去向。切换策略只影响之后的新归档。 */
+export type StoryTheaterArchiveStrategy = 'summary' | 'vector';
+
+export interface StoryTheaterArchive {
+    id: string;
+    strategy: StoryTheaterArchiveStrategy;
+    fromMessageId: number;
+    toMessageId: number;
+    messageCount: number;
+    /** summary 策略的事件盒正文；vector 策略留空，由独立 charId 分区召回。 */
+    summary?: string;
+    createdAt: number;
+}
+
+/** 剧场里用户所扮演的身份；已有角色按 characterId 动态读取，自定义身份来自面具箱。 */
+export type StoryTheaterMaskSelection =
+    | { type: 'user' }
+    | { type: 'character'; id: string }
+    | { type: 'custom'; id: string };
+
+/** 独立于用户档案与神经链接的可复用原创人物身份。 */
+export interface StoryTheaterMask {
+    id: string;
+    name: string;
+    avatar?: string;
+    description: string;
+    coreInstruction?: string;
+    worldview?: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/**
+ * 一条可反复进入的剧情。演员与世界书只保存 id/沙盒选择，不反写外部挂载配置。
+ * 消息正文复用 messages 表，charId 使用 `story-theater:${id}` 独立线程；仅显式开启时镜像到角色记忆流。
+ */
+export interface StoryTheaterEntry {
+    id: string;
+    title: string;
+    premise: string;
+    /** 谁写下本剧情第一段：用户当前身份或模型故事正文。 */
+    openingMode?: 'user' | 'assistant';
+    /** 本剧情中用户执笔的身份；缺省时使用真实用户档案。 */
+    mask?: StoryTheaterMaskSelection;
+    characterIds: string[];
+    /** true=像【陪伴】一样，把第三人称正文分别写入每个角色的正常记忆流。 */
+    writesToCharacterMemory: boolean;
+    /** 每位演员各自的剧情时间锚点（datetime-local 字符串），允许跨时区/跨世界线。 */
+    characterMemoryDates: Record<string, string>;
+    /** 虚构剧场的记忆输入开关；真实陪伴固定为 true。 */
+    carryCharacterMemory: boolean;
+    /** 携带记忆时，每位演员附带的最近原文条数，默认 100。 */
+    characterContextLimits: Record<string, number>;
+    /** 独立剧场累计多少条未归档正文后触发归档。 */
+    archiveAfter: number;
+    /** 归档时至少留在会话里的最近楼层数；旧数据默认 5。 */
+    archiveKeepRecent?: number;
+    archiveStrategy: StoryTheaterArchiveStrategy;
+    archives: StoryTheaterArchive[];
+    /** 从演员挂载世界书去重得到；只影响本剧情，不改外部挂载。 */
+    selectedWorldbookIds: string[];
+    presetId?: string;
+    /** 会话内快速预设只覆盖本剧场，不修改预设库。 */
+    presetOverride?: StoryTheaterPresetDocument;
+    /** 仅供拒绝 assistant prefill、要求最后一条消息必须为 user 的接口使用；默认关闭以保留原生预设效果。 */
+    forceUserLastMessage?: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface StoryTheaterPresetPrompt {
+    id: string;
+    name: string;
+    enabled: boolean;
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+    /** marker 由发送器替换为角色/世界书/用户/场景/历史，不把占位条目当普通正文。 */
+    marker?: 'characters' | 'world_before' | 'user' | 'world_after' | 'scenario' | 'examples' | 'history';
+}
+
+export interface StoryTheaterPresetDocument {
+    schema: 'sullyos.story-preset';
+    version: 1;
+    name: string;
+    description?: string;
+    generation: {
+        temperature: number;
+        topP: number;
+        frequencyPenalty: number;
+        presencePenalty: number;
+        maxTokens: number;
+    };
+    prompts: StoryTheaterPresetPrompt[];
+    assistantPrefill?: string;
+}
+
+/** 糯米机专属剧情预设。导入器只接受 sullyos.story-preset，不兼容其它应用格式。 */
+export interface StoryTheaterPreset {
+    id: string;
+    name: string;
+    sourceFileName?: string;
+    format: 'sullyos-story-preset';
+    document: StoryTheaterPresetDocument;
+    builtIn?: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+
 export interface SpecialMomentRecord {
     content: string;
     image?: string; // base64 PNG (stored separately so export tools can handle it)
@@ -3127,6 +3238,9 @@ export interface FullBackupData {
     characterGroups?: CharacterGroup[];
     groups?: GroupProfile[];
     messages?: Message[];
+    storyTheaters?: StoryTheaterEntry[];
+    storyTheaterPresets?: StoryTheaterPreset[];
+    storyTheaterMasks?: StoryTheaterMask[];
     customThemes?: ChatTheme[];
     savedEmojis?: Emoji[]; 
     emojiCategories?: EmojiCategory[]; 
@@ -3270,6 +3384,7 @@ export interface FullBackupData {
     browserConfig?: { braveKey?: string; useRealSearch?: boolean };
     bm25Mode?: string;
     lastActiveCharId?: string;
+    storyTheaterAppearance?: string;
     eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
     hotNewsSnapshots?: HotNewsSnapshot[];
     dreamCollection?: Record<string, { firstAt: number; count: number }>;  // 梦境盲盒收藏册（os_dream_collection，账号级 localStorage）
