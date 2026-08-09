@@ -63,6 +63,7 @@ const FAQApp = lazyApp(() => import('../apps/FAQApp'));
 const WorldbookApp = lazyApp(() => import('../apps/WorldbookApp'));
 const BrowserApp = lazyApp(() => import('../apps/BrowserApp'));
 const CallApp = lazyApp(() => import('../apps/CallApp'));
+const DateApp = lazyApp(() => import('../apps/DateApp'));
 const VoiceDesignerApp = lazyApp(() => import('../apps/VoiceDesignerApp'));
 const MemoryPalaceApp = lazyApp(() => import('../apps/MemoryPalaceApp'));
 const HandbookApp = lazyApp(() => import('../apps/HandbookApp'));
@@ -71,18 +72,19 @@ const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
 const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, Settings, CallApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge, CharCreatorDevApp,
+  Chat, Character, GroupChat, Settings, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge, CharCreatorDevApp,
 ];
 
 const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
   Character,
   CallApp,
+  DateApp,
 ];
 
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.Character]: Character, [AppID.Chat]: Chat,
+  [AppID.Settings]: Settings, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -769,6 +771,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Worldbook: return <WorldbookApp />;
       case AppID.Browser: return <BrowserApp />;
       case AppID.Call: return <CallApp />;
+      case AppID.Date: return <DateApp />;
       case AppID.VoiceDesigner: return <VoiceDesignerApp />;
       case AppID.MemoryPalace: return <MemoryPalaceApp />;
       case AppID.Handbook: return <HandbookApp />;

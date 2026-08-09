@@ -5,6 +5,7 @@ export enum AppID {
   Character = 'character',
   Chat = 'chat',
   GroupChat = 'group_chat', 
+  Date = 'date',
   Gallery = 'gallery',
   Browser = 'browser',
   ThemeMaker = 'thememaker',
