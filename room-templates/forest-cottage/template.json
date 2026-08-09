@@ -1,0 +1,80 @@
+{
+  "schema": "sullyos.room-template.v1",
+  "name": "森系小屋",
+  "description": "",
+  "exportedAt": "2026-07-08T14:23:03.383Z",
+  "room": {
+    "wallImage": "assets/wall.png",
+    "floorImage": "assets/floor.png"
+  },
+  "items": [
+    {
+      "name": "地毯",
+      "type": "rug",
+      "image": "assets/item-01.png",
+      "x": 60.262955128836595,
+      "y": 98.54493973724409,
+      "scale": 3.6,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "窗户",
+      "type": "furniture",
+      "image": "assets/item-02.png",
+      "x": 73.9280303007458,
+      "y": 67.45357368878226,
+      "scale": 2.65,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "沙发",
+      "type": "furniture",
+      "image": "assets/item-03.png",
+      "x": 31.234439199920185,
+      "y": 85.03704711823025,
+      "scale": 2.65,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "灯",
+      "type": "furniture",
+      "image": "assets/item-04.png",
+      "x": 13.58821247331387,
+      "y": 75.28027738005352,
+      "scale": 1,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "书柜",
+      "type": "furniture",
+      "image": "assets/item-05.png",
+      "x": 25.08104735149824,
+      "y": 68.99361968460623,
+      "scale": 2.45,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    },
+    {
+      "name": "茶几",
+      "type": "furniture",
+      "image": "assets/item-06.png",
+      "x": 60.366197436008825,
+      "y": 94.3697530457004,
+      "scale": 2.65,
+      "rotation": 0,
+      "isInteractive": true,
+      "description": ""
+    }
+  ],
+  "builtIn": true,
+  "id": "forest-cottage"
+}
