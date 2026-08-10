@@ -6,7 +6,6 @@ import { AppID } from '../types';
 // 不在名单里的 App 仍由外壳兜底让位安全区（见 docs：TODO(safe-area-A) 迁移计划）。
 export const SELF_SAFE_AREA_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.Launcher,
-    AppID.VRWorld,
     AppID.Chat,
     AppID.GroupChat,
     AppID.Social,

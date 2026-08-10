@@ -15,7 +15,6 @@ import {
     writeDevDebugFlags,
 } from '../utils/devDebug';
 import { BUILD_LABEL } from '../utils/buildInfo';
-import { resetLoyalRecruitmentForTesting } from '../utils/loyalUserRecruitment';
 import type { DevDebugCaptureCategory, DevDebugFlags, DevDebugFloatingPosition } from '../utils/devDebug';
 
 const FLOATING_BUTTON_SIZE = 44;
@@ -238,11 +237,6 @@ const DevDebugPanel: React.FC = () => {
         setFloatingPosition(getDefaultFloatingPosition());
         closeDevDebug();
     };
-    const resetRecruitment = () => {
-        if (!window.confirm('清除本机的社区迁移检测结果并刷新？仅用于测试不同数据集。')) return;
-        resetLoyalRecruitmentForTesting();
-        window.location.reload();
-    };
     const copyLog = async () => {
         const text = formatDevDebugLog();
         if (!text) return;
@@ -464,14 +458,6 @@ const DevDebugPanel: React.FC = () => {
                     </div>
 
                     <div className="flex shrink-0 items-center justify-end gap-2 border-t border-white/10 px-4 py-3">
-                        <button
-                            type="button"
-                            onClick={resetRecruitment}
-                            className="flex h-8 shrink-0 items-center gap-1 rounded-full bg-amber-300/15 px-3 text-[11px] font-bold text-amber-100 active:scale-95"
-                        >
-                            <ArrowsClockwise size={13} weight="bold" />
-                            迁移重测
-                        </button>
                         <button
                             type="button"
                             onClick={handleForceClose}

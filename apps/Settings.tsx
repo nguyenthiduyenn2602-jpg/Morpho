@@ -22,7 +22,6 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { InstantPushSettingsModal } from '../components/settings/InstantPushSettingsModal';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
 import VersionInfo from '../components/settings/VersionInfo';
-import { LoyalUserRecruitmentController } from '../components/LoyalUserRecruitmentEvent';
 import { isPushVapidReady } from '../utils/pushVapid';
 import ApiCallLogModal from '../components/settings/ApiCallLogModal';
 import { DB } from '../utils/db';
@@ -396,7 +395,6 @@ const Settings: React.FC = () => {
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showGithubModal, setShowGithubModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
-  const [showCommunityMigration, setShowCommunityMigration] = useState(false);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
   const [cloudTestResult, setCloudTestResult] = useState<string>('');
   const [cloudTesting, setCloudTesting] = useState(false);
@@ -2338,15 +2336,6 @@ const Settings: React.FC = () => {
 
         <VersionInfo />
 
-        {/* QQ 小群入口不主动曝光：接近水印，仅在 hover / 键盘聚焦 / 按住时略微显现。 */}
-        <button
-            type="button"
-            onClick={() => setShowCommunityMigration(true)}
-            className="mx-auto mt-1 block px-4 py-2 text-center text-[9px] tracking-[0.12em] text-slate-500 opacity-[0.08] transition-opacity duration-500 hover:opacity-25 focus-visible:opacity-40 focus-visible:outline-none active:opacity-40"
-            aria-label="打开社区迁移说明与 QQ 群入口"
-        >
-            · 社区迁移说明 ·
-        </button>
       </div>
 
       {/* 主动消息 Push 加速 · 启用前确认 */}
@@ -3161,10 +3150,6 @@ const Settings: React.FC = () => {
         open={showVapidModal}
         onClose={() => { setShowVapidModal(false); setVapidReadyTick((n) => n + 1); }}
       />
-
-      {showCommunityMigration && (
-        <LoyalUserRecruitmentController onClose={() => setShowCommunityMigration(false)} />
-      )}
 
     </div>
   );

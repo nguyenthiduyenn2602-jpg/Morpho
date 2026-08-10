@@ -11,6 +11,15 @@ const XHS_PUBLISH_HOST_CANDIDATES = [
   "https://www.xiaohongshu.com",
 ];
 
+// Morpho 自托管实例只接受正式站与本地开发页的浏览器请求，避免公开 Worker
+// 被第三方网页直接当作免费代理滥用。非浏览器健康检查只允许访问根路径。
+const MORPHO_ORIGIN = "https://nguyenthiduyenn2602-jpg.github.io";
+const ALLOWED_ORIGINS = new Set([
+  MORPHO_ORIGIN,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
+
 function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
@@ -2228,7 +2237,14 @@ export const __xhsLiteTest = XHSLite.__test;
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const origin = request.headers.get("Origin") || "*";
+    const requestOrigin = request.headers.get("Origin");
+    if (requestOrigin && !ALLOWED_ORIGINS.has(requestOrigin)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    if (!requestOrigin && url.pathname !== "/") {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const origin = requestOrigin || MORPHO_ORIGIN;
 
     // CORS preflight
     if (request.method === "OPTIONS") {

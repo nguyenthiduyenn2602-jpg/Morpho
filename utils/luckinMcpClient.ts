@@ -6,7 +6,7 @@
  * Token: 登录 open.lkcoffee.com 后复制, 每个用户独立, 有效期约 1 个月, 存 localStorage
  *
  * 浏览器无法直连 lkcoffee.com (CORS), 走中心配置的 Cloudflare Worker 透传 (默认
- * https://sullymeow.ccwu.cc, 用户可在「设置 → 自定义网络代理」里改):
+ * Morpho 自托管实例，用户可在「设置 → 自定义网络代理」里改):
  *   POST  <worker>/mcp/luckin
  *   Authorization: Bearer <user_mcp_token>
  *   body: 标准 JSON-RPC 2.0 报文

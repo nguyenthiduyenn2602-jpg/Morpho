@@ -6,7 +6,7 @@ import { DB } from '../../utils/db';
 import AppIcon from './AppIcon';
 import { getMobileGameArt } from './mobilegameArt';
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
-import { getChibi } from '../../utils/vrWorld/chibi';
+import { getChibi } from '../../utils/chibiDisplay';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/devDebug';
 
 // ===== 手游主题（mobilegame skin）=====
@@ -278,7 +278,7 @@ const MobileGameHome: React.FC = () => {
     const tagline = (widgetChar?.description || '不知名种草姬').slice(0, 36);
     const announcement = lastMessage || widgetChar?.description || '一切如常，等待新的故事发生。';
     const expPct = Math.min(100, Math.round((stats.exp / stats.expMax) * 100));
-    // 时钟卡角色：优先彼方 chibi 小贴纸（透明立绘），没有就头像融合
+    // 时钟卡角色：优先小小窝/见面立绘，没有就头像融合
     const chibi = widgetChar ? getChibi(widgetChar) : null;
 
     const drawerApps = useMemo(

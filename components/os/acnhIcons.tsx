@@ -134,7 +134,6 @@ const ACNH_ICON_MAP: Partial<Record<AppID, React.ReactNode>> = {
     <circle cx="38" cy="69" r="4" fill="#B7A98C" /><circle cx="52" cy="69" r="4" fill={BROWN} />
   </>),
   [AppID.SpecialMoments]: draw([12, 14, 88, 87], starGlyph),
-  [AppID.VRWorld]: draw([12, 14, 88, 87], starGlyph),
   [AppID.Appearance]: draw([16, 20, 84, 84], paletteGlyph),
   [AppID.ThemeMaker]: draw([16, 20, 84, 84], paletteGlyph),
   [AppID.HotNews]: draw([20, 26, 80, 76], <>

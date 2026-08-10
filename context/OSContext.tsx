@@ -10,9 +10,6 @@ import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
 import { writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
 import { encodeVectorsForBackup } from '../utils/memoryPalace/db';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { VRScheduler } from '../utils/vrWorld/scheduler';
-import { runVRSession } from '../utils/vrWorld/runSession';
-import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
 import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
@@ -47,8 +44,6 @@ import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { toMountedWorldbook } from '../utils/worldbook';
 import { initLocalStorageMirror } from '../utils/lsMirror';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
-import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
-import { exportSignalLocal } from '../utils/vrWorld/signal';
 import { exportWorldHomeLocal } from '../utils/worldHome/localBackup';
 import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
@@ -2318,38 +2313,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           void runProactive(charId);
       });
 
-      // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
-      const runVR = async (charId: string, room?: string, letterId?: string) => {
-          const char = charactersRef.current.find(c => c.id === charId);
-          if (!char || !char.vrState?.enabled) return;
-          if (!userProfileRef.current) return;
-          try {
-              await runVRSession({
-                  char,
-                  characters: charactersRef.current,
-                  apiConfig: apiConfigRef.current,
-                  userProfile: userProfileRef.current,
-                  groups: groupsRef.current,
-                  realtimeConfig: realtimeConfigRef.current,
-                  memoryPalaceConfig: memoryPalaceConfigRef.current,
-                  updateCharacter,
-                  forcedRoom: room as any,
-                  forcedLetterId: letterId,
-              });
-          } catch (e) {
-              console.error('[VRWorld] runVR error', e);
-          }
-      };
-      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string) => { void runVR(charId, room, letterId); });
-
-      // 以角色 vrState 为准对账调度表：调度表存 localStorage、不随备份迁移，
-      // 导入备份后角色虽 enabled 但调度表为空，这里补建/清理使其按时触发。
-      VRScheduler.reconcile(
-          charactersRef.current
-              .filter(c => c.vrState?.enabled)
-              .map(c => ({ charId: c.id, intervalMinutes: c.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN }))
-      );
-
       // 「家园」演绎 —— 引擎跑在全局：用户不在家园界面（可能正在和别人私聊）时，
       // 观测/离线 tick 触发的一轮链式演绎照样完成并注入 world_card。
       const runWorld = async (worldId: string, trigger: 'observe' | 'tick') => {
@@ -2412,7 +2375,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
-          VRScheduler.onTrigger(() => {});
           WorldScheduler.onTrigger(() => {});
           window.removeEventListener('world-reroll-request', onRerollRequest as EventListener);
       };
@@ -3373,9 +3335,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // 本机 localStorage 配置（导入端 importFullData 已支持恢复，之前导出漏发导致丢失）
               //  · 瑞幸 / 麦当劳 MCP 的点单 token + 启用状态（用户说的「那个码」）
-              //  · 邮局身份、家园全局 API + 文风收藏
-              vrPostOffice: (mode === 'text_only' || mode === 'full') ? exportPostOfficeLocal() : undefined,
-              vrSignal: (mode === 'text_only' || mode === 'full') ? exportSignalLocal() : undefined, // 信号坠落处：句子归属「你·角色」+ 反复用清单
+              //  · 家园全局 API + 文风收藏
               worldHomeLocal: (mode === 'text_only' || mode === 'full') ? exportWorldHomeLocal() : undefined,
               luckinLocal: (mode === 'text_only' || mode === 'full') ? exportLuckinLocal() : undefined,
               mcdLocal: (mode === 'text_only' || mode === 'full') ? exportMcdLocal() : undefined,

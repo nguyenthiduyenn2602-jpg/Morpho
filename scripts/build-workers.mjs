@@ -48,18 +48,6 @@ const WORKERS = [
     outPublic: 'public/sw-keep-alive.js',
     skipWorkerOut: true,
   },
-  // post-office 是纯后端（跨用户漂流信），不被前端静态 fetch，所以只产 worker.bundle.js
-  // 供粘进 CF 面板（选 ES Module 格式）或对照 wrangler deploy，不写 public/。
-  {
-    name: 'post-office',
-    skipPublicOut: true,
-  },
-  // loyal-recruitment 是一次性忠实用户招募服务：独立 D1 / secrets / 路由，
-  // 不与邮局或彼方活动共享运行时状态。
-  {
-    name: 'loyal-recruitment',
-    skipPublicOut: true,
-  },
 ];
 
 // amsg-instant 0.3.0+ uses only Web Crypto (globalThis.crypto.subtle); the

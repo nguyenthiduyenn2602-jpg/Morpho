@@ -70,6 +70,11 @@ describe('proxyWorker 中心配置', () => {
     localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu213.cc');
     expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
   });
+
+  it('原版当前公共实例 sullymeow.ccwu.cc → 读取时迁移回 Morpho 默认', () => {
+    localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu.cc');
+    expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
+  });
 });
 
 // 已死的历史公共实例域名必须被迁到当前 worker，否则独立持久化的存量配置
@@ -86,6 +91,10 @@ describe('rewriteStaleWorkerUrl', () => {
 
   it('迁移最早的 workers.dev 默认域名', () => {
     expect(rewriteStaleWorkerUrl('https://sully-n.qegj567.workers.dev/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
+  });
+
+  it('迁移原版当前公共实例并保留路径', () => {
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
   it('中心配了自部署 worker 时，死域名跟着迁到自部署地址', () => {

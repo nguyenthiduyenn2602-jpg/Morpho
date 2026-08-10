@@ -5,7 +5,6 @@ import { installTranslateCrashGuard } from './utils/translateCrashGuard';
 import { ActiveMsgRuntime } from './utils/activeMsgRuntime';
 import { KeepAlive } from './utils/keepAlive';
 import { ProactiveChat } from './utils/proactiveChat';
-import { VRScheduler } from './utils/vrWorld/scheduler';
 import { installIOSStandaloneWorkaround } from './utils/iosStandalone';
 import { installWakeListener } from './utils/proactivePushConfig';
 
@@ -13,8 +12,6 @@ import { installWakeListener } from './utils/proactivePushConfig';
 KeepAlive.init().then(() => {
   // Resume any active proactive schedule after SW is ready
   ProactiveChat.resume();
-  // Resume 「彼方」 autonomous-login schedules
-  VRScheduler.resume();
   void ActiveMsgRuntime.init();
   // Record every wake the SW reports so the diagnostic panel can show "last received".
   installWakeListener();
