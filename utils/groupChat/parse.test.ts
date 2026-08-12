@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { parseDirectorActions, parseSummaryYaml, parseGroupTopicBox, parseQuotedBubbleLines } from './parse';
+import { clampBubbleLines, parseDirectorActions, parseSummaryYaml, parseGroupTopicBox, parseQuotedBubbleLines } from './parse';
+
+describe('clampBubbleLines', () => {
+    it('把角色回复硬截为最多 3 个气泡', () => {
+        expect(clampBubbleLines('一\n二\n三\n四', 3, 80)).toBe('一\n二\n三');
+    });
+
+    it('全部公开文字严格不超过 80 个字符', () => {
+        const output = clampBubbleLines(`${'甲'.repeat(50)}\n${'乙'.repeat(50)}`, 3, 80);
+        expect(Array.from(output.replace(/\n/g, '')).length).toBe(80);
+        expect(output).toBe(`${'甲'.repeat(50)}\n${'乙'.repeat(30)}`);
+    });
+
+    it('同一行里的表情包按独立气泡计数', () => {
+        expect(clampBubbleLines('第一句 [[SEND_EMOJI: 开心]]\n第二句\n第三句', 3, 80))
+            .toBe('第一句\n[[SEND_EMOJI: 开心]]\n第二句');
+    });
+});
 
 describe('parseQuotedBubbleLines', () => {
     it('binds multiple quote markers to their own following bubbles', () => {

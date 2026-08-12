@@ -170,21 +170,68 @@ export function matchHandoffName<T extends { id: string; name: string }>(
  * 空行不计数（只是排版），超限后连同尾部空行一起丢弃。
  * 含 [html] 卡片时整段放行：HTML 是多行结构，按行砍会把卡片拦腰截成一堆碎标签。
  */
-export function clampBubbleLines(content: string, maxLines = 8): string {
-    const text = String(content ?? '');
+export function clampBubbleLines(content: string, maxLines = 8, maxChars?: number): string {
+    let text = String(content ?? '');
     if (!text) return '';
-    if (/\[html/i.test(text)) return text;
+    if (/\[html/i.test(text)) {
+        if (typeof maxChars !== 'number') return text;
+        // 紧凑角色不允许用 HTML 卡片绕过气泡/字数限制。
+        text = text.replace(/\[html\][\s\S]*?\[\/html\]/gi, '').trim();
+        if (!text) return '';
+    }
+    if (typeof maxChars === 'number') {
+        // 紧凑角色也不允许把超长正文藏进 PRIVATE 指令绕过公开回复闸门。
+        text = text.replace(/\[\[\s*PRIVATE\s*[:：][\s\S]*?\]\]/gi, '').trim();
+        if (!text) return '';
+    }
 
-    const lines = text.split('\n');
+    // 表情标记即使和文字挤在同一行，dispatch 时也会单独落成一个气泡。
+    // 先把它拆成独立行，避免模型用“文字 + 表情”绕过气泡上限。
+    const lines = text
+        .replace(/[ \t]*(\[\[\s*SEND_EMOJI\s*[:：][\s\S]*?\]\])[ \t]*/gi, '\n$1\n')
+        .replace(/\n{2,}/g, '\n')
+        .split('\n');
     const kept: string[] = [];
     let spoken = 0;
+    let visibleChars = 0;
+
+    const trimToVisibleLimit = (line: string, remaining: number): string => {
+        if (remaining < 0) return '';
+        const parts = line.split(/(\[\[[^\]\n]*?\]\])/g);
+        let used = 0;
+        let result = '';
+        for (const part of parts) {
+            if (!part) continue;
+            if (/^\[\[\s*(?:SEND_EMOJI|QUOTE)\s*[:：][^\]\n]*?\]\]$/i.test(part)) {
+                result += part;
+                continue;
+            }
+            const chars = Array.from(part);
+            const take = Math.max(0, Math.min(chars.length, remaining - used));
+            result += chars.slice(0, take).join('');
+            used += take;
+            if (used >= remaining) break;
+        }
+        return result.trim();
+    };
+
     for (const line of lines) {
         if (line.trim() === '') {
             if (spoken > 0 && spoken < maxLines) kept.push(line);
             continue;
         }
         if (spoken >= maxLines) break;
-        kept.push(line);
+
+        let next = line.trim();
+        if (typeof maxChars === 'number') {
+            const remaining = Math.max(0, maxChars - visibleChars);
+            next = trimToVisibleLimit(next, remaining);
+            const visible = next.replace(/\[\[\s*(?:SEND_EMOJI|QUOTE)\s*[:：][^\]\n]*?\]\]/gi, '');
+            visibleChars += Array.from(visible).length;
+            // 字数已经耗尽时，只有完整指令（如表情包）仍可作为一个气泡保留。
+            if (!next || (!visible && !/\[\[[^\]\n]*?\]\]/.test(next))) continue;
+        }
+        kept.push(next);
         spoken++;
     }
     return kept.join('\n').trim();

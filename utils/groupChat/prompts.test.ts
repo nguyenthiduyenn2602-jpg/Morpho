@@ -62,4 +62,13 @@ describe('buildRoundRobinInstruction 双轮圆桌', () => {
         expect(closing).toContain('等待用户');
         expect(closing).toContain('不要输出 `[[TO: 名字]]`');
     });
+
+    it('固定角色1在所有轮次都限制 1-3 个气泡、80 字以内', () => {
+        const opening = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'opening', maxLines: 3, maxChars: 80 });
+        const followup = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'followup', maxLines: 3, maxChars: 80 });
+        expect(opening).toContain('目标 **1-3 行**');
+        expect(opening).toContain('不得超过 80 个字符');
+        expect(opening).toContain('表情包也单独计作一个气泡');
+        expect(followup).toContain('不得超过 80 个字符');
+    });
 });

@@ -369,6 +369,9 @@ const GroupMessageItem = React.memo(({
 // 这里是代码侧的兜底闸门，超出部分直接截掉。下限不管：AI 少说两句本来就自然。
 const ROUND_ROBIN_FIRST_PASS_MAX_LINES = 5;
 const ROUND_ROBIN_SECOND_PASS_MAX_LINES = 3;
+// 群设置里的第一个固定成员槽位默认承载 Gemini：每轮都压缩为 1-3 个气泡、80 字以内。
+const ROUND_ROBIN_PRIMARY_MEMBER_MAX_LINES = 3;
+const ROUND_ROBIN_PRIMARY_MEMBER_MAX_CHARS = 80;
 
 type MemberApiTestState = {
     status: 'idle' | 'testing' | 'success' | 'error';
@@ -1433,15 +1436,21 @@ ${memberTimeline || '(暂无互动记录)'}
         let tokenPrompt = 0;
         let tokenCompletion = 0;
         let roundMsgs = [...currentMsgs];
+        // 按群设置里的固定槽位判断“角色1”，不受 @/随机首发顺序影响。
+        const primaryMemberId = activeGroup.members[0];
 
         // 一次发言 = 一次 API 调用。第一轮完整表达，第二轮由 prompt 要求精简。
         const speakOnce = async (
             member: CharacterProfile,
             slot: RoundRobinSlot,
         ): Promise<void> => {
-            const maxLines = slot === 'opening' || slot === 'reply'
-                ? ROUND_ROBIN_FIRST_PASS_MAX_LINES
-                : ROUND_ROBIN_SECOND_PASS_MAX_LINES;
+            const isPrimaryMember = member.id === primaryMemberId;
+            const maxLines = isPrimaryMember
+                ? ROUND_ROBIN_PRIMARY_MEMBER_MAX_LINES
+                : slot === 'opening' || slot === 'reply'
+                    ? ROUND_ROBIN_FIRST_PASS_MAX_LINES
+                    : ROUND_ROBIN_SECOND_PASS_MAX_LINES;
+            const maxChars = isPrimaryMember ? ROUND_ROBIN_PRIMARY_MEMBER_MAX_CHARS : undefined;
             // 群内独立后端优先：memberApiConfigs[id] 有 key 就用它的 url/apiKey/model（缺哪样回落全局对应项）；
             // 否则回退角色自身的 chatApiConfig；再没有才用全局 apiConfig。
             const memberApi = activeGroup.memberApiConfigs?.[member.id];
@@ -1462,8 +1471,10 @@ ${memberTimeline || '(暂无互动记录)'}
             const instruction = buildRoundRobinInstruction(member.name, history, emojiContextStr, {
                 slot,
                 maxLines,
+                maxChars,
             });
-            const prompt = `${header}${memberBlock}\n\n${instruction}${htmlPromptExt}\n`;
+            // 角色1要求严格 80 字以内，禁用会绕过字数/气泡闸门的 HTML 卡片扩展。
+            const prompt = `${header}${memberBlock}\n\n${instruction}${isPrimaryMember ? '' : htmlPromptExt}\n`;
 
             const data = await completeGroupChatWithMcp({
                 url: `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
@@ -1504,7 +1515,7 @@ ${memberTimeline || '(暂无互动记录)'}
             const { skipped, content } = stripSkipMarker(handoff.content);
             if (skipped) return;
 
-            await dispatchMemberActions([{ charId: member.id, content: clampBubbleLines(content, maxLines) }], {
+            await dispatchMemberActions([{ charId: member.id, content: clampBubbleLines(content, maxLines, maxChars) }], {
                 groupId: activeGroup.id,
                 memberIds: activeGroup.members,
                 characters,
