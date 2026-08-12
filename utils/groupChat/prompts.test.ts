@@ -1,11 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { buildGroupHistoryBlock, buildRoundRobinInstruction, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
+import { buildGroupChatPresetBlock, buildGroupHistoryBlock, buildRoundRobinInstruction, GROUP_HISTORY_GAP_THRESHOLD_MS } from './prompts';
 import type { Message, CharacterProfile } from '../../types';
 
 const char = (id: string, name: string): CharacterProfile => ({ id, name } as CharacterProfile);
 
 const msg = (id: number, role: Message['role'], content: string, timestamp: number, charId = ''): Message =>
     ({ id, role, type: 'text', content, timestamp, charId } as Message);
+
+describe('buildGroupChatPresetBlock', () => {
+    it('留空时完全不注入默认预设', () => {
+        expect(buildGroupChatPresetBlock()).toBe('');
+        expect(buildGroupChatPresetBlock('   \n  ')).toBe('');
+    });
+
+    it('有内容时标为补充偏好且不覆盖角色档案', () => {
+        const block = buildGroupChatPresetBlock('少说教，多接彼此的话。');
+        expect(block).toContain('少说教，多接彼此的话。');
+        expect(block).toContain('不违背各成员角色档案');
+        expect(block).toContain('不要复述');
+    });
+});
 
 describe('buildGroupHistoryBlock 时间跳变分隔行', () => {
     const chars = [char('c1', '小夏')];

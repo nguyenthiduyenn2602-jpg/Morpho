@@ -2542,6 +2542,11 @@ export interface GroupProfile {
      */
     memberTimelineCap?: number;
     /**
+     * 用户为这个群追加的群聊风格/互动偏好。留空时不注入任何默认预设，保持模型原生表现。
+     * 只补充群级行为，不覆盖成员角色档案。
+     */
+    chatPreset?: string;
+    /**
      * 群回复生成模式：director = 一次调用生成整轮（默认，快、省 token）；
      * roundRobin = 每位成员单独调用一次 API，按成员顺序逐个发言（更真实、防串号，token ≈ 成员数倍）。
      */

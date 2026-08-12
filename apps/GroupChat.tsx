@@ -17,7 +17,7 @@ import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox, parseHandoff
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
-import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
+import { buildEmojiContextStr, buildGroupChatPresetBlock, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
 import { resolveRoundRobinOrder } from '../utils/groupChat/roundRobin';
 import { extractAvailableModelIds, hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig } from '../utils/groupChat/apiConfig';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
@@ -453,6 +453,7 @@ const GroupChat: React.FC = () => {
     const [tempGroupName, setTempGroupName] = useState('');
     const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
+    const [tempChatPreset, setTempChatPreset] = useState('');
     const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
@@ -837,6 +838,8 @@ const GroupChat: React.FC = () => {
             name: tempGroupName || activeGroup.name,
             privateContextCap: tempPrivateContextCap,
             memberTimelineCap: tempMemberTimelineCap,
+            // trim 后为空则删除字段，确保“留空 = 完全不注入”。
+            chatPreset: tempChatPreset.trim() || undefined,
             replyMode: tempReplyMode,
             memberBubbleIndependent: tempMemberBubbleIndependent,
             // 空串 = 默认紫，存 undefined 保持向后兼容语义
@@ -1103,6 +1106,7 @@ const GroupChat: React.FC = () => {
         setTempGroupName(activeGroup?.name || '');
         setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
         setTempMemberTimelineCap(activeGroup?.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP);
+        setTempChatPreset(activeGroup?.chatPreset ?? '');
         setTempReplyMode(activeGroup?.replyMode ?? 'director');
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
@@ -1159,7 +1163,7 @@ const GroupChat: React.FC = () => {
 当前系统时间: ${currentTimeStr}
 时间流逝感知: ${timeGapInfo}
 
-${sharedScene.text}${activeGroup ? buildGroupTopicContext(activeGroup) : ''}`;
+${sharedScene.text}${activeGroup ? buildGroupTopicContext(activeGroup) : ''}${buildGroupChatPresetBlock(activeGroup?.chatPreset)}`;
         return { header, sharedScene };
     };
 
@@ -1972,6 +1976,20 @@ ${memberTimeline || '(暂无互动记录)'}
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">群名称</label>
                         <input value={tempGroupName} onChange={e => setTempGroupName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:bg-white focus:border-violet-300 transition-all" />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">群聊预设（可选）</label>
+                            <span className="text-[9px] text-slate-300">{tempChatPreset.length}/2000</span>
+                        </div>
+                        <textarea
+                            value={tempChatPreset}
+                            maxLength={2000}
+                            onChange={e => setTempChatPreset(e.target.value)}
+                            placeholder="例如：像熟人群聊，多接彼此的话；少说教，不要轮流总结。留空则保持模型原汁原味。"
+                            className="w-full min-h-28 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs leading-5 outline-none resize-y focus:bg-white focus:border-violet-300 transition-all placeholder:text-slate-300"
+                        />
+                        <p className="mt-1.5 text-[9px] leading-4 text-slate-400">作用于本群的导演模式与双轮圆桌；只补充互动风格，不覆盖角色原设。随底部「保存修改」统一保存。</p>
                     </div>
 
                     {/* Reply Mode */}

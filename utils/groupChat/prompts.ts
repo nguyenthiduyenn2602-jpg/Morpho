@@ -238,6 +238,17 @@ export interface RoundRobinSlotContext {
     maxChars?: number;
 }
 
+/** 群级自定义预设：真正留空时返回空串，不给模型暗塞默认风格。 */
+export function buildGroupChatPresetBlock(preset?: string): string {
+    const text = String(preset ?? '').trim();
+    if (!text) return '';
+    return `
+
+【用户为本群添加的互动预设】
+${text}
+说明：这是本群的补充风格与互动偏好。请在不违背各成员角色档案、既有关系和更高优先级规则的前提下自然执行；不要复述、解释或在聊天中提到这段预设。`;
+}
+
 /**
  * 轮询模式（每成员一次调用）任务指令——单人视角，接在该成员档案块 + 群历史块之后。
  * 通过 ctx.slot 区分发言位：不同位置给不同的处境交代、行数目标和特权。
