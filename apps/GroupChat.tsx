@@ -19,7 +19,7 @@ import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
 import { resolveRoundRobinOrder } from '../utils/groupChat/roundRobin';
-import { hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig } from '../utils/groupChat/apiConfig';
+import { extractAvailableModelIds, hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig } from '../utils/groupChat/apiConfig';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -380,6 +380,13 @@ type MemberApiTestState = {
     verifiedAt?: number;
 };
 
+type MemberModelLookupState = {
+    status: 'idle' | 'loading' | 'success' | 'error';
+    models: string[];
+    query: string;
+    message?: string;
+};
+
 // --- Main Component ---
 
 const GroupChat: React.FC = () => {
@@ -454,6 +461,8 @@ const GroupChat: React.FC = () => {
     const [tempMemberSlots, setTempMemberSlots] = useState<string[]>(['', '']);
     const [tempMemberApi, setTempMemberApi] = useState<Record<string, APIConfig>>({});
     const [memberApiTestStates, setMemberApiTestStates] = useState<Record<string, MemberApiTestState>>({});
+    // 仅供当前设置弹窗搜索/选择，不写入 GroupProfile；真正保存的仍只有 URL / Key / model。
+    const [memberModelLookups, setMemberModelLookups] = useState<Record<string, MemberModelLookupState>>({});
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [memberGroupId, setMemberGroupId] = useState(GROUP_FILTER_ALL); // 建群选成员的分组筛选
     const [transferAmount, setTransferAmount] = useState('');
@@ -748,6 +757,47 @@ const GroupChat: React.FC = () => {
                     status: 'error',
                     signature,
                     message: `连接失败：${String(error?.message || error).slice(0, 160)}`,
+                },
+            }));
+        }
+    };
+
+    const fetchMemberModels = async (memberId: string) => {
+        const config = normalizeMemberApiConfig(tempMemberApi[memberId]);
+        if (!config.baseUrl || !config.apiKey) {
+            setMemberModelLookups(prev => ({
+                ...prev,
+                [memberId]: { status: 'error', models: [], query: '', message: '请先填写 URL 和 API Key' },
+            }));
+            return;
+        }
+        setMemberModelLookups(prev => ({
+            ...prev,
+            [memberId]: { ...(prev[memberId] || { models: [], query: '' }), status: 'loading', message: '正在获取模型…' },
+        }));
+        try {
+            const response = await fetch(`${config.baseUrl}/models`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+            });
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}${body ? `：${body.slice(0, 120)}` : ''}`);
+            }
+            const models = extractAvailableModelIds(await safeResponseJson(response));
+            if (models.length === 0) throw new Error('接口返回成功，但没有识别到模型列表');
+            setMemberModelLookups(prev => ({
+                ...prev,
+                [memberId]: { status: 'success', models, query: '', message: `获取到 ${models.length} 个模型` },
+            }));
+        } catch (error: any) {
+            setMemberModelLookups(prev => ({
+                ...prev,
+                [memberId]: {
+                    status: 'error',
+                    models: prev[memberId]?.models || [],
+                    query: prev[memberId]?.query || '',
+                    message: `获取失败：${String(error?.message || error).slice(0, 160)}`,
                 },
             }));
         }
@@ -1060,6 +1110,7 @@ const GroupChat: React.FC = () => {
         setTempMemberSlots([activeGroup?.members?.[0] ?? '', activeGroup?.members?.[1] ?? '']);
         setTempMemberApi(activeGroup?.memberApiConfigs ?? {});
         setMemberApiTestStates({});
+        setMemberModelLookups({});
         if (activeGroup) void loadTopicBoxStats(activeGroup);
         setModalType('settings');
         setShowPanel('none');
@@ -1966,6 +2017,11 @@ ${memberTimeline || '(暂无互动记录)'}
                             const currentError = stateMatchesDraft && testState?.status === 'error' ? testState.message : '';
                             const hasDraft = hasMemberApiConfig(cfg);
                             const complete = isMemberApiConfigComplete(cfg);
+                            const modelLookup = slotId ? memberModelLookups[slotId] : undefined;
+                            const modelQuery = modelLookup?.query.trim().toLowerCase() || '';
+                            const filteredModels = (modelLookup?.models || []).filter(model =>
+                                !modelQuery || model.toLowerCase().includes(modelQuery),
+                            );
                             const setField = (field: 'baseUrl' | 'apiKey' | 'model', val: string) => {
                                 if (!slotId) return;
                                 const next = { ...(tempMemberApi[slotId] || { baseUrl: '', apiKey: '', model: '' }), [field]: val };
@@ -1974,6 +2030,12 @@ ${memberTimeline || '(暂无互动记录)'}
                                     ...prev,
                                     [slotId]: { status: 'idle', signature: memberApiConfigFingerprint(next) },
                                 }));
+                                if (field === 'baseUrl' || field === 'apiKey') {
+                                    setMemberModelLookups(prev => ({
+                                        ...prev,
+                                        [slotId]: { status: 'idle', models: [], query: '' },
+                                    }));
+                                }
                             };
                             return (
                                 <div key={i} className={`rounded-xl border p-3 mb-3 transition-colors ${verified ? 'border-emerald-200 bg-emerald-50/40' : currentError ? 'border-red-200 bg-red-50/30' : 'border-slate-200 bg-slate-50/60'}`}>
@@ -2013,13 +2075,56 @@ ${memberTimeline || '(暂无互动记录)'}
                                         onChange={e => setField('apiKey', e.target.value)}
                                         className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 mb-2 disabled:bg-slate-100 disabled:text-slate-300"
                                     />
-                                    <input
-                                        placeholder="模型 (model)"
-                                        value={cfg.model}
-                                        disabled={!slotId}
-                                        onChange={e => setField('model', e.target.value)}
-                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 disabled:bg-slate-100 disabled:text-slate-300 mb-2"
-                                    />
+                                    <div className="flex gap-2 mb-2">
+                                        <input
+                                            placeholder="模型 (可手动输入)"
+                                            value={cfg.model}
+                                            disabled={!slotId}
+                                            onChange={e => setField('model', e.target.value)}
+                                            className="min-w-0 flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:border-violet-300 disabled:bg-slate-100 disabled:text-slate-300"
+                                        />
+                                        <button
+                                            type="button"
+                                            disabled={!slotId || !cfg.baseUrl.trim() || !cfg.apiKey.trim() || modelLookup?.status === 'loading'}
+                                            onClick={() => slotId && void fetchMemberModels(slotId)}
+                                            className="shrink-0 px-3 py-2 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-[10px] font-bold disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                        >
+                                            {modelLookup?.status === 'loading' ? '获取中…' : '获取模型'}
+                                        </button>
+                                    </div>
+                                    {(modelLookup?.models.length || 0) > 0 && (
+                                        <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2">
+                                            <input
+                                                value={modelLookup?.query || ''}
+                                                onChange={e => slotId && setMemberModelLookups(prev => ({
+                                                    ...prev,
+                                                    [slotId]: { ...(prev[slotId] || { status: 'success', models: [], query: '' }), query: e.target.value },
+                                                }))}
+                                                placeholder={`搜索 ${modelLookup?.models.length || 0} 个可用模型…`}
+                                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-md text-[10px] outline-none focus:border-violet-300"
+                                            />
+                                            <div className="mt-1.5 max-h-32 overflow-y-auto space-y-1">
+                                                {filteredModels.length > 0 ? filteredModels.map(model => (
+                                                    <button
+                                                        key={model}
+                                                        type="button"
+                                                        title={model}
+                                                        onClick={() => setField('model', model)}
+                                                        className={`w-full px-2.5 py-1.5 rounded-md text-left text-[10px] font-mono break-all transition-colors ${cfg.model === model ? 'bg-violet-100 text-violet-700 font-bold' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                                    >
+                                                        {model}
+                                                    </button>
+                                                )) : (
+                                                    <div className="py-3 text-center text-[10px] text-slate-400">没有匹配的模型</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {modelLookup?.message && (
+                                        <p className={`mb-2 text-[10px] leading-4 break-all ${modelLookup.status === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
+                                            {modelLookup.message}
+                                        </p>
+                                    )}
                                     <button
                                         type="button"
                                         disabled={!slotId || !complete || testing}

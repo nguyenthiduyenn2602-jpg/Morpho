@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    extractAvailableModelIds,
     hasMemberApiConfig,
     isMemberApiConfigComplete,
     memberApiConfigFingerprint,
@@ -24,5 +25,13 @@ describe('群成员独立 API 配置', () => {
         expect(memberApiConfigFingerprint(base)).toBe(memberApiConfigFingerprint({ ...base, baseUrl: ' https://api.example.com/v1 ' }));
         expect(memberApiConfigFingerprint(base)).not.toBe(memberApiConfigFingerprint({ ...base, apiKey: 'key-2' }));
         expect(memberApiConfigFingerprint(base)).not.toBe(memberApiConfigFingerprint({ ...base, model: 'm-2' }));
+    });
+
+    it('兼容常见模型列表格式并去重', () => {
+        expect(extractAvailableModelIds({ data: [{ id: 'gemini-3.1' }, { id: 'gemini-2.5' }, { id: 'gemini-3.1' }] }))
+            .toEqual(['gemini-3.1', 'gemini-2.5']);
+        expect(extractAvailableModelIds({ models: ['gpt-5', { name: 'claude-sonnet' }, { model: 'deepseek-chat' }] }))
+            .toEqual(['gpt-5', 'claude-sonnet', 'deepseek-chat']);
+        expect(extractAvailableModelIds({ nope: [] })).toEqual([]);
     });
 });

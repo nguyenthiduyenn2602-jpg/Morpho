@@ -18,6 +18,30 @@ export function isMemberApiConfigComplete(config?: Partial<APIConfig>): boolean 
     return !!(normalized.baseUrl && normalized.apiKey && normalized.model);
 }
 
+/** 兼容 OpenAI 风格 `{ data: [{ id }] }` 与常见中转站 `{ models: [...] }`。 */
+export function extractAvailableModelIds(payload: any): string[] {
+    const raw = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.models)
+            ? payload.models
+            : Array.isArray(payload)
+                ? payload
+                : [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const item of raw) {
+        const id = String(
+            typeof item === 'string' || typeof item === 'number'
+                ? item
+                : item?.id ?? item?.name ?? item?.model ?? '',
+        ).trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        result.push(id);
+    }
+    return result;
+}
+
 /**
  * Stable non-secret fingerprint used to bind a successful connection test to
  * the exact draft that was tested. The API key itself is never persisted in
