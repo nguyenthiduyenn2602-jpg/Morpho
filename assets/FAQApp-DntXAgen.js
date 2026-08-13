@@ -1,4 +1,4 @@
-import{aD as i,E as e,aF as h}from"./vendor-react-BCeq-sgS.js";import{bv as g,F as r}from"./index-TfMwW1Ui.js";import"./memory-palace--ayKb8vH.js";import"./vendor-capacitor-CfYwaE4i.js";import"./vendor-LrSAWOqM.js";const j=[{q:"1. 进不去网页 / 白屏 / 点了没反应",reason:"网络有点小脾气，不够通畅。",solution:`需要一点点“魔法”才能连上外网。
+import{aD as i,E as e,aF as h}from"./vendor-react-BCeq-sgS.js";import{bv as g,F as r}from"./index-CrdKwCsF.js";import"./memory-palace-Bd1RM_l8.js";import"./vendor-capacitor-D9eOmfHT.js";import"./vendor-LrSAWOqM.js";const j=[{q:"1. 进不去网页 / 白屏 / 点了没反应",reason:"网络有点小脾气，不够通畅。",solution:`需要一点点“魔法”才能连上外网。
 如果你不知道什么是“梯子/魔法”，请自行搜索一下~ 
 这不是软件坏啦，是网路不通。`,icon:"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fa84.png",color:"bg-blue-50 text-blue-700"},{q:"2. 发了消息，角色不回我？",reason:"为了帮大家省额度，角色不会自动秒回，他在等你戳他。",solution:`发完消息后，请注意观察顶部标题栏右边的 **闪电按钮**。
 点一下它，戳戳他，他就会思考并回复啦！`,icon:"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4a4.png",color:"bg-yellow-50 text-yellow-700"},{q:"3. 为什么拉取不到模型列表？",reason:"很多时候是填写的地址（URL）差了一点点。",solution:`请仔细检查你的链接：
