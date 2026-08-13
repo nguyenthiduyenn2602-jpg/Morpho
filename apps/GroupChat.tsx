@@ -1754,7 +1754,15 @@ ${memberTimeline || '(暂无互动记录)'}
     // 动森彩蛋模式（与私聊同一开关联动）
     const acnh = osTheme.skin === 'animalcrossing' && osTheme.acnhChatSync !== false;
     return (
-        <div className="sully-chat-root h-full w-full bg-[#f0f4f8] flex flex-col font-sans relative">
+        <div
+            className="sully-chat-root h-full w-full bg-[#f0f4f8] flex flex-col font-sans relative"
+            style={activeGroup?.chatBackground ? {
+                backgroundImage: `url(${activeGroup.chatBackground})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+            } : undefined}
+        >
             {/* 白框自定义 CSS：全局默认在前、群专属在后（后者叠加覆盖）。作用于 .sully-chat-* 各零件。 */}
             {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
             {activeGroup?.chromeCustomCss && <style>{activeGroup.chromeCustomCss}</style>}
@@ -1829,12 +1837,6 @@ ${memberTimeline || '(暂无互动记录)'}
             <div
                 className={`flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 ${activeGroup?.chatBackground ? 'bg-transparent' : 'bg-[#f0f4f8]'}`}
                 ref={scrollRef}
-                style={activeGroup?.chatBackground ? {
-                    backgroundImage: `url(${activeGroup.chatBackground})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    backgroundAttachment: 'local',
-                } : undefined}
             >
                 {collapsedCount > 0 && activeGroup && (
                     <div className="flex justify-center mb-6">
