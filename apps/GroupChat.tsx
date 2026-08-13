@@ -454,6 +454,7 @@ const GroupChat: React.FC = () => {
     const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
     const [tempChatPreset, setTempChatPreset] = useState('');
+    const [tempChatBackground, setTempChatBackground] = useState('');
     const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
@@ -478,6 +479,7 @@ const GroupChat: React.FC = () => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const groupAvatarInputRef = useRef<HTMLInputElement>(null);
+    const groupBackgroundInputRef = useRef<HTMLInputElement>(null);
     // 生成中的取消句柄：非空 = 正在生成，再点触发按钮 = 停止
     const abortRef = useRef<AbortController | null>(null);
     const topicArchiveLockRef = useRef(false);
@@ -840,6 +842,7 @@ const GroupChat: React.FC = () => {
             memberTimelineCap: tempMemberTimelineCap,
             // trim 后为空则删除字段，确保“留空 = 完全不注入”。
             chatPreset: tempChatPreset.trim() || undefined,
+            chatBackground: tempChatBackground || undefined,
             replyMode: tempReplyMode,
             memberBubbleIndependent: tempMemberBubbleIndependent,
             // 空串 = 默认紫，存 undefined 保持向后兼容语义
@@ -868,6 +871,21 @@ const GroupChat: React.FC = () => {
             addToast('群头像已修改', 'success');
         } catch (err: any) {
             addToast('图片处理失败', 'error');
+        }
+    };
+
+    const handleGroupBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            // 与单聊保持一致：聊天背景保留原画质，随群资料统一保存。
+            const dataUrl = await processImage(file, { skipCompression: true });
+            setTempChatBackground(dataUrl);
+            addToast('群聊背景已选择，保存后生效', 'success');
+        } catch (err: any) {
+            addToast(err?.message || '图片处理失败', 'error');
+        } finally {
+            e.target.value = '';
         }
     };
 
@@ -1107,6 +1125,7 @@ const GroupChat: React.FC = () => {
         setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
         setTempMemberTimelineCap(activeGroup?.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP);
         setTempChatPreset(activeGroup?.chatPreset ?? '');
+        setTempChatBackground(activeGroup?.chatBackground ?? '');
         setTempReplyMode(activeGroup?.replyMode ?? 'director');
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
@@ -1807,7 +1826,16 @@ ${memberTimeline || '(暂无互动记录)'}
             />
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 bg-[#f0f4f8]" ref={scrollRef}>
+            <div
+                className={`flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 ${activeGroup?.chatBackground ? 'bg-transparent' : 'bg-[#f0f4f8]'}`}
+                ref={scrollRef}
+                style={activeGroup?.chatBackground ? {
+                    backgroundImage: `url(${activeGroup.chatBackground})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    backgroundAttachment: 'local',
+                } : undefined}
+            >
                 {collapsedCount > 0 && activeGroup && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
@@ -1976,6 +2004,33 @@ ${memberTimeline || '(暂无互动记录)'}
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">群名称</label>
                         <input value={tempGroupName} onChange={e => setTempGroupName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:bg-white focus:border-violet-300 transition-all" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">群聊背景</label>
+                        <div
+                            onClick={() => groupBackgroundInputRef.current?.click()}
+                            className="h-24 rounded-xl bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center cursor-pointer overflow-hidden relative group hover:border-violet-300 transition-all"
+                        >
+                            {tempChatBackground ? (
+                                <img src={tempChatBackground} className="w-full h-full object-cover opacity-70 group-hover:opacity-90 transition-opacity" />
+                            ) : (
+                                <span className="text-[10px] text-slate-400 font-bold">点击上传图片（原画质）</span>
+                            )}
+                            {tempChatBackground && (
+                                <span className="absolute inset-0 hidden group-hover:flex items-center justify-center bg-black/20 text-white text-xs font-bold">更换</span>
+                            )}
+                        </div>
+                        <input
+                            type="file"
+                            ref={groupBackgroundInputRef}
+                            className="hidden"
+                            accept="image/*"
+                            onChange={handleGroupBackgroundUpload}
+                        />
+                        {tempChatBackground && (
+                            <button type="button" onClick={() => setTempChatBackground('')} className="mt-2 text-[10px] text-rose-400 hover:text-rose-500">移除背景</button>
+                        )}
+                        <p className="mt-1.5 text-[9px] leading-4 text-slate-400">仅作用于本群聊天区域，随底部「保存修改」统一保存。</p>
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-2">

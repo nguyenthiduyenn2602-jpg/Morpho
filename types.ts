@@ -2524,6 +2524,8 @@ export interface GroupProfile {
     name: string;
     members: string[];
     avatar?: string;
+    /** 本群聊天区域的背景图片（data URL 或可访问的图片 URL）。 */
+    chatBackground?: string;
     createdAt: number;
     /** 群聊公共话题盒：由热区以前的群消息总结而成，所有成员共享、可编辑/删除。 */
     topicBoxes?: GroupTopicBox[];
