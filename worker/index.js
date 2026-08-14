@@ -24,7 +24,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-CF-Method, Mcp-Session-Id, Accept, Range",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age": "86400",
   };
@@ -2362,6 +2362,93 @@ export default {
         return jsonResponse({
           error: `Proxy error: ${String(e && e.message || e)}`,
           stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
+      }
+    }
+
+    // ========== Cloudflare API 代理 (/cf-api) ==========
+    // Cloudflare API 不返回浏览器需要的 CORS 头，一键部署主动消息后端时必须经由这里中转。
+    // 目标 host 在本地写死，并且只允许账户级资源、成员列表与 token 校验路径；
+    // DNS / Zone 等无关 API 一律拒绝，避免把这个端点变成通用 Cloudflare API 代理。
+    if (url.pathname === '/cf-api') {
+      const CF_ALLOWED_PREFIXES = ['/accounts', '/memberships', '/user/tokens/verify'];
+      // 无凭据探针：前端用它判断当前网络代理是否支持一键部署。
+      if (request.method === 'GET') {
+        return jsonResponse({
+          ok: true,
+          relay: 'cf-api',
+          upstream: 'api.cloudflare.com',
+          allowed: CF_ALLOWED_PREFIXES,
+        }, { origin });
+      }
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+
+      const apiPath = url.searchParams.get('path') || '';
+      if (!apiPath.startsWith('/') || apiPath.includes('://') || apiPath.includes('..')) {
+        return jsonResponse({ error: 'Invalid path parameter' }, { status: 400, origin });
+      }
+      const prefixAllowed = CF_ALLOWED_PREFIXES.some(
+        (prefix) => apiPath === prefix || apiPath.startsWith(prefix + '/') || apiPath.startsWith(prefix + '?')
+      );
+      if (!prefixAllowed) {
+        return jsonResponse({
+          error: 'This proxy only relays account-scoped Cloudflare API paths',
+          allowed: CF_ALLOWED_PREFIXES,
+        }, { status: 403, origin });
+      }
+
+      // 浏览器预检只开放 POST，真实 Cloudflare 方法通过受控 header 传入。
+      const cfMethod = (request.headers.get('X-CF-Method') || 'GET').toUpperCase();
+      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(cfMethod)) {
+        return jsonResponse({ error: 'CF method not allowed' }, { status: 400, origin });
+      }
+      const cfTargetUrl = 'https://api.cloudflare.com/client/v4' + apiPath;
+      let parsedCf;
+      try {
+        parsedCf = new URL(cfTargetUrl);
+      } catch {
+        return jsonResponse({ error: 'Invalid path parameter' }, { status: 400, origin });
+      }
+      if (parsedCf.host !== 'api.cloudflare.com') {
+        return jsonResponse({ error: 'Refusing to relay off api.cloudflare.com' }, { status: 400, origin });
+      }
+
+      const cfAuth = request.headers.get('Authorization');
+      if (!cfAuth) {
+        return jsonResponse({ error: 'Missing Authorization header' }, { status: 401, origin });
+      }
+      const CF_MAX_BODY = 10 * 1024 * 1024;
+      const declaredLen = Number(request.headers.get('Content-Length') || '0');
+      if (Number.isFinite(declaredLen) && declaredLen > CF_MAX_BODY) {
+        return jsonResponse({ error: 'Request body too large' }, { status: 413, origin });
+      }
+
+      const cfHeaders = { Authorization: cfAuth };
+      const cfContentType = request.headers.get('Content-Type');
+      if (cfContentType) cfHeaders['Content-Type'] = cfContentType;
+      try {
+        let cfBody = null;
+        if (cfMethod !== 'GET' && cfMethod !== 'DELETE') {
+          cfBody = await request.arrayBuffer();
+          if (cfBody.byteLength > CF_MAX_BODY) {
+            return jsonResponse({ error: 'Request body too large' }, { status: 413, origin });
+          }
+          if (cfBody.byteLength === 0) cfBody = null;
+        }
+        const upstream = await fetch(cfTargetUrl, {
+          method: cfMethod,
+          headers: cfHeaders,
+          body: cfBody,
+        });
+        console.log('cf-api', cfMethod, parsedCf.pathname, '→', upstream.status);
+        const respHeaders = new Headers(corsHeaders(origin));
+        respHeaders.set('Content-Type', upstream.headers.get('Content-Type') || 'application/json; charset=utf-8');
+        return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+      } catch (e) {
+        return jsonResponse({
+          error: `CF proxy error: ${String((e && e.message) || e)}`,
         }, { status: 502, origin });
       }
     }
