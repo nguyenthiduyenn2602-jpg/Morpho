@@ -1166,7 +1166,14 @@ export const useChatAI = ({
             // ⚠️ 工具模式(瑞幸点单/麦当劳)下绝不带 thinking/reasoning 参数: "thinking + tools" 同发
             //    Gemini 等会直接 400 INVALID_ARGUMENT —— 表现就是"开了思考链的角色一点单就报错,
             //    换个没开思考链的角色就好"。工具循环优先, 思考链这一轮让步。
-            const toolModeActive = payload.flags.luckinChatActive || payload.flags.mcdActive || payload.flags.luckinActive || payload.flags.mcpChatActive;
+            // 主动消息 2.0 的工具只在全局 Worker 已配置、且当前角色启用时注入。
+            // 这个判断必须在 thinking 门之前完成：Gemini 等模型不接受 thinking 与 tools 同发。
+            const amsg2ToolsInjected = await isAmsg2GlobalReady() && isAmsg2EnabledForChar(char);
+            const toolModeActive = payload.flags.luckinChatActive
+                || payload.flags.mcdActive
+                || payload.flags.luckinActive
+                || payload.flags.mcpChatActive
+                || amsg2ToolsInjected;
             if (payload.flags.thinkingActive && !toolModeActive) {
                 const m: string = baseReqBody.model || '';
                 if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
