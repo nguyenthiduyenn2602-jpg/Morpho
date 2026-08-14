@@ -841,25 +841,33 @@ export const useChatAI = ({
             // 的 prompt，最后却交给了 IP 或落回本地」——两个钟的问题原样回来。
             const instantPushConfigured = isInstantConfigReady();
             const luckinChatOn = !!luckinChatRef?.current?.active;
+            const latestUserText = [...contextMsgs].reverse().find(message => message.role === 'user')?.content || '';
+            // 图片 API 只能由当前打开的客户端调用。明确索图的这一轮必须留在本地；
+            // 若用户允许角色主动发图，模型需要先在本地作出生图决定，因此该角色的对话轮也保持本地。
+            // 这里只否决本轮的云端生成，不改主动消息配置，worker 后续推来的消息仍可正常接收。
+            const imageGenerationNeedsLocal = !!charForGen.imageGeneration?.enabled
+                && (isExplicitImageRequest(latestUserText) || !!charForGen.imageGeneration.allowProactive);
             // 本机 / 内网的 MCP 服务器（docs/mcp-client.md 教用户填的 http://localhost:18061
             // 就是这一类）：上云那一轮前端不注入 MCP 说明块，而 worker 从 CF 那头连不上这类
             // 地址、上云清单里压根没有它——两边都不说，角色这一轮彻底不知道自己有工具。
             // 判据就一句话：这一轮上云会让角色掉能力，那就别上云。留在本地跑，工具照常用。
             // （地址够得着的服务器不受影响，照常上云，worker 自己跑后台 MCP。）
             const mcpWorkerUnreachable = hasWorkerUnreachableMcpServer(char.id);
-            const instantChatVeto: string | null = luckinChatOn ? 'luckin-chat'
-                : mcdMiniOpen ? 'mcd'
-                    : luckinMiniOpen ? 'luckin'
-                        : mcpWorkerUnreachable ? 'mcp-worker-unreachable' : null;
+            const instantChatVeto: string | null = imageGenerationNeedsLocal ? 'image-generation'
+                : luckinChatOn ? 'luckin-chat'
+                    : mcdMiniOpen ? 'mcd'
+                        : luckinMiniOpen ? 'luckin'
+                            : mcpWorkerUnreachable ? 'mcp-worker-unreachable' : null;
             // 带上 char：角色单独关了即时对话（reason char-disabled）时 ready 直接为
             // false，和「全局没开」同一待遇——下面那条 veto trace 的条件够不到它，
             // 静默走本地。那是用户的主动选择，每条消息刷一遍 warn 就成骚扰了。
             const instantChatReadiness = await resolveInstantChatReadiness(char);
             const instantChatOn = instantChatReadiness.ready;
-            const instantChatRoute = instantChatOn && !instantChatVeto && !instantPushConfigured;
+            const instantPushRoute = instantPushConfigured && !imageGenerationNeedsLocal;
+            const instantChatRoute = instantChatOn && !instantChatVeto && !instantPushRoute;
             // 生图只在前端本地生成时启用；两条云端路线都不能代替用户从本机调用图片 API。
             const localImageGenerationEnabled = !!charForGen.imageGeneration?.enabled
-                && !instantPushConfigured
+                && !instantPushRoute
                 && !instantChatRoute;
             // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，三种原因去向不同：
             //   · 点单流程否决：瑞幸/麦当劳是客户端交互式循环（选城市、确认单），云端接不了
@@ -873,7 +881,9 @@ export const useChatAI = ({
             if (instantChatOn && !instantChatRoute) {
                 const skipReason = instantChatVeto ?? 'instant-push-configured';
                 console.warn(
-                    skipReason === 'mcp-worker-unreachable'
+                    skipReason === 'image-generation'
+                        ? '[AmsgInstantChat] 这一轮需要在客户端判断或执行生图，留在本地生成；云端主动消息接收保持开启'
+                        : skipReason === 'mcp-worker-unreachable'
                         ? '[AmsgInstantChat] 这一轮没上云（有 MCP 服务器填的是本机/内网地址，worker 够不着），本地生成，工具照常可用'
                         : instantChatVeto
                             ? `[AmsgInstantChat] 这一轮没上云（${instantChatVeto} 点单流程需要客户端交互），本地生成`
@@ -1020,7 +1030,7 @@ export const useChatAI = ({
             // 这一轮的生成在云端跑（两条路互斥，见 instantChatRoute 的算法）。
             // instantPushConfigured 是路由判定处冻结的同一回合终值——这里绝不自己再读
             // 一次，否则可能「按上云模式把评估打包走了，实际却走本地」，情绪底色悄悄停更。
-            const cloudGenRoute = instantPushConfigured || instantChatRoute;
+            const cloudGenRoute = instantPushRoute || instantChatRoute;
             // 评估跟随全局流式开关（专用情绪 API 自带 stream 字段时以它为准）
             const evalStream: boolean = !!((effectiveApi as any).stream ?? apiConfig.stream ?? false);
             const emotionApi = emotionEvalEnabled
@@ -1270,7 +1280,7 @@ export const useChatAI = ({
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
             // 双向互斥后理论上到不了：走到这条 trace 说明两边开关同时亮着（脏配置），当断言告警看。
             const AMSG2_SUPPRESSED_TRACE = 'amsg2-suppressed-by-instant';
-            if (instantPushConfigured && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
+            if (instantPushRoute && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
                 // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
                 // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
                 // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
@@ -1908,7 +1918,6 @@ export const useChatAI = ({
             if (localImageGenerationEnabled) {
                 const parsedImage = extractImageGenerationDirective(rawAiContent);
                 if (parsedImage.directive) {
-                    const latestUserText = [...contextMsgs].reverse().find(message => message.role === 'user')?.content || '';
                     const mayGenerate = !!charForGen.imageGeneration?.allowProactive
                         || isExplicitImageRequest(latestUserText);
                     // 默认关闭主动发图时，客户端再做一次语义保险丝，避免模型误触而产生费用。
