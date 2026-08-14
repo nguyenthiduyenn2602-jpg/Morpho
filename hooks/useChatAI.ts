@@ -994,7 +994,7 @@ export const useChatAI = ({
                 luckinChat: luckinChatOn ? luckinChatRef?.current : undefined,
                 timelyByWorker: instantChatRoute,
                 extraSystemPrompt: localImageGenerationEnabled
-                    ? buildImageGenerationDecisionPrompt(charForGen.imageGeneration)
+                    ? buildImageGenerationDecisionPrompt(charForGen, userProfile)
                     : undefined,
             }));
             const systemPrompt = payload.systemPrompt;
