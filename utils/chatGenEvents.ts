@@ -22,10 +22,17 @@ export const CHAT_GEN_EVENTS = {
     replyEnd: 'chat-gen-reply-end',
     /** 本地 fetch 路径：回复已全部落库（后处理管线跑完）。instant 路径不发——它走 'active-msg-received' */
     replyArrived: 'chat-gen-reply-arrived',
-    /** 情绪评估开始（本地 eval / post-push eval / 主动消息 eval / instant 点灯） */
+    /** 情绪评估开始（本地 eval / post-push eval / 主动消息 eval / 上云点灯） */
     emotionStart: 'chat-gen-emotion-start',
-    /** 情绪评估结束（instant 路径由 worker 推回，结束信号是既有的 'instant-emotion-done'） */
+    /** 情绪评估结束（本地路径自己派发；上云路径由下面的 emotionDone 接） */
     emotionEnd: 'chat-gen-emotion-end',
+    /**
+     * 上云那两条路（Instant Push / 即时对话）的情绪评估有结论了——成功、失败、
+     * 云端点名说这一轮没成，都算。名字是历史的，改不得：它是三方约定的线上事件名
+     * （worker 推回后由 activeMsgRuntime 派发，Chat 页的徽章和全局横幅各自监听）。
+     * 派发一律走 announceEmotionDone，别再各处手写字符串。
+     */
+    emotionDone: 'instant-emotion-done',
     /**
      * 情绪评估失败（本地 fetch 报错 / 云端 worker 空结果 / 输出解析全灭）。
      * 过去失败只写 console.warn，用户侧表现是「情绪不更新但没任何报错」，完全没法自查
@@ -39,11 +46,31 @@ export interface ChatGenDetail {
     charName: string;
     /** emotionFailed 专用：失败原因（人话，可直接展示给用户） */
     reason?: string;
+    /**
+     * 这一条最长挂多久（毫秒）。只有全局横幅读它，用来给「结束信号没来」兜底。
+     * 不给就用横幅自己那一档默认值。
+     *
+     * 之所以由派发方说了算：同一种生成在不同路径上的时长天差地别——本地评估几秒钟，
+     * 交给自己那台 worker 的即时对话可以跑满十分钟。横幅这边猜不出来，也不该猜。
+     */
+    ttlMs?: number;
 }
 
 export function announceChatGen(event: string, detail: ChatGenDetail): void {
     try {
         window.dispatchEvent(new CustomEvent(event, { detail }));
+    } catch { /* SSR / 测试环境无 window */ }
+}
+
+/**
+ * 上云的情绪评估有结论了 —— 熄灭 Chat 页的「情绪更新中」徽章和全局横幅。
+ *
+ * 成功、失败、云端点名说这一轮没成，都要发：这是那盏灯唯一的正常熄灭信号，
+ * 不发的话用户只能干等安全网超时，中途还会看到一句误导的提示。
+ */
+export function announceEmotionDone(charId: string): void {
+    try {
+        window.dispatchEvent(new CustomEvent(CHAT_GEN_EVENTS.emotionDone, { detail: { charId } }));
     } catch { /* SSR / 测试环境无 window */ }
 }
 

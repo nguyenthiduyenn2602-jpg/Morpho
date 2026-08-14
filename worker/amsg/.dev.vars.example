@@ -1,0 +1,12 @@
+# 主动消息 2.0 后端要的密钥。
+#
+# 走「Deploy to Cloudflare」按钮部署时，这里列出的每一项都会变成部署页面上的一个输入框，
+# 旁边的说明来自 package.json 的 cloudflare.bindings。值都从 SullyOS 的设置页里复制。
+#
+# 本地开发的话，把这个文件复制成 .dev.vars 再填。
+
+AMSG_MASTER_KEY=
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_EMAIL=
+AMSG_SERVER_TOKEN=

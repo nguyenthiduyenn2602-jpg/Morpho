@@ -50,6 +50,8 @@ import { exportMcdLocal } from '../utils/mcdMcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { exportStoryTheaterAppearanceSetting, restoreStoryTheaterAppearanceSetting } from '../utils/storyTheaterBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
+import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from '../utils/activeMsgStore';
+import { markAmsgStateDirty } from '../utils/amsgStateSync';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -2639,7 +2641,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     await DB.saveCharacter(newChar);
     return newChar;
   };
-  const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
+  const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => {
+    let target: CharacterProfile | undefined;
+    setCharacters(prev => {
+      const updated = prev.map(c => c.id === id
+        ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) })
+        : c);
+      target = updated.find(c => c.id === id);
+      return updated;
+    });
+    if (target) {
+      await DB.saveCharacter(target);
+      markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
+    }
+  };
   const deleteCharacter = async (id: string) => {
     setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; });
     await DB.deleteCharacter(id);
@@ -3348,6 +3363,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               gotchiAccentHue: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('tama_accent_hue'); return s !== null ? s : undefined; } catch { return undefined; } })() : undefined,
           };
 
+          if (mode === 'text_only' || mode === 'full') {
+              backupData.amsg2GlobalConfig = await exportAmsg2GlobalConfig();
+          }
+
           // 桌面皮肤偏好（电子宠物/手游风的界面配色 + 看板 banner）——异步（看板图令牌需解析为
           // data URL 才能跨设备），所以在对象字面量外单独 await。text_only 只带配色偏好、跳过看板大图。
           backupData.desktopSkinLocal = await exportDesktopSkinLocal(mode !== 'text_only');
@@ -3955,6 +3974,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Restore Instant Push
           if (data.instantPushConfig) localStorage.setItem('instant_push_config_v1', JSON.stringify(data.instantPushConfig));
           if (data.pushVapid) localStorage.setItem('push_vapid_v1', JSON.stringify(data.pushVapid));
+          if (data.amsg2GlobalConfig) await importAmsg2GlobalConfig(data.amsg2GlobalConfig);
 
 
           // Restore Memory Palace 水位线

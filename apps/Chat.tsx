@@ -36,6 +36,8 @@ import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
+import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
@@ -45,6 +47,8 @@ import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
 import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter';
+import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
+import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish } from '../utils/fishAudioTts';
 import { resolveTtsProvider } from '../utils/ttsProvider';
@@ -53,16 +57,23 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
+import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import {
     CONTEXT_RANGE_POLICY_VERSION,
     computeContextRangeSnapshot,
     countMessagesFrom,
     getMemoryPalaceHighWaterMarkForContext,
     loadCharacterContextRange,
+    resolveContextRangeMode,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
+/** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
+const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 type InstantToolUiStatus = {
     charId: string;
     phase: 'running' | 'continuing' | 'done' | 'failed';
@@ -87,6 +98,9 @@ const Chat: React.FC = () => {
     // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = SSE POST 已排进
     // 浏览器网络栈. 页面关闭时会主动 abort SSE, 让 worker 尽量走 Web Push fallback。
     const [instantSendingActive, setInstantSendingActive] = useState(false);
+    // 即时对话：这一轮已经交给云端、还没等到回复。它跟 isTyping 不一样——生成不在这台
+    // 设备上跑，所以要扛得住关页面重开（记录落在 localStorage，见 amsgInstantChat）。
+    const [instantChatPending, setInstantChatPending] = useState(false);
     const [instantToolStatus, setInstantToolStatus] = useState<InstantToolUiStatus | null>(null);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
@@ -109,6 +123,9 @@ const Chat: React.FC = () => {
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const lastMsgIdRef = useRef<number | null>(null);
+    // 最新图片在移动端异步解码后会把消息列表继续向下撑开。记录这一条，等真实高度
+    // 确定后再补一次贴底；用户一旦主动向上翻，就清掉它，绝不抢滚动位置。
+    const pendingMediaAutoScrollIdRef = useRef<number | null>(null);
     const scrollThrottleRef = useRef(0);
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
@@ -129,7 +146,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [fineTuneOpen, setFineTuneOpen] = useState(false);          // 圆气泡在场
     const [fineTunePanelOpen, setFineTunePanelOpen] = useState(false); // 小面板展开/收起
@@ -153,6 +170,13 @@ const Chat: React.FC = () => {
     // 记忆宫殿「一键存入」：打开设置弹窗时算出待处理条数（排除热区的真实口径），处理中显示逐轮进度
     const [vectorizePendingCount, setVectorizePendingCount] = useState<number | null>(null);
     const [vectorizeProgress, setVectorizeProgress] = useState('');
+    const [retainRecentForVectorize, setRetainRecentForVectorize] = useState(false);
+    const [vectorizeResult, setVectorizeResult] = useState<{
+        processedMessages: number;
+        storedMemories: number;
+        retainedMessages: number;
+        waterlineAlreadyAhead: boolean;
+    } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
@@ -268,6 +292,17 @@ const Chat: React.FC = () => {
         setMessages(msgs);
     }, []);
 
+    // 即时对话的「正在输入…」：受理 / 收到回复 / 超时判失败都会广播一次，界面跟着它亮灭。
+    // 进这个角色时先读一次落盘记录——上一轮的回复可能是在应用关着的时候还没回来。
+    // 这个 CustomEvent 只在本标签页内派发；别的标签页销账走下面那个 storage 监听
+    //（搜 AMSG_INSTANT_CHAT_PENDING_LS_KEY）。
+    useEffect(() => {
+        const sync = () => setInstantChatPending(!!activeCharacterId && !!getInstantChatPending(activeCharacterId));
+        sync();
+        window.addEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, sync);
+        return () => window.removeEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, sync);
+    }, [activeCharacterId]);
+
     // --- Initialize Hook ---
     const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
@@ -302,6 +337,15 @@ const Chat: React.FC = () => {
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
     const prevIsTypingRef = useRef(false);
+    // 即时对话那条路的自动合成扫描窗（用法见下面那个 auto-TTS 的 effect）：
+    // 「正在输入」灯灭的那一下开窗，窗口内每次消息变化都补扫一遍；角色不对就整个作废。
+    const prevInstantPendingRef = useRef(false);
+    const instantVoiceScanUntilRef = useRef(0);
+    const instantVoiceScanCharRef = useRef<string | undefined>(undefined);
+    // 自动合成失败过的消息 id。扫描窗里每来一条新消息都会重扫一遍，不记下来的话同一条失败的
+    // 消息会被反复重试、每次再弹一个「语音生成失败」。只挡自动那条路：用户自己点「转换语音」
+    // 照样能重试（换了网络/补了 key 之后就该能成）。换角色时清空。
+    const voiceFailedRef = useRef<Set<number>>(new Set());
     // Track blob: URLs we created so we can revoke them on character switch / unmount.
     const voiceBlobUrlsRef = useRef<Set<string>>(new Set());
     // We warn the user at most once (per character) that MiniMax voice isn't configured —
@@ -415,11 +459,13 @@ const Chat: React.FC = () => {
         const isFishTts = resolveTtsProvider(apiConfig) === 'fishaudio';
         const voiceTagContent = parsedVoice.hasVoiceTag ? (isFishTts ? parsedVoice.rawSpeech : parsedVoice.speech) : '';
         const voiceEmotion = parsedVoice.emotion;
-        // F12 调试：打印 LLM 这条消息的带标签原文，方便核对语音标签写法是否正确。
-        console.log('[voice] LLM 原文(带标签):', { provider: isFishTts ? 'fishaudio' : 'minimax', content: msg.content, voiceTagContent, emotion: voiceEmotion });
 
         // Auto-TTS: only generate voice when AI explicitly used <语音> tag
         if (autoTriggered && !parsedVoice.hasVoiceTag) return;
+        // F12 调试：打印 LLM 这条消息的带标签原文，方便核对语音标签写法是否正确。
+        // 放在上面那道门之后：即时对话的扫描窗里每来一条消息都要重扫一遍，
+        // 搁在门前的话没有语音标签的普通消息会被反复打印，控制台直接刷屏。
+        console.log('[voice] LLM 原文(带标签):', { provider: isFishTts ? 'fishaudio' : 'minimax', content: msg.content, voiceTagContent, emotion: voiceEmotion });
 
         // MiniMax not configured for this character: don't attempt synthesis (it would
         // throw and surface an error toast on every message / every tap). Instead remind
@@ -517,38 +563,32 @@ const Chat: React.FC = () => {
             chatAudioRef.current.play().catch(() => {});
             setPlayingMsgId(msg.id);
         } catch (err: any) {
+            // 记一笔失败：自动那条路下次扫到就跳过（见 voiceFailedRef 的说明）。
+            voiceFailedRef.current.add(msg.id);
             addToast(`语音生成失败: ${err?.message || '未知错误'}`, 'error');
         } finally {
             setVoiceLoading(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
         }
     };
 
-    // 长按语音菜单里的「下载」：把已生成的语音音频存到本地。
-    // 优先用持久化的 blob；只有远端 URL（CORS 兜底）时先尝试拉回 blob，拉不到就直接开链接让用户自己存。
+    // 长按语音菜单里的「下载」：移动端优先调系统分享/保存，桌面端才走浏览器下载。
     const handleDownloadVoice = async (msg: Message) => {
         if (!msg?.id) return;
         try {
             const stored = await DB.getAssetRaw(voiceAssetKey(msg.id)) as StoredVoice | null;
             let blob: Blob | null = stored?.blob instanceof Blob ? stored.blob : null;
             if (!blob && stored?.remoteUrl) {
-                try { const r = await fetch(stored.remoteUrl); if (r.ok) blob = await r.blob(); } catch { /* CORS：走下面的兜底 */ }
+                try { blob = await fetchBlobForShare(stored.remoteUrl, 'audio/mpeg'); } catch { /* 下面给出明确提示 */ }
             }
             const fname = `${(char?.name || '语音').replace(/[\\/:*?"<>|]/g, '_')}_语音_${msg.id}.mp3`;
-            const a = document.createElement('a');
-            a.download = fname;
-            if (blob) {
-                const u = URL.createObjectURL(blob);
-                a.href = u;
-                document.body.appendChild(a); a.click(); a.remove();
-                setTimeout(() => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } }, 1000);
-            } else if (stored?.remoteUrl) {
-                a.href = stored.remoteUrl; a.target = '_blank'; a.rel = 'noopener';
-                document.body.appendChild(a); a.click(); a.remove();
-            } else {
+            if (!blob) {
                 addToast('这条还没有可下载的语音', 'error');
                 return;
             }
-            addToast('语音已开始下载', 'success');
+            const result = await shareOrDownloadBlob({ blob, fileName: fname, shareTitle: `${char?.name || '角色'}的语音` });
+            if (result === 'cancelled') return;
+            addToast(result === 'shared' ? '已打开系统保存/分享' : '语音已开始下载', 'success');
+            trackEvent('下载语音条');
         } catch {
             addToast('语音下载失败', 'error');
         }
@@ -558,11 +598,39 @@ const Chat: React.FC = () => {
     // Scans ALL recent assistant messages (not just the last one) because chunkText
     // may split a single AI response into multiple messages, and the <语音> tag could
     // end up in any chunk — not necessarily the final one.
+    //
+    // 两个触发源：
+    //   · 本机生成：打字结束的那一下（wasTyping → !isTyping）。
+    //   · 即时对话：回复在云端生成、靠推送落库，本机的 isTyping 在 POST 完就灭了，永远等不到
+    //     那一下，开了自动播放的角色会一路静音。改看「正在输入」指示灯熄灭（instantChatPending
+    //     由真变假），熄灭时开一个 30 秒的扫描窗——一轮回复常被拆成好几条推送陆续到，第一条到
+    //     就熄灯，后面几条得靠窗口内每次 messages 变化补扫。只扫窗口内，冷启动和翻历史不会把
+    //     旧消息整批合成一遍。
     useEffect(() => {
         const wasTyping = prevIsTypingRef.current;
         prevIsTypingRef.current = isTyping;
-        // Only trigger when AI just finished typing (wasTyping → !isTyping)
-        if (!wasTyping || isTyping) return;
+        const wasPending = prevInstantPendingRef.current;
+        prevInstantPendingRef.current = instantChatPending;
+        // 换角色先把窗清零：Chat 里切角色不卸载组件，这几个 ref 会跨角色留着。甲还欠着回复时
+        // 切到乙，instantChatPending 会跟着乙的记录变假——那不是「乙的回复到了」，不能拿它开窗，
+        // 更不能拿甲的窗去扫乙的历史消息。两个触发源都要先有一次「变化前」才成立，所以这里直接
+        // 走人不会漏掉任何一次真的触发。
+        if (instantVoiceScanCharRef.current !== char?.id) {
+            instantVoiceScanCharRef.current = char?.id;
+            instantVoiceScanUntilRef.current = 0;
+            return;
+        }
+        // 覆盖范围就到这儿：销账是在页面里发生的，推送落地时人不在这个聊天页的话没有这次
+        // 真→假的转换，那条回复就保持静音（跟「不批量合成历史」是同一个取舍）。
+        if (wasPending && !instantChatPending) {
+            instantVoiceScanUntilRef.current = Date.now() + INSTANT_VOICE_SCAN_WINDOW_MS;
+        }
+        // Only trigger when AI just finished typing (wasTyping → !isTyping)，或者还在即时对话的扫描窗里。
+        // 这道门也是 messages 进依赖之后本机那条路的保险：不在窗里就仍然只在打字结束那一下扫，
+        // 平时每来一条消息不会重扫。
+        const typingJustEnded = wasTyping && !isTyping;
+        const inInstantWindow = Date.now() < instantVoiceScanUntilRef.current;
+        if (!typingJustEnded && !inInstantWindow) return;
         if (!char.chatVoiceEnabled) return;
         if (!characterHasVoice(char, apiConfig)) return;
         // Scan recent assistant messages for unprocessed <语音> tags
@@ -572,9 +640,12 @@ const Chat: React.FC = () => {
             if (msg.role !== 'assistant') break;
             if (msg.type !== 'text') continue;
             if (voiceDataMap[msg.id] || voiceLoading.has(msg.id)) continue;
+            // 合成失败过就别再自动重试了：扫描窗里每来一条消息都重扫一遍，
+            // 同一条会一路重试到窗口关闭，还每次弹一个失败提示。用户手点不受影响。
+            if (voiceFailedRef.current.has(msg.id)) continue;
             handleManualTts(msg, true);
         }
-    }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [isTyping, instantChatPending, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
@@ -644,6 +715,8 @@ const Chat: React.FC = () => {
     useEffect(() => {
         // Reset the "MiniMax not configured" warning so each character gets one reminder.
         minimaxWarnedRef.current = false;
+        // 自动合成的失败记录也跟着换角色清空：这一位的失败不该拦着下一位。
+        voiceFailedRef.current.clear();
         const urls = voiceBlobUrlsRef.current;
         return () => {
             urls.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
@@ -719,11 +792,7 @@ const Chat: React.FC = () => {
             setInput(savedDraft || '');
             if (char) {
                 setSettingsContextLimit(char.contextLimit || 500);
-                setSettingsContextRangeMode(
-                    char.autoArchiveEnabled && char.contextRangeMode === 'adaptive'
-                        ? 'adaptive'
-                        : 'manual',
-                );
+                setSettingsContextRangeMode(resolveContextRangeMode(char));
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
                 setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
@@ -750,6 +819,8 @@ const Chat: React.FC = () => {
             setReplyTarget(null);
             setSelectionMode(false);
             setSelectedMsgIds(new Set());
+            setRetainRecentForVectorize(false);
+            setVectorizeResult(null);
             setShowingTargetIds(new Set());
             setWindowedFocusMsgId(null);
             setFlashMsgId(null);
@@ -831,11 +902,7 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (modalType !== 'chat-settings' || !char) return;
         setSettingsContextLimit(char.contextLimit || 500);
-        setSettingsContextRangeMode(
-            char.autoArchiveEnabled && char.contextRangeMode === 'adaptive'
-                ? 'adaptive'
-                : 'manual',
-        );
+        setSettingsContextRangeMode(resolveContextRangeMode(char));
         setSettingsHideSysLogs(char.hideSystemLogs || false);
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
     }, [modalType, char?.id]);
@@ -872,6 +939,24 @@ const Chat: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
     }, [lastMsgTimestamp, activeCharacterId, reloadMessages, clearUnread]);
 
+    // 即时对话待收记录的跨标签页补听。同一聊天开两个标签页时，回复推送到达后 SW 把
+    // 广播发给所有 client，后台标签页的 flush 可能先抢到并落库——销账的 CustomEvent
+    // 只在它自己那边派发，这边收不到，「正在输入…」就会无限常亮、回复也不上屏。
+    // 待收记录本来就落在 localStorage，而 storage 事件恰好只在「其他」标签页触发，
+    // 正好补上这条缝：这个 key 一变，就照上面 CustomEvent 那套处理走——刷新指示灯，
+    // 并重载消息把对方标签页落的库带上屏。同标签页内的 CustomEvent 机制保持不动。
+    useEffect(() => {
+        const onStorage = (e: StorageEvent) => {
+            // 严格按 key 过滤，别的 localStorage 变动（草稿、翻译开关等）一概不理。
+            if (e.key !== AMSG_INSTANT_CHAT_PENDING_LS_KEY) return;
+            const charId = activeCharIdRef.current;
+            setInstantChatPending(!!charId && !!getInstantChatPending(charId));
+            if (charId) reloadMessages(visibleCountRef.current);
+        };
+        window.addEventListener('storage', onStorage);
+        return () => window.removeEventListener('storage', onStorage);
+    }, [reloadMessages]);
+
     useEffect(() => {
         visibleCountRef.current = visibleCount;
     }, [visibleCount]);
@@ -897,11 +982,31 @@ const Chat: React.FC = () => {
         // windowed 模式下用户在翻旧消息，不要被新消息打断滚走。
         if (currentLastId !== lastMsgIdRef.current) {
             if (windowedFocusMsgId === null) {
+                pendingMediaAutoScrollIdRef.current = currentLastId;
                 scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            } else {
+                pendingMediaAutoScrollIdRef.current = null;
             }
             lastMsgIdRef.current = currentLastId;
         }
     }, [messages, activeCharacterId, selectionMode, windowedFocusMsgId]);
+
+    const handleChatScroll = useCallback(() => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        if (distanceFromBottom > 96) pendingMediaAutoScrollIdRef.current = null;
+    }, []);
+
+    const handleMessageMediaLoad = useCallback((messageId: number) => {
+        if (windowedFocusMsgId !== null || pendingMediaAutoScrollIdRef.current !== messageId) return;
+        requestAnimationFrame(() => {
+            if (pendingMediaAutoScrollIdRef.current !== messageId) return;
+            const scroller = scrollRef.current;
+            if (scroller) scroller.scrollTop = scroller.scrollHeight;
+            pendingMediaAutoScrollIdRef.current = null;
+        });
+    }, [windowedFocusMsgId]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null) {
@@ -1831,14 +1936,18 @@ const Chat: React.FC = () => {
     };
 
     const saveSettings = async () => {
-        const nextMode: ContextRangeMode = char.autoArchiveEnabled
+        const canUseAdaptiveRange = !!(char.autoArchiveEnabled || char.contextFollowsMemoryPalaceHwm);
+        const nextMode: ContextRangeMode = canUseAdaptiveRange
             ? settingsContextRangeMode
             : 'manual';
+        const nextFollowsOneShotWaterline = nextMode === 'adaptive'
+            && !!char.contextFollowsMemoryPalaceHwm;
         const candidate = {
             ...char,
             contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
             contextRangeMode: nextMode,
             contextLimit: settingsContextLimit,
+            contextFollowsMemoryPalaceHwm: nextFollowsOneShotWaterline,
         };
         let nextUserStart = char.contextUserStartMessageId;
         try {
@@ -1851,6 +1960,7 @@ const Chat: React.FC = () => {
             contextLimit: settingsContextLimit,
             contextRangeMode: nextMode,
             contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
+            contextFollowsMemoryPalaceHwm: nextFollowsOneShotWaterline,
             contextUserStartMessageId: nextUserStart,
             hideSystemLogs: settingsHideSysLogs,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
@@ -1860,16 +1970,22 @@ const Chat: React.FC = () => {
     };
 
     const restoreAdaptiveContext = () => {
-        if (!char.autoArchiveEnabled) return;
+        if (!char.autoArchiveEnabled && !char.contextFollowsMemoryPalaceHwm) return;
         setSettingsContextRangeMode('adaptive');
         setSettingsContextLimit(500);
         updateCharacter(char.id, {
             contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
             contextRangeMode: 'adaptive',
             contextLimit: 500,
+            contextFollowsMemoryPalaceHwm: !!char.contextFollowsMemoryPalaceHwm,
             contextUserStartMessageId: undefined,
         });
-        addToast('已恢复全自动记忆的自适应上下文', 'success');
+        addToast(
+            char.autoArchiveEnabled
+                ? '已恢复全自动记忆的自适应上下文'
+                : '已恢复跟随记忆水位线',
+            'success',
+        );
     };
 
     const handleClearHistory = async () => {
@@ -1948,8 +2064,8 @@ const Chat: React.FC = () => {
         setModalType('none');
     };
 
-    // 打开「聊天设置」弹窗且开了记忆宫殿时，算一次待处理条数显示在「一键存入」按钮上。
-    // 口径与 pipeline 一致（getMemoryPalaceUnprocessedBufferCount 已排除热区 200 条）。
+    // 只在打开聊天设置时计算一键存入的待处理量；不开弹窗的用户没有额外 DB 扫描。
+    // 这里按按钮的真实语义统计：默认处理到当前末尾，勾选后精确保留最后 10 条原文。
     useEffect(() => {
         if (modalType !== 'chat-settings' || !char?.memoryPalaceEnabled) {
             setVectorizePendingCount(null);
@@ -1958,15 +2074,18 @@ const Chat: React.FC = () => {
         let cancelled = false;
         (async () => {
             try {
-                const { getMemoryPalaceUnprocessedBufferCount } = await import('../utils/memoryPalace/pipeline');
-                const n = await getMemoryPalaceUnprocessedBufferCount(char.id);
+                const { getMemoryPalaceOneShotPendingCount } = await import('../utils/memoryPalace/pipeline');
+                const n = await getMemoryPalaceOneShotPendingCount(
+                    char.id,
+                    retainRecentForVectorize ? 10 : 0,
+                );
                 if (!cancelled) setVectorizePendingCount(n);
             } catch {
                 // 算不出就不显示条数，不影响按钮可用
             }
         })();
         return () => { cancelled = true; };
-    }, [modalType, char?.id, char?.memoryPalaceEnabled]);
+    }, [modalType, char?.id, char?.memoryPalaceEnabled, retainRecentForVectorize]);
 
     const handleForceVectorize = async () => {
         if (!char || !char.memoryPalaceEnabled || isVectorizing) return;
@@ -1977,97 +2096,102 @@ const Chat: React.FC = () => {
             return;
         }
 
+        const retainedCount = retainRecentForVectorize ? 10 : 0;
+        const charIdAtStart = char.id;
         setIsVectorizing(true);
-        // 留在「聊天设置」弹窗里，按钮原地转成逐轮进度，跑完才收
         setVectorizeProgress('准备中...');
-        addToast('🏰 开始向量化所有聊天记录...', 'info');
+        addToast(
+            retainedCount === 10
+                ? '🏰 开始整理聊天，保留最近 10 条原文...'
+                : '🏰 开始整理全部聊天记录...',
+            'info',
+        );
 
         try {
-            const { processNewMessages, getMemoryPalaceHighWaterMark, getMemoryPalaceUnprocessedBufferCount, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
-            let totalProcessed = 0;
-            let round = 0;
-            const MAX_ROUNDS = 50; // 安全上限
-            // 每轮合并进来的 palace MemoryFragment；全部处理完后一次性 updateCharacter
-            let accumulatedMemories = char.memories ? [...char.memories] : [];
-            let latestHideBefore = char.hideBeforeMessageId;
+            const {
+                processNewMessages,
+                getMemoryPalaceHighWaterMark,
+                getMemoryPalaceOneShotPendingCount,
+                mergePalaceFragmentsIntoMemories,
+            } = await import('../utils/memoryPalace/pipeline');
+            const pendingBefore = await getMemoryPalaceOneShotPendingCount(char.id, retainedCount);
+            const hwmBefore = getMemoryPalaceHighWaterMark(char.id);
+            setVectorizePendingCount(pendingBefore);
+            setVectorizeProgress(pendingBefore > 0 ? `待处理 ${pendingBefore} 条` : '正在同步原文边界...');
 
-            while (round < MAX_ROUNDS) {
-                round++;
-                // 角色已切走就中断：Chat 是单实例复用、这些是共享 state，继续跑会把旧角色的进度串到新角色 UI 上。
-                // 向量化基于高水位、可续跑，下次进这个角色再点会接着来。
-                if (char.id !== activeCharIdRef.current) break;
-                const hwm = getMemoryPalaceHighWaterMark(char.id);
-                // 用 pipeline 的真实缓冲区口径（排除热区），与 processNewMessages(force) 实际会处理的量一致，
-                // 循环才能正确收敛，进度条数也不会骗人。
-                const remaining = await getMemoryPalaceUnprocessedBufferCount(char.id);
-                if (char.id !== activeCharIdRef.current) break;
-                if (remaining < 10) break; // 剩余太少，停止
-                setVectorizeProgress(`第 ${round} 轮 · 剩余 ${remaining} 条`);
-                setVectorizePendingCount(remaining);
+            const pipelineResult = await processNewMessages(
+                [],
+                char.id,
+                char.name,
+                mpEmb,
+                mpLLM,
+                userProfile?.name || '',
+                true,
+                setVectorizeProgress,
+                {
+                    drainBuffer: true,
+                    retainRecentMessages: retainedCount,
+                    requireAllBatches: true,
+                },
+            );
 
-                // processNewMessages 内部直接从 DB 加载并按缓冲区口径取批，忽略首个参数，传 [] 即可
-                const pipelineResult = await processNewMessages([], char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
-                if (char.id !== activeCharIdRef.current) break;
+            if (charIdAtStart !== activeCharIdRef.current) return;
+            if (!pipelineResult) throw new Error('记忆处理没有完成，请检查副 API 与网络');
+            if (pipelineResult.skipReason === 'lock') throw new Error('这个角色已有记忆任务在运行，请稍后再试');
+            const failedBatches = pipelineResult.batches.filter(batch => !batch.ok);
+            if (failedBatches.length > 0) {
+                throw new Error(`第 ${failedBatches.map(batch => batch.index).join('、')} 批处理失败，水位线未移动`);
+            }
 
-                // 软跳过：缓冲区还没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 LLM 失败
-                if (pipelineResult?.skipReason) {
-                    if (pipelineResult.skipReason !== 'lock') {
-                        addToast('当前聊天不足以触发总结，请保持这个状态聊天~', 'info');
-                    }
-                    break;
-                }
+            const rangeMessages = (await DB.getMessagesByCharId(char.id, true))
+                .filter(message => !message.groupId)
+                .sort((a, b) => a.id - b.id);
+            const expectedRetained = Math.min(retainedCount, rangeMessages.length);
+            const targetBoundaryIndex = rangeMessages.length - expectedRetained - 1;
+            const targetBoundaryId = targetBoundaryIndex >= 0 ? rangeMessages[targetBoundaryIndex].id : 0;
+            const hwmAfter = getMemoryPalaceHighWaterMark(char.id);
+            if (targetBoundaryId > hwmBefore && hwmAfter < targetBoundaryId) {
+                throw new Error('处理未到达预定边界，原文范围保持不变，请重试');
+            }
 
-                totalProcessed += pipelineResult?.processedMessages || 0;
+            // 水位线只前进不回退。极少数情况下用户先“保留 0 条”又改选保留 10 条，
+            // 这 10 条此前已处理；此时用手动 10 条保证原文仍可读，同时避免重复向量化。
+            const waterlineAlreadyAhead = expectedRetained > 0 && hwmBefore > targetBoundaryId;
+            const nextMode: ContextRangeMode = waterlineAlreadyAhead ? 'manual' : 'adaptive';
+            const nextLimit = expectedRetained > 0 ? 10 : (char.contextLimit || 500);
+            const updates: Record<string, any> = {
+                contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
+                contextRangeMode: nextMode,
+                contextLimit: nextLimit,
+                contextFollowsMemoryPalaceHwm: !waterlineAlreadyAhead,
+                contextUserStartMessageId: undefined,
+            };
 
-                // 累积自动归档，统一在循环结束后 updateCharacter
-                // 避免每轮 setState 触发 char 对象重建进而 dep 失效
-                // 仅在 char.autoArchiveEnabled 开启时累积；未开启则 palace 仍向量化，但不推 hideBefore
-                if (pipelineResult?.autoArchive && (char as any).autoArchiveEnabled) {
-                    accumulatedMemories = mergePalaceFragmentsIntoMemories(
-                        accumulatedMemories,
+            if (char.autoArchiveEnabled) {
+                updates.hideBeforeMessageId = Math.max(char.hideBeforeMessageId || 0, hwmAfter);
+                if (pipelineResult.autoArchive) {
+                    updates.memories = mergePalaceFragmentsIntoMemories(
+                        char.memories ? [...char.memories] : [],
                         pipelineResult.autoArchive.fragments,
                     );
-                    latestHideBefore = pipelineResult.autoArchive.hideBeforeMessageId;
-                }
-
-                // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
-                const newHwm = getMemoryPalaceHighWaterMark(char.id);
-                if (newHwm <= hwm) {
-                    addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
-                    break;
                 }
             }
-
-            // 隐藏线追平到向量高水位：覆盖「关闭期推进了 hwm 但 hide 被冻结」的历史空档。
-            // 只要全自动记忆开着，即便本轮没有新批次也把 hide 追平到 hwm（之前的消息都已向量化）。
-            if ((char as any).autoArchiveEnabled) {
-                const hwmFinal = getMemoryPalaceHighWaterMark(char.id);
-                if (hwmFinal > (latestHideBefore || 0)) latestHideBefore = hwmFinal;
-            }
-
-            // 循环结束后把累积的自动归档一次性写回角色
-            if (latestHideBefore !== char.hideBeforeMessageId || accumulatedMemories.length !== (char.memories?.length || 0)) {
-                updateCharacter(char.id, {
-                    memories: accumulatedMemories,
-                    hideBeforeMessageId: latestHideBefore,
-                } as any);
-            }
-
-            // 仅当仍停在这个角色时刷新按钮 + 弹结果提示，避免串台到刚切过去的新角色
-            if (char.id === activeCharIdRef.current) {
-                // 跑完刷新按钮上的待处理条数
-                try {
-                    setVectorizePendingCount(await getMemoryPalaceUnprocessedBufferCount(char.id));
-                } catch { /* 忽略：刷新失败不影响结果提示 */ }
-
-                if (totalProcessed > 0) {
-                    addToast(`✅ 向量化完成：${round} 轮处理了约 ${totalProcessed} 条消息`, 'success');
-                } else {
-                    addToast('所有聊天记录都已处理完毕，无需操作', 'info');
-                }
-            }
+            updateCharacter(char.id, updates);
+            setAllHistoryMessages(rangeMessages);
+            setSettingsContextRangeMode(nextMode);
+            setSettingsContextLimit(nextLimit);
+            setVectorizePendingCount(await getMemoryPalaceOneShotPendingCount(char.id, retainedCount));
+            setVectorizeResult({
+                processedMessages: pipelineResult.processedMessages || pendingBefore,
+                storedMemories: pipelineResult.stored,
+                retainedMessages: expectedRetained,
+                waterlineAlreadyAhead,
+            });
+            setModalType('memory-vectorize-result');
+            addToast('✅ 记忆处理完成，原文范围已同步', 'success');
         } catch (e: any) {
             addToast(`❌ 向量化失败：${e.message}`, 'error');
+            if (charIdAtStart === activeCharIdRef.current) setModalType('chat-settings');
         } finally {
             setIsVectorizing(false);
             setVectorizeProgress('');
@@ -2102,8 +2226,12 @@ const Chat: React.FC = () => {
 
         updateCharacter(char.id, {
             contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
-            contextRangeMode: char.autoArchiveEnabled ? settingsContextRangeMode : 'manual',
+            contextRangeMode: (char.autoArchiveEnabled || char.contextFollowsMemoryPalaceHwm)
+                ? settingsContextRangeMode
+                : 'manual',
             contextLimit: settingsContextLimit,
+            contextFollowsMemoryPalaceHwm: settingsContextRangeMode === 'adaptive'
+                && !!char.contextFollowsMemoryPalaceHwm,
             contextUserStartMessageId: messageId,
         });
         setModalType('none');
@@ -2576,6 +2704,11 @@ const Chat: React.FC = () => {
         onOpenSettings: () => setShowThinkingChainModal(true),
     }), [(char as any)?.thinkingChainStyle, (char as any)?.thinkingChainCustomColors]);
 
+    // 工具痕迹那行灰字要贴着气泡走，所以把气泡自带的组间距（MessageItem 里那组
+    // mb-3 / mb-6 / mb-8）抵掉大半。组内的气泡本来就挨着，不用抵。
+    const toolTracePullClass = osTheme.chatMessageSpacing === 'compact' ? '-mt-2'
+        : osTheme.chatMessageSpacing === 'spacious' ? '-mt-6' : '-mt-5';
+
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
         if (activeCategory !== 'default' && visibleCategories.length > 0 && !visibleCategories.some(c => c.id === activeCategory)) {
@@ -2946,6 +3079,9 @@ const Chat: React.FC = () => {
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
                 vectorizeProgress={vectorizeProgress}
+                retainRecentForVectorize={retainRecentForVectorize}
+                setRetainRecentForVectorize={setRetainRecentForVectorize}
+                vectorizeResult={vectorizeResult}
                 onForceVectorize={handleForceVectorize}
                 apiPresets={apiPresets}
                 onAddApiPreset={addApiPreset}
@@ -3132,7 +3268,7 @@ const Chat: React.FC = () => {
                 );
             })()}
 
-            <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+            <div ref={scrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {windowedFocusMsgId !== null && (
                     <div className="sticky top-0 z-20 flex justify-center pb-2 pointer-events-none">
                         <button onClick={handleBackToCurrent} className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5">
@@ -3165,6 +3301,16 @@ const Chat: React.FC = () => {
                         nextMessage.role !== m.role ||
                         Math.abs(nextMessage.timestamp - m.timestamp) > messageGroupGapMs;
                     const suppressEntranceAnimation = streamPreviewHandoverIdsRef.current.has(m.id);
+                    // 这一轮在云端跑过哪些工具（即时对话才有，worker 挂在最后一条推送上）。
+                    // 一条推送拆出的每条气泡都继承了同一份（metadata 是整份往下铺的，见
+                    // activeMsgRuntime 的 mcdInheritMeta），所以只在这条推送的最后一条底下画，
+                    // 不然一句回复底下能排出三行一模一样的字。
+                    // 多选状态下不画：跟旁边那两块浮层一样，让位给选择框。
+                    const toolTraceText = selectionMode
+                        ? '' : formatAmsgToolTrace((m.metadata as any)?.amsgToolTrace);
+                    const pushMessageId = (m.metadata as any)?.activeMsg2?.messageId;
+                    const showToolTrace = !!toolTraceText
+                        && !(pushMessageId && (nextMessage?.metadata as any)?.activeMsg2?.messageId === pushMessageId);
                     return (
                         <div
                             key={m.id || i}
@@ -3187,6 +3333,8 @@ const Chat: React.FC = () => {
                             charAvatar={char.avatar}
                             charName={char.name}
                             userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
+                            isLatestMessage={!nextMessage}
+                            onMediaLoad={handleMessageMediaLoad}
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
@@ -3217,6 +3365,13 @@ const Chat: React.FC = () => {
                             onResolveLifeRecord={handleResolveLifeRecord}
                             thinkingChainOptions={thinkingChainOptions}
                         />
+                        {showToolTrace && (
+                            <div className={`px-3 mb-4 ${breaksWithNext ? toolTracePullClass : ''}`}>
+                                <div className="ml-12 text-[10px] leading-relaxed text-slate-400">
+                                    调用了工具：{toolTraceText}
+                                </div>
+                            </div>
+                        )}
                         </div>
                     );
                 })}
@@ -3312,7 +3467,8 @@ const Chat: React.FC = () => {
                         ))}
                     </>
                 )}
-                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
+                {/* instantChatPending：这一轮在云端跑，本机可以关页面，指示灯靠落盘记录活着。 */}
+                {(isTyping || instantChatPending || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={chatPendingAvatarClass} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
@@ -3395,7 +3551,10 @@ const Chat: React.FC = () => {
                         <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
                     </div>
                 )}
-                
+
+                {/* 开关写着「已开启」、这一轮却在本地生成时，把原因说给用户听 */}
+                <InstantChatRouteNotice charId={activeCharacterId} />
+
                 <ChatInputArea
                     input={input} setInput={handleInputChange}
                     isTyping={isTyping} selectionMode={selectionMode}

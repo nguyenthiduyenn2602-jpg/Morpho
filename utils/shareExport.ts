@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
@@ -11,6 +11,99 @@ export interface ShareOrDownloadOptions {
     mimeType?: string;
     /** 系统 / Web 分享面板标题，默认取文件名。 */
     shareTitle?: string;
+}
+
+export interface ShareOrDownloadBlobOptions {
+    blob: Blob;
+    fileName: string;
+    shareTitle?: string;
+}
+
+const blobToBase64 = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+        const dataUrl = String(reader.result || '');
+        const comma = dataUrl.indexOf(',');
+        if (comma < 0) reject(new Error('文件编码失败'));
+        else resolve(dataUrl.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
+    reader.readAsDataURL(blob);
+});
+
+const base64ToBlob = (value: string, mimeType: string): Blob => {
+    const base64 = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: mimeType });
+};
+
+/** Fetch a downloadable blob, using native HTTP as a CORS-free fallback in Capacitor. */
+export async function fetchBlobForShare(sourceUrl: string, fallbackMimeType = 'application/octet-stream'): Promise<Blob> {
+    try {
+        const response = await fetch(sourceUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (!blob.size) throw new Error('文件为空');
+        return blob;
+    } catch (webError) {
+        if (!Capacitor.isNativePlatform() || !/^https?:\/\//i.test(sourceUrl)) throw webError;
+        const response = await CapacitorHttp.request({ url: sourceUrl, method: 'GET', responseType: 'blob' });
+        if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
+        const blob = base64ToBlob(String(response.data || ''), String(response.headers?.['content-type'] || fallbackMimeType));
+        if (!blob.size) throw new Error('文件为空');
+        return blob;
+    }
+}
+
+/**
+ * 保存二进制媒体：原生壳写缓存并调系统分享，移动浏览器优先 Web Share，
+ * 桌面浏览器才使用 a.download。WebView 普遍不可靠的裸 download 点击只作为末级兜底。
+ */
+export async function shareOrDownloadBlob(options: ShareOrDownloadBlobOptions): Promise<'shared' | 'downloaded' | 'cancelled'> {
+    const { blob, fileName, shareTitle = fileName } = options;
+    if (!(blob instanceof Blob) || blob.size === 0) throw new Error('文件为空，无法保存');
+
+    if (Capacitor.isNativePlatform()) {
+        try {
+            await Filesystem.writeFile({
+                path: fileName,
+                data: await blobToBase64(blob),
+                directory: Directory.Cache,
+            });
+            const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+            await Share.share({ title: shareTitle, files: [uriResult.uri] });
+            return 'shared';
+        } catch (error: any) {
+            if (error?.name === 'AbortError') return 'cancelled';
+            console.error('Native Blob Share Error', error);
+        }
+    }
+
+    try {
+        const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        const canShareFile = typeof navigator !== 'undefined'
+            && typeof navigator.share === 'function'
+            && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
+        if (canShareFile) {
+            await navigator.share({ title: shareTitle, files: [file] });
+            return 'shared';
+        }
+    } catch (error: any) {
+        if (error?.name === 'AbortError') return 'cancelled';
+        console.error('Web Blob Share Error', error);
+    }
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return 'downloaded';
 }
 
 /**

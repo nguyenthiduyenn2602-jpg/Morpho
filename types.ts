@@ -268,7 +268,6 @@ export interface InstantPushConfig {
 
 export type InstantOversizeTransport = 'multipart' | 'd1';
 
-export type ActiveMsg2DbDriver = 'pg' | 'neon';
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
 
@@ -280,32 +279,67 @@ export interface ActiveMsg2ApiConfig {
 
 export interface ActiveMsg2GlobalConfig {
   userId: string;
-  driver: ActiveMsg2DbDriver;
-  databaseUrl: string;
-  initSecret?: string;
-  tenantId?: string;
-  tenantToken?: string;
-  cronToken?: string;
-  cronWebhookUrl?: string;
-  masterKeyFingerprint?: string;
+  /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
+  workerUrl: string;
+  /** 与 Worker 约定的共享密钥。 */
+  serverToken?: string;
+  /** 一键部署时生成的 AMSG_MASTER_KEY；重装时必须沿用。 */
+  masterKey?: string;
   initializedAt?: number;
+  /** 普通私聊是否改由主动消息 2.0 Worker 在云端完成整轮生成。 */
+  instantChatEnabled?: boolean;
+  /** 最近一次明确探测到的即时对话能力。 */
+  instantChatSupported?: boolean;
+  /** Worker 是否支持集中保存 LLM 凭据引用。 */
+  llmCredentialsSupported?: boolean;
   updatedAt?: number;
+}
+
+export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
+export type ActiveMsg2TaskSource = 'user' | 'character';
+export type ActiveMsg2TaskStatus = 'scheduled' | 'cancelled';
+
+export interface ActiveMsg2TaskRecord {
+  taskUuid: string;
+  clientTaskId: string;
+  mode: ActiveMsg2Mode;
+  firstSendTime: string;
+  nextSendAt?: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  userMessage?: string;
+  promptHint?: string;
+  expirePolicy: ActiveMsg2ExpirePolicy;
+  anchorLastUserMsgAt?: number;
+  source: ActiveMsg2TaskSource;
+  status: ActiveMsg2TaskStatus;
+  createdAt: number;
+  lastError?: string;
 }
 
 export interface ActiveMsg2CharacterConfig {
   enabled: boolean;
-  mode: ActiveMsg2Mode;
-  firstSendTime: string;
-  recurrenceType: ActiveMsg2Recurrence;
-  userMessage?: string;
-  promptHint?: string;
+  /** undefined 跟随全局；false 让该角色继续走本地回复。 */
+  instantChatEnabled?: boolean;
+  tasks?: ActiveMsg2TaskRecord[];
   maxTokens?: number;
-  taskUuid?: string;
-  remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
+  /** 用户未回复时角色最多连续主动发送几条；0 表示不限。 */
+  maxUnansweredSends?: number;
   useSecondaryApi?: boolean;
   secondaryApi?: ActiveMsg2ApiConfig;
   lastSyncedAt?: number;
   lastError?: string;
+}
+
+export interface Amsg2ExpiredNoticeRecord {
+  id: string;
+  charId: string;
+  occurrenceMs: number;
+  mode: ActiveMsg2Mode;
+  promptHint?: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  kind?: 'expired' | 'user-cancelled';
+  notifiedAt?: number;
+  createdAt: number;
 }
 
 export interface ActiveMsg2InboxMessage {
@@ -319,9 +353,13 @@ export interface ActiveMsg2InboxMessage {
   messageType?: string;
   messageSubtype?: string;
   taskId?: string | null;
+  taskUuid?: string | null;
+  recurrenceType?: string | null;
+  occurrenceMs?: number | null;
   metadata?: Record<string, any>;
   sentAt?: number;
   receivedAt: number;
+  processAttempts?: number;
 }
 
 // Phase 2 Round 1 — Instant Push agentic loop session state, written client-side
@@ -3234,6 +3272,8 @@ export interface FullBackupData {
     apiConfig?: APIConfig;
     instantPushConfig?: InstantPushConfig;
     pushVapid?: { vapidPublicKey: string; vapidPrivateKey: string; vapidEmail?: string; updatedAt?: number; };
+    /** 主动消息 2.0 独立数据库中的全局连接配置。 */
+    amsg2GlobalConfig?: ActiveMsg2GlobalConfig;
     apiPresets?: ApiPreset[];
     availableModels?: string[];
     realtimeConfig?: RealtimeConfig;  // 实时感知配置（天气/新闻/Notion）

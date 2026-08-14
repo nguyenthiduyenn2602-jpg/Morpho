@@ -17,7 +17,7 @@
 // through this pipeline.
 
 import { build } from 'esbuild';
-import { existsSync, statSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, statSync, readFileSync, writeFileSync, copyFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -48,6 +48,7 @@ const WORKERS = [
     outPublic: 'public/sw-keep-alive.js',
     skipWorkerOut: true,
   },
+  { name: 'amsg', outName: 'amsg-worker.bundle.js' },
 ];
 
 // amsg-instant 0.3.0+ uses only Web Crypto (globalThis.crypto.subtle); the
@@ -60,6 +61,7 @@ const sharedOpts = {
   bundle: true,
   minify: false,
   conditions: ['worker', 'browser', 'import', 'default'],
+  external: ['cloudflare:*'],
 };
 
 console.log(`Building ${WORKERS.length} worker bundle(s)...`);
@@ -105,6 +107,13 @@ for (const w of WORKERS) {
 // instant-worker.version.txt — Deno loader 冷启动时拉这个文件决定 bundle 版本号
 // (见 utils/instantPushClient.ts 的 buildDenoLoaderSnippet)。从
 // utils/instantWorkerVersion.ts 提取, 与 /version 路由同源, 不会漂移。
+const amsgDenoProxy = resolve(root, 'worker/amsg/deno-proxy.ts');
+if (!existsSync(amsgDenoProxy)) {
+  console.error('ERROR: worker/amsg/deno-proxy.ts not found');
+  process.exit(1);
+}
+copyFileSync(amsgDenoProxy, resolve(root, 'public/amsg-deno-proxy.ts'));
+
 const versionSrc = readFileSync(resolve(root, 'utils/instantWorkerVersion.ts'), 'utf8');
 const versionMatch = versionSrc.match(/INSTANT_WORKER_VERSION\s*=\s*'([^']+)'/);
 if (!versionMatch) {

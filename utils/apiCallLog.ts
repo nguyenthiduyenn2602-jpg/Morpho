@@ -31,11 +31,41 @@ export interface ApiCallMeta {
     purpose?: string;
 }
 
+/**
+ * 这一次请求是谁发出去的。
+ *
+ * 不填 = 浏览器自己直连模型（绝大多数记录，不占存储）。`cloud-instant-chat` 是主动
+ * 消息 2.0 的即时对话：本地只把这一轮交上去，真正那条 `/chat/completions` 由用户自己
+ * 的 Cloudflare Worker 在云端发出。
+ */
+export type ApiCallRoute = 'cloud-instant-chat';
+
 /** 落库的一条记录。 */
 export interface ApiCallLogEntry extends ApiCallMeta {
     id: string;
     /** 调用发起（实际是响应回来）时间戳 ms */
     timestamp: number;
+    /** 见 ApiCallRoute。空 = 浏览器直连。 */
+    route?: ApiCallRoute;
+    /**
+     * 云端收下了这一轮，结果还没回来。回复落库（或云端点名说这轮没成）时回填掉。
+     * 本地直连的记录没有这一档：那边是响应回来才记，天生就是终态。
+     */
+    pending?: boolean;
+    /**
+     * 这一轮被下一条消息顶掉了（还没等到回复就又发了一条，云端把两句合成一次回）。
+     * 不算失败，但也等不到属于它自己的回复——不单独收尾的话，这笔会一直写着
+     * 「云端生成中」，直到 5 天后被裁掉。
+     */
+    superseded?: boolean;
+    /**
+     * Token 数只覆盖这一轮里的**最后一次**模型调用，不是全部。
+     *
+     * 云端带工具时一轮对话会连着调好几次模型（查完东西再接着说），而回传的用量只有
+     * 最后那次——不标出来的话，用户拿这个数去对供应商账单会一直对不上，还以为是被
+     * 多扣了。只在确实跑过工具时才置位。
+     */
+    tokensPartial?: boolean;
     /** 命中的预设名；匹配不到时回退成 baseUrl 的 host */
     presetName: string;
     baseUrl: string;
@@ -74,6 +104,63 @@ export interface PromptBlockStat {
     /** 该块字符数（含标题行与换行） */
     chars: number;
 }
+
+export type ApiRequestCaptureSectionKind =
+    | 'request'
+    | 'tools'
+    | 'system'
+    | 'memory'
+    | 'worldbook'
+    | 'group'
+    | 'history'
+    | 'context'
+    | 'user'
+    | 'assistant'
+    | 'tool';
+
+/** 一次性完整抓包的分区索引。正文只在 payload 中保存一份，避免大上下文重复占空间。 */
+export interface ApiRequestCaptureSection {
+    id: string;
+    label: string;
+    kind: ApiRequestCaptureSectionKind;
+    chars: number;
+    /** 面向用户的来源解释，例如「记忆系统召回并注入的内容」。 */
+    source?: string;
+    /** 在原始请求里的位置，例如 messages[0].content。 */
+    path?: string;
+    role?: string;
+    messageIndex?: number;
+    /** 字符串消息被按标题拆块时，对应 content 的起止位置。 */
+    start?: number;
+    end?: number;
+}
+
+/**
+ * 用户主动开启后，仅保存下一次 chat/completions 的完整请求体。
+ * 普通 5 天日志仍然只存统计；这条记录永远覆盖上一条，避免原文长期堆积。
+ */
+export interface ApiRequestCapture {
+    version: 1;
+    id: string;
+    capturedAt: number;
+    baseUrl: string;
+    presetName: string;
+    model: string;
+    meta: ApiCallMeta;
+    payload: unknown;
+    totalChars: number;
+    /** 模型/中转响应 usage 中自报的真实输入 Token；对方不返回时为空。 */
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    usageStatus?: 'pending' | 'reported' | 'not-reported' | 'failed';
+    messageCount: number;
+    binaryPlaceholders: number;
+    sections: ApiRequestCaptureSection[];
+}
+
+export const API_REQUEST_CAPTURE_EVENT = 'sully-api-request-capture-change';
+const API_REQUEST_CAPTURE_ARMED_KEY = 'sully_api_request_capture_armed_v1';
 
 const PRESETS_STORAGE_KEY = 'os_api_presets';
 
@@ -216,14 +303,15 @@ function resolvePresetName(baseUrl: string, model: string): string {
  * 在 safeFetchJson 里对 `/chat/completions` 的成功与失败都会调用。
  */
 /** 从 OpenAI 兼容响应里抠 usage（各家代理大多遵循这个字段）。 */
-function extractUsage(response: unknown): { prompt?: number; completion?: number; total?: number } {
-    const usage = (response as any)?.usage;
+export function extractApiTokenUsage(response: unknown): { prompt?: number; completion?: number; total?: number } {
+    const root = response as any;
+    const usage = root?.usage || root?.usage_metadata || root?.usageMetadata;
     if (!usage || typeof usage !== 'object') return {};
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
     return {
-        prompt: num(usage.prompt_tokens),
-        completion: num(usage.completion_tokens),
-        total: num(usage.total_tokens),
+        prompt: num(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount),
+        completion: num(usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount),
+        total: num(usage.total_tokens ?? usage.totalTokenCount),
     };
 }
 
@@ -422,7 +510,457 @@ export function buildPromptBreakdown(body: unknown): PromptBlockStat[] | undefin
     }
 }
 
+function emitCaptureChange(status: 'armed' | 'idle' | 'saved' | 'error'): void {
+    try {
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(API_REQUEST_CAPTURE_EVENT, { detail: { status } }));
+        }
+    } catch { /* 诊断功能不能影响主流程 */ }
+}
+
+function readApiRequestCaptureArmed(): boolean {
+    try {
+        return typeof localStorage !== 'undefined' && localStorage.getItem(API_REQUEST_CAPTURE_ARMED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+// 关闭时的 LLM 热路径只读这个内存布尔值，不在每次请求上同步访问 localStorage。
+let apiRequestCaptureArmed = readApiRequestCaptureArmed();
+
+// 多标签页同步只发生在开关改变时，不给普通 API 调用增加监听或存储开销。
+try {
+    if (typeof window !== 'undefined') {
+        window.addEventListener('storage', (event) => {
+            if (event.key !== API_REQUEST_CAPTURE_ARMED_KEY) return;
+            apiRequestCaptureArmed = event.newValue === '1';
+            emitCaptureChange(apiRequestCaptureArmed ? 'armed' : 'idle');
+        });
+    }
+} catch { /* 非浏览器 / 隐私模式兜底 */ }
+
+export function isApiRequestCaptureArmed(): boolean {
+    return apiRequestCaptureArmed;
+}
+
+export function setApiRequestCaptureArmed(armed: boolean): void {
+    apiRequestCaptureArmed = armed;
+    try {
+        if (typeof localStorage !== 'undefined') {
+            if (armed) localStorage.setItem(API_REQUEST_CAPTURE_ARMED_KEY, '1');
+            else localStorage.removeItem(API_REQUEST_CAPTURE_ARMED_KEY);
+        }
+    } catch { /* localStorage 被禁用时静默失败 */ }
+    emitCaptureChange(armed ? 'armed' : 'idle');
+}
+
+/** 同步抢占开关：同一页面里即使同时发出多个请求，也只有第一条能拿到抓包资格。 */
+function claimApiRequestCapture(): boolean {
+    if (!apiRequestCaptureArmed) return false;
+    apiRequestCaptureArmed = false;
+    try { localStorage.removeItem(API_REQUEST_CAPTURE_ARMED_KEY); } catch { /* 已在内存中关闭 */ }
+    emitCaptureChange('idle');
+    return true;
+}
+
+const INLINE_DATA_URL_LIMIT = 4096;
+
+/**
+ * 文字原样保存；超长 data URL 只保留类型和原始长度。
+ * 这类内容通常是图片/音频二进制，并不是要排查的提示词正文，完整落库反而很容易触发配额上限。
+ */
+function sanitizeCapturePayload(value: unknown, stats: { binaryPlaceholders: number }): unknown {
+    if (typeof value === 'string') {
+        if (value.length > INLINE_DATA_URL_LIMIT && /^data:[^,]+,/i.test(value)) {
+            stats.binaryPlaceholders++;
+            const mime = value.slice(5, value.indexOf(';') > 0 ? value.indexOf(';') : value.indexOf(','));
+            return `[${mime || 'binary'} data URL 正文未保存；原始 ${value.length.toLocaleString('en-US')} 字符]`;
+        }
+        return value;
+    }
+    if (Array.isArray(value)) return value.map(item => sanitizeCapturePayload(item, stats));
+    if (value && typeof value === 'object') {
+        const out: Record<string, unknown> = {};
+        for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+            out[key] = sanitizeCapturePayload(child, stats);
+        }
+        return out;
+    }
+    return value;
+}
+
+interface CaptureTextBlock {
+    label: string;
+    start: number;
+    end: number;
+}
+
+/** 与普通统计使用相同标题规则，但额外保留正文位置，正文无需复制第二份。 */
+function splitCaptureTextBlocks(text: string): CaptureTextBlock[] {
+    const lines = text.split('\n');
+    const fenceAt = fenceToggleLines(lines);
+    const lineStarts: number[] = [];
+    let offset = 0;
+    for (const line of lines) {
+        lineStarts.push(offset);
+        offset += line.length + 1;
+    }
+
+    const blocks: CaptureTextBlock[] = [];
+    let inFence = false;
+    let start = 0;
+    let label = '开头 / 未分区提示词';
+    let sawHeader = false;
+    for (let i = 0; i < lines.length; i++) {
+        if (fenceAt.has(i)) inFence = !inFence;
+        const header = inFence ? null : matchBlockHeader(lines[i]);
+        if (!header) continue;
+        const headerStart = lineStarts[i];
+        if (headerStart > start) blocks.push({ label, start, end: headerStart });
+        start = headerStart;
+        label = header.slice(0, BLOCK_LABEL_MAX);
+        sawHeader = true;
+    }
+    if (start < text.length || text.length === 0) blocks.push({ label, start, end: text.length });
+    if (!sawHeader && blocks.length === 1) {
+        const firstLine = text.trimStart().split('\n', 1)[0]?.slice(0, BLOCK_LABEL_MAX);
+        blocks[0].label = firstLine || '未命名提示词';
+    }
+    return blocks.filter(block => block.end > block.start || text.length === 0);
+}
+
+function captureKindForLabel(label: string): ApiRequestCaptureSectionKind {
+    if (/记忆|回忆|召回|话题盒|memory|event\s*box|topic\s*box|事件盒/i.test(label)) return 'memory';
+    if (/世界书|world\s*book|worldbook|lore/i.test(label)) return 'worldbook';
+    if (/群聊|群组聊天|group\s*(?:chat|scene|conversation)/i.test(label)) return 'group';
+    if (/完整对话|对话历史|历史对话|聊天历史|conversation\s*history|chat\s*history|dialogue\s*history/i.test(label)) return 'history';
+    if (/角色|关系|状态|上下文|character|relationship|context/i.test(label)) return 'context';
+    return 'system';
+}
+
+const CAPTURE_SOURCE_DESCRIPTIONS: Record<ApiRequestCaptureSectionKind, string> = {
+    request: '请求配置：模型、采样参数、输出格式等顶层字段',
+    tools: '功能或 MCP 注入给模型的工具定义',
+    system: '当前功能的预设、规则或系统提示词',
+    memory: '记忆系统召回后注入本次请求的内容',
+    worldbook: '世界书命中后注入本次请求的设定',
+    group: '近期群聊、群聊场景或公共聊天背景注入的内容',
+    history: '随请求发送给模型的既往用户与角色对话内容',
+    context: '角色资料、关系状态或实时环境上下文',
+    user: '本轮用户输入，或功能发起任务时使用的用户提示词',
+    assistant: '随上下文一起发送的历史角色回复',
+    tool: '上一轮工具执行后返回给模型的结果',
+};
+
+export function getApiRequestCaptureSectionSource(section: ApiRequestCaptureSection): string {
+    return section.source || CAPTURE_SOURCE_DESCRIPTIONS[section.kind] || '请求中的其他内容';
+}
+
+function jsonLength(value: unknown): number {
+    try { return JSON.stringify(value)?.length ?? 0; } catch { return 0; }
+}
+
+/** 纯函数，供拦截器和测试共同使用。 */
+export function buildApiRequestCapture(input: {
+    url: string;
+    body?: unknown;
+    meta?: ApiCallMeta;
+    capturedAt?: number;
+}): ApiRequestCapture {
+    let parsed: unknown = input.body;
+    if (typeof input.body === 'string') {
+        try { parsed = JSON.parse(input.body); } catch { parsed = { rawBody: input.body }; }
+    }
+    const stats = { binaryPlaceholders: 0 };
+    const payload = sanitizeCapturePayload(parsed ?? null, stats);
+    const body = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : { rawBody: payload };
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const sections: ApiRequestCaptureSection[] = [];
+    const requestOptions = Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'messages' && key !== 'tools'));
+    if (Object.keys(requestOptions).length > 0) {
+        sections.push({
+            id: 'request-options',
+            label: '请求参数',
+            kind: 'request',
+            chars: jsonLength(requestOptions),
+            source: CAPTURE_SOURCE_DESCRIPTIONS.request,
+            path: '请求体顶层（messages / tools 除外）',
+        });
+    }
+    if (body.tools !== undefined) {
+        sections.push({
+            id: 'tool-definitions',
+            label: '工具定义（tools）',
+            kind: 'tools',
+            chars: jsonLength(body.tools),
+            source: CAPTURE_SOURCE_DESCRIPTIONS.tools,
+            path: 'tools',
+        });
+    }
+
+    messages.forEach((rawMessage, messageIndex) => {
+        const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : { content: rawMessage };
+        const role = typeof message.role === 'string' ? message.role : 'unknown';
+        const content = message.content;
+        const shouldSplit = typeof content === 'string' && (
+            role === 'system' || (content.length > 8000 && splitCaptureTextBlocks(content).length > 1)
+        );
+        if (shouldSplit) {
+            splitCaptureTextBlocks(content as string).forEach((block, blockIndex) => {
+                const kind = captureKindForLabel(block.label);
+                sections.push({
+                    id: `message-${messageIndex}-block-${blockIndex}`,
+                    label: block.label,
+                    kind,
+                    chars: block.end - block.start,
+                    source: CAPTURE_SOURCE_DESCRIPTIONS[kind],
+                    path: `messages[${messageIndex}].content · 分块 ${blockIndex + 1}`,
+                    role,
+                    messageIndex,
+                    start: block.start,
+                    end: block.end,
+                });
+            });
+            return;
+        }
+        const roleKind: ApiRequestCaptureSectionKind =
+            role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : role === 'tool' ? 'tool' : 'system';
+        const roleLabel = role === 'user' ? '用户消息' : role === 'assistant' ? '角色消息' : role === 'tool' ? '工具结果' : `${role} 消息`;
+        sections.push({
+            id: `message-${messageIndex}`,
+            label: `${roleLabel} · 第 ${messageIndex + 1} 条`,
+            kind: roleKind,
+            chars: typeof content === 'string' ? content.length : jsonLength(content),
+            source: CAPTURE_SOURCE_DESCRIPTIONS[roleKind],
+            path: `messages[${messageIndex}].content`,
+            role,
+            messageIndex,
+        });
+    });
+
+    const baseUrl = deriveBaseUrl(input.url);
+    const model = extractModel(body);
+    const meta = hasMeta(input.meta) ? { ...input.meta } : { ...ambientMeta };
+    const capturedAt = input.capturedAt ?? Date.now();
+    return {
+        version: 1,
+        id: `capture-${capturedAt}-${Math.random().toString(36).slice(2, 8)}`,
+        capturedAt,
+        baseUrl,
+        presetName: resolvePresetName(baseUrl, model),
+        model,
+        meta,
+        payload,
+        totalChars: jsonLength(payload),
+        usageStatus: 'pending',
+        messageCount: messages.length,
+        binaryPlaceholders: stats.binaryPlaceholders,
+        sections,
+    };
+}
+
+/** 展示层按索引从唯一 payload 中取正文，避免保存时把大提示词复制两份。 */
+export function getApiRequestCaptureSectionContent(
+    capture: ApiRequestCapture,
+    section: ApiRequestCaptureSection,
+): string {
+    try {
+        const body = capture.payload && typeof capture.payload === 'object' && !Array.isArray(capture.payload)
+            ? capture.payload as Record<string, unknown>
+            : { rawBody: capture.payload };
+        if (section.kind === 'request') {
+            return JSON.stringify(Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'messages' && key !== 'tools')), null, 2);
+        }
+        if (section.kind === 'tools') return JSON.stringify(body.tools, null, 2);
+        const messages = Array.isArray(body.messages) ? body.messages : [];
+        const message = messages[section.messageIndex ?? -1] as any;
+        if (!message) return '';
+        const content = message?.content;
+        if (typeof content === 'string') {
+            if (section.start != null && section.end != null) return content.slice(section.start, section.end);
+            return content;
+        }
+        return JSON.stringify(content, null, 2);
+    } catch {
+        return '';
+    }
+}
+
+export interface ApiRequestCaptureDuplicateSummary {
+    groups: number;
+    repeatedSections: number;
+    extraChars: number;
+    examples: Array<{ label: string; occurrences: number; chars: number }>;
+}
+
+/**
+ * 检查客户端实际请求里是否有完全相同的长文本被重复塞入。
+ * 只比较正文分区，忽略请求参数/tools 和短句，避免把常见短提醒误报成提示词重复。
+ */
+export function summarizeApiRequestCaptureDuplicates(
+    capture: ApiRequestCapture,
+    minChars = 160,
+): ApiRequestCaptureDuplicateSummary {
+    const byContent = new Map<string, Array<ApiRequestCaptureSection>>();
+    capture.sections.forEach(section => {
+        if (section.kind === 'request' || section.kind === 'tools' || section.chars < minChars) return;
+        const content = getApiRequestCaptureSectionContent(capture, section)
+            .replace(/\r\n/g, '\n')
+            .replace(/[ \t]+$/gm, '')
+            .trim();
+        if (content.length < minChars) return;
+        const matches = byContent.get(content) || [];
+        matches.push(section);
+        byContent.set(content, matches);
+    });
+
+    const duplicates = [...byContent.entries()]
+        .filter(([, sections]) => sections.length > 1)
+        .map(([content, sections]) => ({
+            label: sections[0].label,
+            occurrences: sections.length,
+            chars: content.length,
+        }))
+        .sort((a, b) => (b.chars * (b.occurrences - 1)) - (a.chars * (a.occurrences - 1)));
+
+    return {
+        groups: duplicates.length,
+        repeatedSections: duplicates.reduce((sum, item) => sum + item.occurrences, 0),
+        extraChars: duplicates.reduce((sum, item) => sum + item.chars * (item.occurrences - 1), 0),
+        examples: duplicates.slice(0, 3),
+    };
+}
+
+/** 生成适合用户直接发给开发者排查的可读 TXT；不额外落库，只在复制/下载时即时拼装。 */
+export function formatApiRequestCaptureTxt(capture: ApiRequestCapture): string {
+    const fmt = (value: number) => value.toLocaleString('en-US');
+    const time = new Date(capture.capturedAt).toLocaleString('zh-CN', { hour12: false });
+    const grouped = new Map<ApiRequestCaptureSectionKind, { chars: number; count: number }>();
+    capture.sections.forEach(section => {
+        const current = grouped.get(section.kind) || { chars: 0, count: 0 };
+        current.chars += section.chars;
+        current.count++;
+        grouped.set(section.kind, current);
+    });
+    const classifiedChars = [...grouped.values()].reduce((sum, item) => sum + item.chars, 0) || 1;
+    const duplicateSummary = summarizeApiRequestCaptureDuplicates(capture);
+    const sourceRows = [...grouped.entries()]
+        .sort((a, b) => b[1].chars - a[1].chars)
+        .map(([kind, item], index) => {
+            const pct = item.chars / classifiedChars * 100;
+            return `${index + 1}. ${CAPTURE_SOURCE_DESCRIPTIONS[kind]}\n   ${fmt(item.chars)} 字符 · ${pct < 1 ? '<1' : Math.round(pct)}% · ${item.count} 个分区`;
+        });
+
+    const sectionRows = capture.sections.map((section, index) => {
+        const content = getApiRequestCaptureSectionContent(capture, section);
+        return [
+            `===== 分区 ${index + 1}/${capture.sections.length} · ${section.label} =====`,
+            `类型：${section.kind}`,
+            `来源：${getApiRequestCaptureSectionSource(section)}`,
+            `位置：${section.path || (section.messageIndex != null ? `messages[${section.messageIndex}]` : '请求体')}`,
+            `大小：${fmt(section.chars)} 字符`,
+            '',
+            content || '（空内容）',
+        ].join('\n');
+    });
+
+    return [
+        'SullyOS · LLM 本次发送统计',
+        '================================',
+        `抓取时间：${time}`,
+        `App：${capture.meta.appName || '—'}`,
+        `用途：${capture.meta.purpose || '—'}`,
+        `角色：${capture.meta.charName || '—'}`,
+        `API：${capture.presetName || capture.baseUrl || '—'}`,
+        `模型：${capture.model || '—'}`,
+        `输入 Token（模型响应自报）：${capture.promptTokens != null ? fmt(capture.promptTokens) : capture.usageStatus === 'pending' ? '等待响应' : capture.usageStatus === 'failed' ? '请求失败，无法取得' : '接口未返回 usage'}`,
+        `输出 Token：${capture.completionTokens != null ? fmt(capture.completionTokens) : '—'}`,
+        `总 Token：${capture.totalTokens != null ? fmt(capture.totalTokens) : '—'}`,
+        `请求体总字符（不是 Token）：${fmt(capture.totalChars)}`,
+        `消息数：${capture.messageCount}`,
+        `分区数：${capture.sections.length}`,
+        capture.binaryPlaceholders > 0
+            ? `二进制占位：${capture.binaryPlaceholders} 个（图片/音频正文未保存，已保留原始长度）`
+            : '二进制占位：0',
+        '',
+        '===== 客户端发出前重复检查 =====',
+        duplicateSummary.groups === 0
+            ? '未发现完全相同的长文本被客户端重复发送。'
+            : `发现 ${duplicateSummary.groups} 组完全相同的长文本；重复部分额外 ${fmt(duplicateSummary.extraChars)} 字符。`,
+        '说明：这里只能证明客户端实际发出了什么，无法检查中转站收到请求后的二次拼接。',
+        '',
+        '===== 来源体积排行（按正文字符统计，不是 Token） =====',
+        ...sourceRows,
+        '',
+        '===== 分区正文（按实际发送顺序） =====',
+        ...sectionRows.flatMap(row => [row, '']),
+        '===== 完整原始请求 JSON =====',
+        JSON.stringify(capture.payload, null, 2),
+        '',
+        '提示：内容可能包含聊天、记忆和角色隐私，分享前请检查。',
+    ].join('\n');
+}
+
+/** 抢占并保存下一次请求；成功时返回抓包 ID，未开启时返回 null。 */
+let captureSaveInFlight: { id: string; promise: Promise<void> } | null = null;
+
+export function captureApiRequestOnce(input: { url: string; body?: unknown; meta?: ApiCallMeta }): string | null {
+    if (!claimApiRequestCapture()) return null;
+    try {
+        const capture = buildApiRequestCapture(input);
+        const savePromise = import('./db').then(({ DB }) => DB.saveApiRequestCapture(capture));
+        captureSaveInFlight = { id: capture.id, promise: savePromise };
+        savePromise.then(
+            () => emitCaptureChange('saved'),
+            () => emitCaptureChange('error'),
+        );
+        return capture.id;
+    } catch {
+        emitCaptureChange('error');
+        return null;
+    }
+}
+
+/** 响应完整读完后，把同一次请求的真实 usage 回填到一次性抓包。 */
+export function updateApiRequestCaptureUsage(input: {
+    captureId: string | null;
+    ok: boolean;
+    response?: unknown;
+    responseText?: string;
+}): void {
+    if (!input.captureId) return;
+    try {
+        let responseForUsage = input.response;
+        if (responseForUsage === undefined && typeof input.responseText === 'string') {
+            const scanned = scanSseForLog(input.responseText);
+            if (scanned.usage) responseForUsage = { usage: scanned.usage };
+        }
+        const usage = extractApiTokenUsage(responseForUsage);
+        const patch: Partial<ApiRequestCapture> = {
+            promptTokens: usage.prompt,
+            completionTokens: usage.completion,
+            totalTokens: usage.total,
+            usageStatus: !input.ok ? 'failed' : usage.prompt != null ? 'reported' : 'not-reported',
+        };
+        const pending = captureSaveInFlight?.id === input.captureId
+            ? captureSaveInFlight.promise.catch(() => {})
+            : Promise.resolve();
+        pending
+            .then(() => import('./db'))
+            .then(({ DB }) => DB.patchApiRequestCapture(input.captureId!, patch))
+            .then(updated => { if (updated) emitCaptureChange('saved'); })
+            .catch(() => emitCaptureChange('error'));
+    } catch {
+        emitCaptureChange('error');
+    }
+}
+
 export function recordApiCall(input: {
+    /** 同一条 HTTP 请求在显式记录与全局 fetch 兜底间共享的 ID，用于原子去重。 */
+    requestId?: string;
     url: string;
     body?: unknown;
     status?: number;
@@ -448,9 +986,9 @@ export function recordApiCall(input: {
             backendModel = scanned.model;
             if (scanned.usage) responseForExtract = { usage: scanned.usage };
         }
-        const usage = extractUsage(responseForExtract);
+        const usage = extractApiTokenUsage(responseForExtract);
         const entry: ApiCallLogEntry = {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            id: input.requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             timestamp: Date.now(),
             presetName: resolvePresetName(baseUrl, model),
             baseUrl,
@@ -475,5 +1013,105 @@ export function recordApiCall(input: {
             .catch(() => {});
     } catch {
         // best-effort：任何异常都不影响主请求
+    }
+}
+
+// ── 交给云端跑的那一轮 ────────────────────────────────────────────────
+//
+// 这条路上本地只发一个 POST 给用户自己的 Worker，真正那条 `/chat/completions` 是云端
+// 发的——全局 fetch 拦截器只认 `/chat/completions`，够不着它。不专门记的话，开了即时
+// 对话之后「API 调用记录」里聊天这一格就是空的，看着像调用凭空消失了。
+//
+// 同一条记录分两笔写（DB 层按 id 合并非空字段，见 appendApiCallLog）：
+//   1. 云端受理时先落一笔——那会儿只知道「发给谁、用哪个模型、发过去些什么」；
+//   2. 回复回来时把 Token 补上（云端随最后一条推送捎回来）。
+// 中间这段时间记录是 pending，界面上写「云端生成中」。
+
+/** 云端那一轮在本地日志里的记录 id。两笔写入靠它对上号，所以两边都从 uuid 现算。 */
+export const cloudApiCallLogId = (uuid: string): string => `cloud-${uuid}`;
+
+/** 第一笔：云端收下了这一轮。 */
+export function recordCloudApiCall(input: {
+    id: string;
+    route: ApiCallRoute;
+    /** 预设里存的那个形态（`https://host/v1`），云端就用这份凭据去发请求。 */
+    baseUrl: string;
+    model: string;
+    /** 交上去的消息数组，用来算输入构成。 */
+    messages: unknown;
+    meta?: ApiCallMeta;
+    timestamp?: number;
+    /**
+     * 这一轮连交都没交上去（POST 就失败了）。这种记录当场就是终态，不等回填——
+     * 云端根本没收下，不会有回复也不会有用量。输入构成照记：上传超时这类失败正是
+     * 「这次包太大了」的直接线索。
+     */
+    sendFailed?: boolean;
+}): void {
+    try {
+        const baseUrl = stripTrailingSlash(input.baseUrl || '');
+        const meta = hasMeta(input.meta) ? input.meta! : ambientMeta;
+        const entry: ApiCallLogEntry = {
+            id: input.id,
+            timestamp: input.timestamp ?? Date.now(),
+            route: input.route,
+            pending: !input.sendFailed,
+            presetName: resolvePresetName(baseUrl, input.model),
+            baseUrl,
+            model: input.model,
+            // 受理成功本身没出错；这一轮的成败等回填那一笔改写。
+            ok: !input.sendFailed,
+            promptBreakdown: buildPromptBreakdown({ messages: input.messages }),
+            appId: meta.appId,
+            appName: meta.appName,
+            charId: meta.charId,
+            charName: meta.charName,
+            purpose: meta.purpose,
+        };
+        import('./db')
+            .then(({ DB }) => DB.appendApiCallLog(entry))
+            .catch(() => {});
+    } catch {
+        // 同 recordApiCall：记日志不能反过来影响这一轮对话
+    }
+}
+
+/**
+ * 第二笔：云端那一轮有结论了。
+ *
+ * 只写这次才知道的字段，`timestamp` 一个字都不带——记录的时间要停在「发起那一刻」，
+ * 不然列表顺序会随着回复先后跳来跳去。第一笔已经被 5 天裁剪掉时这一笔会落空（合并不
+ * 上、又没有时间戳，写库时当场被裁掉），正是想要的收场。
+ */
+export function settleCloudApiCall(input: {
+    id: string;
+    ok: boolean;
+    promptTokens?: number;
+    completionTokens?: number;
+    /** 见 ApiCallLogEntry.tokensPartial。 */
+    tokensPartial?: boolean;
+    /** 见 ApiCallLogEntry.superseded。 */
+    superseded?: boolean;
+}): void {
+    try {
+        const { promptTokens, completionTokens } = input;
+        const patch: Partial<ApiCallLogEntry> & { id: string } = {
+            id: input.id,
+            pending: false,
+            ok: input.ok,
+            superseded: input.superseded || undefined,
+            promptTokens,
+            completionTokens,
+            // 云端只报入和出两个数，总数这边自己加——列表顶上的合计读的是这个字段。
+            totalTokens: promptTokens != null && completionTokens != null
+                ? promptTokens + completionTokens
+                : undefined,
+            tokensPartial: input.tokensPartial || undefined,
+        };
+        import('./db')
+            .then(({ DB }) => DB.appendApiCallLog(patch))
+            .catch(() => {});
+    } catch {
+        // 同上
     }
 }

@@ -1,0 +1,34 @@
+{
+  "_comment": "同步到部署仓库时会改名成 package.json，「Deploy to Cloudflare」按钮读它来渲染每个密钥输入框旁边的说明。在本仓库不叫 package.json 是因为 worker/* 在 pnpm workspace 里，多一个会让这个目录变成独立包、依赖解析不到。这里也刻意不写 build 脚本：bundle 是打好的，部署页面的 Build command 空着就行。deploy 脚本必须带 npx——部署页面会把 Deploy command 自动设成 npm run deploy，而部署仓库里没装 wrangler，不走 npx 就会找不到命令。同步逻辑见 .github/workflows/sync-workers-repo.yml。",
+  "name": "sullyos-amsg",
+  "description": "SullyOS 主动消息 2.0 的后端：角色到点自己发消息，App 关着也收得到。",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "npx wrangler deploy"
+  },
+  "cloudflare": {
+    "label": "SullyOS 主动消息 2.0",
+    "products": ["Workers", "D1"],
+    "bindings": {
+      "DB": {
+        "description": "存角色的定时任务。保持默认新建一个就行，表结构会在 SullyOS 里点「连接并启用」时自动建好。"
+      },
+      "AMSG_MASTER_KEY": {
+        "description": "加密任务内容的钥匙。在 SullyOS 里打开 **系统设置 → 主动消息 2.0 → 配置**，展开「部署 Worker」，点 `生成并复制`，把 `=` 后面那串填进来。**填好之后不要再换**，换了的话之前排的任务就都解不开了。"
+      },
+      "VAPID_PUBLIC_KEY": {
+        "description": "浏览器推送的签名公钥。在 SullyOS 里打开 **系统设置 → 推送凭据 (VAPID)**，点「生成 VAPID 密钥对」→「生成新密钥对」→「保存」，然后复制公钥那一栏。"
+      },
+      "VAPID_PRIVATE_KEY": {
+        "description": "上面**同一次**生成出来的私钥。两串来自不同次生成的话，消息推不出去，而且界面上看不出任何异常。"
+      },
+      "VAPID_EMAIL": {
+        "description": "可选，留空即可。填的话写成 `mailto:你的邮箱`，推送服务出问题时用来联系你。"
+      },
+      "AMSG_SERVER_TOKEN": {
+        "description": "可选，建议填。填了以后别人光知道你这个地址也调不动它。在 SullyOS 同一个配置弹窗里，「共享密钥」右边点 `随机` 生成，两边填成一样的。"
+      }
+    }
+  }
+}

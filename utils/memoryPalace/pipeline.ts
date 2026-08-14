@@ -149,7 +149,7 @@ async function loadMemoriesByDateRanges(
  *
  * 返回 null：memories 为空（没有新记忆，不需要归档动作）。
  */
-function buildAutoArchiveFragments(
+export function buildAutoArchiveFragments(
     memories: { id: string; content: string; createdAt: number }[],
     hideBeforeMessageId: number,
 ): NonNullable<PipelineResult['autoArchive']> | null {

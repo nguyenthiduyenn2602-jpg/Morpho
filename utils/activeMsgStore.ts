@@ -1,6 +1,7 @@
 import {
   ActiveMsg2GlobalConfig,
   ActiveMsg2InboxMessage,
+  Amsg2ExpiredNoticeRecord,
   InstantPushOutboundSession,
   InstantPushPendingToolCall,
   InstantPushReasoningBufferEntry,
@@ -18,15 +19,24 @@ const STORE_PENDING_TOOL_CALLS = 'pending_tool_calls';
 const STORE_REASONING_BUFFER = 'reasoning_buffer';
 const GLOBAL_CONFIG_KEY = 'global-config';
 
+const EXPIRED_NOTICES_PREFIX = 'amsg2_expired_notices_';
+const EXPIRED_NOTICES_MAX = 10;
+const EXPIRED_NOTICES_TTL_MS = 48 * 3600_000;
+
 type KvRecord<T = unknown> = {
   id: string;
   value: T;
 };
 
+// Keep the shared web/PWA build unchanged. The private Capacitor build may
+// provide its own Worker URL so the native shell works without manual setup.
+const capacitorDefaultWorkerUrl = import.meta.env.VITE_AMSG_NATIVE_PUSH === 'true'
+  ? String(import.meta.env.VITE_AMSG_DEFAULT_WORKER_URL || '').trim()
+  : '';
+
 const defaultGlobalConfig: ActiveMsg2GlobalConfig = {
   userId: '',
-  driver: 'pg',
-  databaseUrl: '',
+  workerUrl: capacitorDefaultWorkerUrl,
 };
 
 // 单例连接缓存。同 utils/db.ts 的根因: 原本每个 op 都新开一条 ActiveMsg 连接且从不
@@ -179,7 +189,13 @@ const generateUuidV4 = () => {
 export const ActiveMsgStore = {
   async getGlobalConfig(): Promise<ActiveMsg2GlobalConfig> {
     const stored = await getKv<ActiveMsg2GlobalConfig>(GLOBAL_CONFIG_KEY);
-    return { ...defaultGlobalConfig, ...(stored || {}) };
+    const config = { ...defaultGlobalConfig, ...(stored || {}) };
+    // Older App installs may already have persisted an empty URL. Fill only
+    // that empty value in the private build; an explicit non-empty URL wins.
+    if (!config.workerUrl?.trim() && capacitorDefaultWorkerUrl) {
+      config.workerUrl = capacitorDefaultWorkerUrl;
+    }
+    return config;
   },
 
   async saveGlobalConfig(updates: Partial<ActiveMsg2GlobalConfig>): Promise<ActiveMsg2GlobalConfig> {
@@ -453,7 +469,81 @@ export const ActiveMsgStore = {
       tx.onerror = () => reject(tx.error);
     });
   },
+
+  // ─── 防穿帮闸·作废回执台账 ───
+
+  async getExpiredNotices(charId: string): Promise<Amsg2ExpiredNoticeRecord[]> {
+    const list = await getKv<Amsg2ExpiredNoticeRecord[]>(`${EXPIRED_NOTICES_PREFIX}${charId}`);
+    return Array.isArray(list) ? list : [];
+  },
+
+  /** 合并新候选（按 id 去重），顺手清 48h 前的老记录，封顶 10 条防无界增长。 */
+  async upsertExpiredNotices(charId: string, records: Amsg2ExpiredNoticeRecord[]): Promise<Amsg2ExpiredNoticeRecord[]> {
+    const byId = new Map((await this.getExpiredNotices(charId)).map((r) => [r.id, r]));
+    for (const record of records) {
+      if (!byId.has(record.id)) byId.set(record.id, record);
+    }
+    const cutoff = Date.now() - EXPIRED_NOTICES_TTL_MS;
+    const alive = [...byId.values()]
+      .filter((r) => r.createdAt >= cutoff)
+      .sort((a, b) => b.occurrenceMs - a.occurrenceMs);
+    // 超限时先淘汰已告知的（Codex #11）——「作废 ≠ 消失」是设计底线，未告知回执
+    // 不允许被静默截断；真溢出（病态场景）保最新未告知并 warn 留痕。
+    let next = alive;
+    if (alive.length > EXPIRED_NOTICES_MAX) {
+      const unnotified = alive.filter((r) => !r.notifiedAt);
+      const notified = alive.filter((r) => r.notifiedAt);
+      next = [...unnotified, ...notified].slice(0, EXPIRED_NOTICES_MAX);
+      if (unnotified.length > EXPIRED_NOTICES_MAX) {
+        console.warn('[ActiveMsgStore] 未告知作废回执超上限，最旧的被截断', { charId, dropped: unnotified.length - EXPIRED_NOTICES_MAX });
+      }
+    }
+    await setKv(`${EXPIRED_NOTICES_PREFIX}${charId}`, next);
+    return next;
+  },
+
+  async markExpiredNoticesNotified(charId: string, ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    const next = (await this.getExpiredNotices(charId)).map((r) =>
+      idSet.has(r.id) ? { ...r, notifiedAt: r.notifiedAt ?? Date.now() } : r);
+    await setKv(`${EXPIRED_NOTICES_PREFIX}${charId}`, next);
+  },
 };
+
+/**
+ * 备份用：把主动消息 2.0 的全局配置整份取出来（Worker 地址、密钥、即时对话开关等）。
+ *
+ * 这份配置存在自己的 `ActiveMsg` 库里，不在主库那份 store 清单内，所以必须单独取一次
+ * 挂进备份包。没配过 Worker 就返回 undefined，让备份里干脆不出现这个键。
+ *
+ * 整份带走而不是挑字段：这里将来加了新配置，备份会自动跟上，不用再想起来同步一次。
+ */
+export async function exportAmsg2GlobalConfig(): Promise<ActiveMsg2GlobalConfig | undefined> {
+  try {
+    const config = await ActiveMsgStore.getGlobalConfig();
+    return config.workerUrl?.trim() ? config : undefined;
+  } catch (e) {
+    console.warn('[amsg2] 读取全局配置失败，备份将不含这一项', e);
+    return undefined;
+  }
+}
+
+/**
+ * 备份用：把上面那份配置写回去。
+ *
+ * `instantChatSupported` 不还原——它记的是「上次探到那台 Worker 跑不跑得动即时对话」，
+ * 是一次探测的结果而不是用户的选择。备份里那个值可能已经过时（Worker 后来更新过 / 退回过），
+ * 照抄回来要么白挡一次、要么在跑不动的 Worker 上放行。留空表示「还没探过」，
+ * 握手时会补探一次，之后就有准数了。
+ */
+export async function importAmsg2GlobalConfig(
+  config: ActiveMsg2GlobalConfig | null | undefined,
+): Promise<void> {
+  if (!config || typeof config !== 'object') return;
+  const { instantChatSupported: _dropped, ...restorable } = config;
+  await ActiveMsgStore.saveGlobalConfig({ ...restorable, instantChatSupported: undefined });
+}
 
 export const maskActiveMsgUserId = (userId: string) => {
   if (!userId) return '未生成';

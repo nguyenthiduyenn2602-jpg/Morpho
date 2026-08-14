@@ -485,13 +485,16 @@ export async function probeInstantWorkerCapabilities(
  *
  * 抛出原始错误让调用方决定怎么显示 (toast / inline status / 不显示)。
  */
-export async function copyInstantWorkerBundleToClipboard(): Promise<void> {
+export async function copyWorkerBundleToClipboard(bundleName: string): Promise<void> {
   const base = import.meta.env.BASE_URL || '/';
-  const res = await fetch(`${base}instant-worker.bundle.js`);
+  const res = await fetch(`${base}${bundleName}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
   await navigator.clipboard.writeText(text);
 }
+
+export const copyInstantWorkerBundleToClipboard = () =>
+  copyWorkerBundleToClipboard('instant-worker.bundle.js');
 
 /**
  * 生成 Deno Deploy Playground 用的 loader 片段（自动追新部署方式）。

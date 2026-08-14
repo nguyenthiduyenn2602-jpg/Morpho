@@ -35,11 +35,20 @@ const STALE_HOSTS = [
 
 const normalize = (url: string): string => url.trim().replace(/\/+$/, '');
 
+// Cloudflare AMSG Worker 没有 localStorage；后台工具调用通过这里注入用户自己的代理。
+let runtimeOverrideUrl: string | null = null;
+
+export const setProxyWorkerUrlOverride = (url: string | null): void => {
+  const trimmed = normalize(url || '');
+  runtimeOverrideUrl = /^https?:\/\//i.test(trimmed) ? trimmed : null;
+};
+
 /**
  * 读取当前生效的主代理 worker 地址（已去尾斜杠）。懒读 localStorage，
  * 用户在设置里改完、新发起的请求立刻生效，无需刷新页面。
  */
 export const getProxyWorkerUrl = (): string => {
+  if (runtimeOverrideUrl) return runtimeOverrideUrl;
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return DEFAULT_PROXY_WORKER;

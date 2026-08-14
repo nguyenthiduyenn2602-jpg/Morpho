@@ -12,7 +12,7 @@
  * 等价。新增 caller（runProactive）只是补齐了过去缺的字段。
  */
 
-import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig } from '../types';
+import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig, VisionApiConfig } from '../types';
 import { ChatPrompts } from './chatPrompts';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { buildHtmlPrompt } from './htmlPrompt';
@@ -28,6 +28,10 @@ import { isPromptBuildSkipped, isSystemMessageMergeEnabled } from './devDebug';
 import { mergeSystemMessages } from './systemMessageMerge';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
+import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
+import { materializeVisionDescriptions } from './visionApi';
+
+export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
 export interface UserListeningContext {
     songName: string;
@@ -77,6 +81,8 @@ export interface BuildChatPayloadInput {
     thinkingChain?: { enabled: boolean; customPrompt?: string };
     /** 仅调用方明确允许时注入的额外工具说明（例如本地私聊生图）。 */
     extraSystemPrompt?: string;
+    /** 可选识图 API：开启后先把图片持久化转写为 [图片：描述]，主模型只接收文字。 */
+    visionApiConfig?: VisionApiConfig;
     mcdMiniSnap?: McdMiniAppSnapshot;
     luckinMiniSnap?: LuckinMiniAppSnapshot;
     /** 瑞幸聊天点单模式 (点"瑞一杯"激活, 角色直接调真实工具) */
@@ -88,6 +94,12 @@ export interface BuildChatPayloadInput {
      * 只是把上下文撑爆的噪声（与群聊注入"不要把媒体当文本塞"同一约定）。
      */
     stripImages?: boolean;
+    /**
+     * 这一轮交给 amsg worker 在 fire 时刻生成（即时对话）。时钟 / 真实世界块 /
+     * MCP 说明由 worker 那边独家供给，前端这份就不再烤进去，免得一份 prompt 里
+     * 出现两个钟、两份热搜、两套工具名。
+     */
+    timelyByWorker?: boolean;
 }
 
 export interface BuildChatPayloadResult {
@@ -166,44 +178,6 @@ export function deriveRecentTrackSwitchForChar(
 }
 
 /**
- * 剥离历史里旧的双语标签: `%%BILINGUAL%%` 形态整条在标记处截断 (只留原文侧),
- * `<翻译>` XML 形态只留 <原文>。导出仅为单测 — 引用头绝不能混入 %%BILINGUAL%%
- * (见 chatPrompts.buildMessageHistory 的引用摘要清洗), 否则截断会吃掉用户的实际回复。
- */
-export function cleanApiMessages(apiMessages: Array<{ role: string; content: any }>): Array<{ role: string; content: any }> {
-    return apiMessages.map((msg: any) => {
-        if (typeof msg.content !== 'string') return msg;
-        let c: string = msg.content;
-        if (c.toLowerCase().includes('%%bilingual%%')) {
-            const idx = c.toLowerCase().indexOf('%%bilingual%%');
-            c = c.substring(0, idx).trim();
-        }
-        if (c.includes('<翻译>')) {
-            c = c.replace(/<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g, '$1').trim();
-        }
-        return { ...msg, content: c };
-    });
-}
-
-/**
- * 把 buildMessageHistory 产出的多模态图片消息压平成纯文本：保留 text 部分
- * （里面已带 `[User sent an image]` 占位与时间戳），丢弃 image_url 部分。
- * 与 buildMessageHistory 的"图片数据已丢失"分支产出完全同形。
- * 导出仅为单测。
- */
-export function flattenImageContentParts(apiMessages: Array<{ role: string; content: any }>): Array<{ role: string; content: any }> {
-    return apiMessages.map((msg) => {
-        if (!Array.isArray(msg.content)) return msg;
-        const text = msg.content
-            .filter((part: any) => part?.type === 'text')
-            .map((part: any) => part.text || '')
-            .join('\n')
-            .trim();
-        return { ...msg, content: text || '[图片]' };
-    });
-}
-
-/**
  * 构造完整 chat 请求载荷。三段式结构（稳定前缀 / 历史 / 易变尾段）：
  *
  *   1. injectMemoryPalace（向量召回挂到 char.memoryPalaceInjection）
@@ -238,10 +212,36 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         input.categories,
         char.id,
     );
-    const recentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    const rawRecentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    const useVisionDescriptions = input.visionApiConfig?.enabled === true;
+    let historyMsgsForPrompt = historyMsgs;
+    let recentMsgsHint = rawRecentMsgsHint;
+
+    if (useVisionDescriptions) {
+        // historyMsgs 通常来自 DB、recentMsgsHint 通常来自 React state；按 id 合并后只识别一次，
+        // 再把写回 metadata 的新快照映射回两套窗口，避免同一轮的 system/history 各跑一次识图。
+        const uniqueMessages = new Map<number, Message>();
+        for (const message of rawRecentMsgsHint) uniqueMessages.set(message.id, message);
+        for (const message of historyMsgs) uniqueMessages.set(message.id, message);
+        const prepared = await materializeVisionDescriptions(
+            [...uniqueMessages.values()],
+            input.visionApiConfig,
+        );
+        const preparedById = new Map(prepared.map(message => [message.id, message]));
+        historyMsgsForPrompt = historyMsgs.map(message => preparedById.get(message.id) || message);
+        recentMsgsHint = rawRecentMsgsHint.map(message => preparedById.get(message.id) || message);
+    }
 
     if (isPromptBuildSkipped()) {
-        const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
+        const { apiMessages } = ChatPrompts.buildMessageHistory(
+            historyMsgsForPrompt,
+            contextLimit,
+            char,
+            userProfile,
+            emojis,
+            undefined,
+            { useVisionDescriptions },
+        );
         const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
         console.warn('[DevDebug] Prompt Build skipped: sending chat history without system prompt injection.');
         return {
@@ -291,6 +291,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
+        input.timelyByWorker ? { timelyByWorker: true } : undefined,
     );
     let systemPrompt = parts.stable;
     let volatileTail = parts.volatileState;
@@ -347,7 +348,15 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 7. 历史消息构造 ───────────────────────────────────
-    const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
+    const { apiMessages } = ChatPrompts.buildMessageHistory(
+        historyMsgsForPrompt,
+        contextLimit,
+        char,
+        userProfile,
+        emojis,
+        undefined,
+        { useVisionDescriptions },
+    );
 
     // ── 8. 剥离历史里旧的双语标签（stripImages 时先压平 image_url → 纯文本占位） ──
     const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
@@ -391,8 +400,12 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     // ── 9d. 通用 MCP 工具模式 (用户自配的远程 MCP 服务器, 见 docs/mcp-client.md) ──
     // 工具清单来自持久化的发现结果，变化很慢 → 稳定段。
+    //
+    // 即时对话路径：MCP 说明由 worker 的 buildMcpFireBlock 独家供给（与凭据同源同拍），
+    // 前端这份不注入——两份工具说明两套工具名，模型会两种都写一遍。
+    // mcpChatActive 的取值不受影响：它还要告诉上层「这一轮算不算 MCP 模式」。
     const mcpChatActive = isMcpChatAvailable(char.id);
-    if (mcpChatActive) {
+    if (mcpChatActive && !input.timelyByWorker) {
         const block = buildMcpSystemBlock(userProfile?.name || '用户', char.id);
         if (block) {
             systemPrompt += block;
@@ -420,7 +433,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`,
         });
     }
-    if (mcpChatActive) {
+    if (mcpChatActive && !input.timelyByWorker) {
         fullMessages.push({ role: 'system', content: MCP_TAIL_REMINDER });
     }
 

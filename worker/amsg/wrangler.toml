@@ -1,0 +1,67 @@
+name = "sullyos-amsg"
+# 已经 esbuild 打好的整包（pnpm build:workers 产出），wrangler 直接发它，
+# 不需要在部署侧再装依赖、再构建一次。
+main = "worker.bundle.js"
+compatibility_date = "2026-01-01"
+# amsg-server 2.6.0-next.2 起全 Web Crypto，不需要 nodejs_compat。
+
+# 角色到点调用户自配的 MCP 服务器时要走公网。缺这个 flag，发往同一个 Cloudflare
+# 账号/区域下的地址（自己部署的 mcp-proxy 就是这种）会被当成内网调用直接拒掉，
+# worker 侧看到的是 404 + error code 1042，角色那边表现为「工具连不上」。
+# 与 observability 同理：wrangler deploy 用本地这份配置整体覆盖面板设置，
+# 不写在这里的话，面板上手动加过的这个 flag 会被下一次 deploy 冲掉。
+compatibility_flags = ["global_fetch_strictly_public"]
+
+# 部署时保留面板上手填的环境变量。
+#
+# wrangler 默认「先删光所有 vars，再按配置文件里的 [vars] 重设」，而这份配置根本没有
+# [vars] 段——于是每次部署都会把面板上手加的明文变量清空。加密的 Secret 不受影响，
+# 但用户在面板上很容易把 AMSG_MASTER_KEY 存成 Text：那样一来它撑到下一次部署就没了，
+# worker 全线 503，而重新生成的又是另一串——之前加密存进 D1 的任务就再也解不开。
+keep_vars = true
+
+# wrangler deploy 会用本地这份配置整体覆盖 Cloudflare 面板上的设置——
+# 不显式写这段，面板里手动开的 Workers Logs（实时日志）会被一起关掉。
+# amsg2 排障（[amsg:expire-skip] / [amsg:agentic] / [amsg:fire-state-missing]
+# 这些日志）全靠它，所以这里显式声明成开。
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+
+# 主动消息 2.0 的单用户后端：定时任务存 D1，到点由 Cron Trigger 推送。
+#
+# 部署：
+#   1) wrangler d1 create sullyos-amsg      # 拿到 database_id
+#   2) 把 database_id 填到下面
+#   3) 设密钥（见文末），然后 wrangler deploy
+#   （表结构不用手动建：前端点「连接」时 POST /init-tenant 会幂等创建）
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sullyos-amsg"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+# 即时对话的起跳器。用户按下发送后，这条聊天在它的 alarm 里生成 —— 那是一次独立
+# invocation，有 15 分钟墙钟，跟已经回了 202 的那个请求彻底脱钩。
+# 不用手动建资源：namespace 会随 Worker 上传一起创建。
+[[durable_objects.bindings]]
+name = "INSTANT_TICK"
+class_name = "InstantTickDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InstantTickDO"]
+
+# 每分钟查一次到点任务（UTC）。这是主动消息唯一的投递触发方式——
+# 没有 send-notifications 这类 HTTP 端点，关掉 cron 等于整个功能停摆。
+[triggers]
+crons = ["* * * * *"]
+
+# Secrets（用 `wrangler secret put <名字>` 或面板设置，别写进本文件）：
+#   AMSG_MASTER_KEY     64 位 hex；SullyOS 设置页能一键生成
+#   VAPID_PUBLIC_KEY    必须和 SullyOS「推送凭据 (VAPID)」面板里的是同一对，
+#   VAPID_PRIVATE_KEY   否则 worker 用别的密钥对签推送会 403
+#   VAPID_EMAIL         可选；缺则回退 mailto: 默认值
+#   AMSG_SERVER_TOKEN   可选；配了则所有端点强制校验 X-Client-Token

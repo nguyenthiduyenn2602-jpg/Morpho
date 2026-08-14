@@ -10,7 +10,7 @@ import { ContextBuilder } from '../utils/context';
 import { ChatParser } from '../utils/chatParser';
 // 思考链 / HTML / MCD / memoryPalace 注入已下沉到 chatRequestPayload；这里不再直接调用
 import { useMusic, loadMusicHooks } from '../context/MusicContext';
-import { processNewMessages, mergePalaceFragmentsIntoMemories, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
+import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArchive';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
@@ -23,7 +23,7 @@ import { MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBr
 // 瑞幸: 与麦当劳同构, 只读 LuckinMiniApp 快照注入 + propose_cart_items UI 钩子工具
 import { LUCKIN_PROPOSE_TOOL, autoFixProposalCodesByName as autoFixLuckinProposalCodesByName, fetchOpenAIToolsForLuckin, inferCardKind as inferLuckinCardKind } from '../utils/luckinToolBridge';
 import { callLuckinTool } from '../utils/luckinMcpClient';
-import { callMcpTool, getMcpUseNativeTools } from '../utils/mcpClient';
+import { callMcpTool, getMcpUseNativeTools, hasWorkerUnreachableMcpServer } from '../utils/mcpClient';
 import { buildMcpOpenAITools, buildMcpRejectedToolsFallbackBody, buildMcpTextFallbackBody, extractTextFakedMcpCalls, formatMcpToolResult, sanitizeMcpLeadInText, shouldRetryMcpWithoutTools, stripTextFakedMcpCalls, type FakedMcpCall } from '../utils/mcpToolBridge';
 import { buildToolResultMessage, normalizeToolCallsForCompat } from '../utils/toolCallCompat';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
@@ -40,6 +40,19 @@ import {
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
+import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
+import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
+import { buildAmsg2NoticesText, buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
+import { resolveCharTimeZone } from '../utils/timezone';
+import { announceInstantChatRoute, getInstantChatPending, resolveInstantChatReadiness, sendInstantChatTurn, stageInstantChatExpiredNotices } from '../utils/amsgInstantChat';
+// worker 模块的常量叶子（零运行时依赖，前端引它不带进 worker 环境）：
+// 云端 fire 的总时长上限，安全网超时从它推导，worker 调预算时前端自动跟上。
+import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
+import { appendInstantTraceEntry } from '../utils/instantTraceLog';
+import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
+import { shouldSendThinkingParams } from '../utils/thinkingGate';
+import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
 import { announceChatGen, CHAT_GEN_EVENTS } from '../utils/chatGenEvents';
 import { shouldRequestAmbient, buildAmbientEvalSection } from '../utils/roomAmbient';
@@ -57,6 +70,28 @@ import {
     persistGeneratedCharacterImage,
 } from '../utils/imageGeneration';
 import type { ImageGenerationDirective } from '../utils/imageGeneration';
+
+// ─── 云端情绪评估的安全网定时器（模块级，按角色）───
+// 为什么不放 hook 里：结论（emotionDone）是全局事件，用户切了角色、离开聊天页之后
+// 照样会到，而 hook 里的监听是跟着当前挂载角色走的——单个 ref 存定时器的话，切走再回来
+// 结论到了也没人清，安全网到点就弹「worker 可能是旧版，请重新部署」的假告警；给 B 布防
+// 还会静默吞掉 A 的真告警。按 charId 记、模块级监听清，两个都治。
+const cloudEmotionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const clearCloudEmotionTimer = (charId: unknown): void => {
+    if (typeof charId !== 'string') return;
+    const timer = cloudEmotionTimers.get(charId);
+    if (timer != null) {
+        clearTimeout(timer);
+        cloudEmotionTimers.delete(charId);
+    }
+};
+if (typeof window !== 'undefined') {
+    // emotionDone 是「这一轮评估有结论了」（成败都发）：flush 落结果、收尾判失败两条路
+    // 都会广播。不论哪个角色、Chat 挂没挂载，结论一到就撤掉对应的安全网。
+    window.addEventListener(CHAT_GEN_EVENTS.emotionDone, (e) => {
+        clearCloudEmotionTimer((e as CustomEvent).detail?.charId);
+    });
+}
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -497,8 +532,10 @@ export const useChatAI = ({
     // 下一轮 system prompt 会把它作为角色的内心状态注入
     const [evolvedNarrative, setEvolvedNarrative] = useState<string>('');
 
-    // instant 情绪评估的 "情绪更新中" 徽章安全超时句柄 (worker 推回 emotion_update 前别一直转).
-    const instantEmotionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 云端情绪评估安全网到点时判断「用户现在看的还是不是布防那个角色」用（防止过期
+    // 定时器把当前角色的徽章错熄）。定时器本体在模块级 cloudEmotionTimers（按角色记）。
+    const currentCharIdRef = useRef<string | null>(null);
+    currentCharIdRef.current = char?.id ?? null;
 
     // 切换角色时重置
     useEffect(() => {
@@ -589,6 +626,7 @@ export const useChatAI = ({
                     translationConfig: deps.translationConfig,
                     htmlMode: { enabled: !!(evalChar as any).htmlModeEnabled, customPrompt: (evalChar as any).htmlModeCustomPrompt },
                     thinkingChain: { enabled: !!(evalChar as any).showThinkingChain, customPrompt: (evalChar as any).thinkingChainCustomPrompt },
+                    visionApiConfig: deps.apiConfig.visionApi,
                     mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                     luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
                 });
@@ -633,17 +671,14 @@ export const useChatAI = ({
         };
         window.addEventListener('emotion-innerstate-updated', innerStateHandler);
 
-        // worker 的 emotion_update 落库后 activeMsgRuntime fire 'instant-emotion-done' → 熄灭 "情绪更新中".
+        // 上云的评估有结论了（worker 推回后由 activeMsgRuntime / 收尾判定派发）→ 熄灭 "情绪更新中".
         const emotionDoneHandler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
             if (detail?.charId !== charIdAtMount) return;
+            // 安全网定时器由模块级监听按 charId 清（切走了也清得到），这里只管当前页的徽章。
             setEmotionStatus('');
-            if (instantEmotionTimerRef.current) {
-                clearTimeout(instantEmotionTimerRef.current);
-                instantEmotionTimerRef.current = null;
-            }
         };
-        window.addEventListener('instant-emotion-done', emotionDoneHandler);
+        window.addEventListener(CHAT_GEN_EVENTS.emotionDone, emotionDoneHandler);
 
         // 2. 离线路径兜底: mount 时检查这个 char 有没有 pending (老版本 / 非 worker-eval 路径残留的 push)
         void ActiveMsgStore.getPendingEmotionEval(charIdAtMount).then((pending) => {
@@ -653,7 +688,7 @@ export const useChatAI = ({
         return () => {
             window.removeEventListener('post-push-emotion-eval', handler);
             window.removeEventListener('emotion-innerstate-updated', innerStateHandler);
-            window.removeEventListener('instant-emotion-done', emotionDoneHandler);
+            window.removeEventListener(CHAT_GEN_EVENTS.emotionDone, emotionDoneHandler);
         };
     }, [char?.id]);
 
@@ -717,6 +752,36 @@ export const useChatAI = ({
         // Keep the Service Worker alive while we make potentially long AI calls
         await KeepAlive.start();
 
+        // 本轮的 amsg2 工具会话：角色一轮里可能连着排/取消多个任务，任务清单要在这一轮内
+        // 累加，所以由 session 兜住最新 config，别从 char 快照上读写（char 是生成开始的
+        // 那份，updateCharacter 不回写它）。finally 里打脏也要读它，所以声明在 try 外面。
+        const amsg2Session = createAmsg2ToolSession({
+            char, userProfile, groups, realtimeConfig, apiConfig, updateCharacter,
+        });
+        // 本轮里角色自己新排出来的任务。排程现状块每轮现算时靠它把这些点名标出来——不标
+        // 的话角色分不清清单上哪条是自己刚排的，回头又排一条一模一样的。
+        const amsg2CreatedThisTurn = new Set<string>();
+        // 这一轮走的是即时对话、并且云端已经受理：收尾时不要再打脏重传一次 fire_pack。
+        // POST 上去的那份就是权威的（还多带了 chat 段），再传一遍是同样内容白走一趟网络。
+        let instantChatAccepted = false;
+        // amsg2 工具在三个工具循环（麦当劳 / 瑞幸 / 通用）里都可能出现，执行方式完全一样，
+        // 只有各自的 loopMessages 不同。
+        const runAmsg2ToolCall = async (tc: any, fname: string, args: any, loopMessages: any[]) => {
+            setSearchStatus(`正在执行：${fname}...`);
+            const taskUuidsBefore = new Set(
+                (amsg2Session.getConfig()?.tasks ?? []).map((t) => t.taskUuid),
+            );
+            const result = await executeAmsg2Tool(fname, args, amsg2Session);
+            // 新增了哪几条不看工具回话（那是给模型读的散文），直接比对清单前后差异——
+            // schedule 与 renew 都走这里，补发/替换出来的新任务一并算进去。
+            for (const task of amsg2Session.getConfig()?.tasks ?? []) {
+                if (!taskUuidsBefore.has(task.taskUuid)) amsg2CreatedThisTurn.add(task.taskUuid);
+            }
+            // 带上 name：Gemini 兼容层要求工具结果的 name 非空，缺了会被判 INVALID_ARGUMENT。
+            loopMessages.push(buildToolResultMessage(tc, result) as any);
+            setSearchStatus('');
+        };
+
         try {
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
@@ -762,8 +827,118 @@ export const useChatAI = ({
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
             const luckinMiniSnap = luckinMiniAppRef?.current;
             const luckinMiniOpen = !!luckinMiniSnap?.open;
-            // 生图只存在于本地主回复路径：Instant Push ready 时连决策指令都不送进 worker。
-            const localImageGenerationEnabled = !!charForGen.imageGeneration?.enabled && !isInstantConfigReady();
+
+            // ─── 即时对话的路由在构建 payload 之前就定下来 ───
+            // 走云端的那份 prompt 不烤前端时效段（时钟/节日/天气/热搜/MCP 说明由 worker
+            // fire 时独家供给），本地那份照旧全量。判定材料和下面的 payload.flags 同源：
+            // luckinChatActive / mcdActive / luckinActive 就是由这三个值算出来的
+            // （skipPromptBuild 那个 dev 开关下 flags 会整片置 false，那时只有这边的 ref 是准的）。
+            // IP 还开着（脏配置）时让 IP 先走、按全量构建——别把剥过时效段的 prompt 交给 IP。
+            //
+            // Instant Push 配没配着，一回合只读这一次，下面所有用到的地方都吃这个值。
+            // 从这里到真正分流之间隔着好几个 await（构建 payload、取 amsg2 任务现状…），
+            // 期间用户在设置页存一次盘就能把它翻面；各读各的话会出现「按上云剥掉了时效段
+            // 的 prompt，最后却交给了 IP 或落回本地」——两个钟的问题原样回来。
+            const instantPushConfigured = isInstantConfigReady();
+            const luckinChatOn = !!luckinChatRef?.current?.active;
+            // 本机 / 内网的 MCP 服务器（docs/mcp-client.md 教用户填的 http://localhost:18061
+            // 就是这一类）：上云那一轮前端不注入 MCP 说明块，而 worker 从 CF 那头连不上这类
+            // 地址、上云清单里压根没有它——两边都不说，角色这一轮彻底不知道自己有工具。
+            // 判据就一句话：这一轮上云会让角色掉能力，那就别上云。留在本地跑，工具照常用。
+            // （地址够得着的服务器不受影响，照常上云，worker 自己跑后台 MCP。）
+            const mcpWorkerUnreachable = hasWorkerUnreachableMcpServer(char.id);
+            const instantChatVeto: string | null = luckinChatOn ? 'luckin-chat'
+                : mcdMiniOpen ? 'mcd'
+                    : luckinMiniOpen ? 'luckin'
+                        : mcpWorkerUnreachable ? 'mcp-worker-unreachable' : null;
+            // 带上 char：角色单独关了即时对话（reason char-disabled）时 ready 直接为
+            // false，和「全局没开」同一待遇——下面那条 veto trace 的条件够不到它，
+            // 静默走本地。那是用户的主动选择，每条消息刷一遍 warn 就成骚扰了。
+            const instantChatReadiness = await resolveInstantChatReadiness(char);
+            const instantChatOn = instantChatReadiness.ready;
+            const instantChatRoute = instantChatOn && !instantChatVeto && !instantPushConfigured;
+            // 生图只在前端本地生成时启用；两条云端路线都不能代替用户从本机调用图片 API。
+            const localImageGenerationEnabled = !!charForGen.imageGeneration?.enabled
+                && !instantPushConfigured
+                && !instantChatRoute;
+            // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，三种原因去向不同：
+            //   · 点单流程否决：瑞幸/麦当劳是客户端交互式循环（选城市、确认单），云端接不了
+            //     手，这一轮留在本地跑是对的；
+            //   · MCP 地址 worker 够不着：同上，留在本地才有工具（见上面那段）；
+            //   · IP 配置也还在（脏配置）：这一轮交给下面的 Instant Push 分支，它也不接的话
+            //     （比如配了 MCP，在它的排除名单里）就一路落回本地。
+            // 几个原因同时成立时报最前面那个——越靠前越具体，也更可能是用户真正想问的。
+            // 不留痕的话，用户看到的是「开关亮着、消息照常出来」，查无可查——静默分流那个坑
+            // 就是这么来的。这里只报不拦：拦不拦已经由 instantChatRoute 说了算。
+            if (instantChatOn && !instantChatRoute) {
+                const skipReason = instantChatVeto ?? 'instant-push-configured';
+                console.warn(
+                    skipReason === 'mcp-worker-unreachable'
+                        ? '[AmsgInstantChat] 这一轮没上云（有 MCP 服务器填的是本机/内网地址，worker 够不着），本地生成，工具照常可用'
+                        : instantChatVeto
+                            ? `[AmsgInstantChat] 这一轮没上云（${instantChatVeto} 点单流程需要客户端交互），本地生成`
+                            : '[AmsgInstantChat] 这一轮没走即时对话（Instant Push 配置仍在，脏配置）：交给 Instant Push，它也不接就落回本地',
+                );
+                appendInstantTraceEntry({
+                    ts: new Date().toISOString(),
+                    event: 'instant-chat-veto',
+                    charId: char.id,
+                    reason: skipReason,
+                });
+            } else if (instantChatReadiness.reason === 'worker-outdated' || instantChatReadiness.reason === 'worker-unreachable') {
+                // 用户把开关开着，是我们判定这一轮上不了云才让位给本地生成的
+                // （见 resolveInstantChatReadiness 的同名门）。上面那条 trace 的条件
+                // （instantChatOn）在这里天然为假，所以单独留一条：这一档比别的更需要
+                // 查得到——用户的主观意愿是「上云」，实际走的却是本地，不留痕就又是一次
+                // 静默分流。拦不拦不用这里管，readiness 已经说了 not ready，
+                // 下面照常走本地生成那条路。
+                //
+                // 两档分开记：worker-outdated 是「问到了、那台 Worker 确实跑不动」（该去更新），
+                // worker-unreachable 是「这一刻够不着云端」（多半是网络，会自己好）。
+                appendInstantTraceEntry({
+                    ts: new Date().toISOString(),
+                    event: instantChatReadiness.reason === 'worker-outdated'
+                        ? 'instant-chat-worker-outdated'
+                        : 'instant-chat-worker-unreachable',
+                    charId: char.id,
+                });
+            } else if (instantChatReadiness.reason === 'config-unreadable') {
+                // 配置根本没读出来（IndexedDB 被别的标签页 versionchange 卡住 / iOS 存储压力）。
+                // 这不是「用户没开」：开关很可能开着，只是这一刻问不到。上面那条 trace 的条件
+                // （instantChatOn）在这里天然为假，所以单独留一条，别让这种情形在观察窗里查无此事。
+                // 点单流程否决 / Instant Push 配置还在（脏配置）时例外：配置就算读出来了这一轮
+                // 也轮不到即时对话（去向由 veto / IP 分支决定），照原路走本就是对的，只留痕不拦。
+                const configUnreadableFailsTurn = !instantChatVeto && !instantPushConfigured;
+                appendInstantTraceEntry({
+                    ts: new Date().toISOString(),
+                    event: 'instant-chat-config-unreadable',
+                    charId: char.id,
+                    outcome: configUnreadableFailsTurn ? 'turn-failed' : 'other-route',
+                });
+                if (configUnreadableFailsTurn) {
+                    // 悄悄退回本地直连生成的话：用户按「发完就自由」的心智随手锁屏，本地 fetch
+                    // 被系统掐掉，回来时既没有回复也没有报错，设置页还写着「已开启」。所以和下面
+                    // sendInstantChatTurn 没发出去同一口径：明确落系统消息 + 弹错，这一轮不发起
+                    // 本地生成，用户稍后重发即可。**绝不静默退回本地生成**。收尾交给 finally
+                    // （熄 isTyping / 熄「发送准备中」灯 / 停 KeepAlive），和那条失败路径同一段。
+                    const reason = '即时对话暂时出了点问题：本地配置这一刻读不出来（可能是存储正忙）。这条没有发出去，稍等几秒重新发一次就好。';
+                    console.warn('[AmsgInstantChat] 全局配置读不出来，开没开都不知道：这一轮明确报错等重发，不悄悄退回本地生成');
+                    await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[${reason}]` });
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    if (showError) showError('即时对话发送失败', reason);
+                    else addToast(reason, 'error');
+                    return;
+                }
+                console.warn('[AmsgInstantChat] 全局配置读不出来（开没开都不知道），但这一轮本就不走即时对话，照原路继续');
+            }
+
+            // 这一轮到底走了哪条路，播给输入框上方那条小提示。**每轮都发**，包括走成了云端
+            // 那一轮（reason=null，提示自己收起来）——只在出问题时发的话，用户会一直盯着一条
+            // 早就过期的提示，猜不出来「现在到底恢复了没有」。
+            announceInstantChatRoute({
+                charId: char.id,
+                reason: instantChatRoute ? null : (instantChatReadiness.reason ?? null),
+            });
 
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,
@@ -803,11 +978,13 @@ export const useChatAI = ({
                 translationConfig,
                 htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
                 thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
+                visionApiConfig: apiConfig.visionApi,
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                 luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
-                luckinChat: luckinChatRef?.current?.active ? luckinChatRef.current : undefined,
+                luckinChat: luckinChatOn ? luckinChatRef?.current : undefined,
+                timelyByWorker: instantChatRoute,
                 extraSystemPrompt: localImageGenerationEnabled
-                    ? buildImageGenerationDecisionPrompt(charForGen, userProfile)
+                    ? buildImageGenerationDecisionPrompt(charForGen.imageGeneration)
                     : undefined,
             }));
             const systemPrompt = payload.systemPrompt;
@@ -836,11 +1013,14 @@ export const useChatAI = ({
             //    未单独配置情绪 API 时回退到主 apiConfig。
             //    ── 路径分叉 ──
             //    - 本地 fetch 模式: 客户端 fire-and-forget 跑 eval (前端活着).
-            //    - instant 模式: 不在客户端跑, 改把 eval prompt + 副 API 凭据塞进 instant 请求 (emotionEval 字段),
-            //      worker 跑完主回复后跑 eval 并推 emotion_update 回来, 客户端 flush 时落 buff —— 这样前端被杀也算数,
-            //      且不会跟客户端 eval 双跑双扣费. 见下方 instant 分支 + worker/instant-push + activeMsgRuntime.
+            //    - 上云模式 (Instant Push / 即时对话): 不在客户端跑, 改把 eval prompt + 副 API 凭据
+            //      一起交给 worker, worker 跑完把结果推回来, 客户端 flush 时落 buff —— 这样前端被杀
+            //      也算数, 且不会跟客户端 eval 双跑双扣费. 见下方两个上云分支 + activeMsgRuntime.
             const emotionEvalEnabled = !!(!promptBuildSkipped && !isEmotionEvalSkipped() && isScheduleFeatureOn(char) && char.emotionConfig?.enabled);
-            const instantOn = isInstantConfigReady();
+            // 这一轮的生成在云端跑（两条路互斥，见 instantChatRoute 的算法）。
+            // instantPushConfigured 是路由判定处冻结的同一回合终值——这里绝不自己再读
+            // 一次，否则可能「按上云模式把评估打包走了，实际却走本地」，情绪底色悄悄停更。
+            const cloudGenRoute = instantPushConfigured || instantChatRoute;
             // 评估跟随全局流式开关（专用情绪 API 自带 stream 字段时以它为准）
             const evalStream: boolean = !!((effectiveApi as any).stream ?? apiConfig.stream ?? false);
             const emotionApi = emotionEvalEnabled
@@ -851,8 +1031,8 @@ export const useChatAI = ({
             // 本地路径的情绪评估：主 fetch 发出后立即发射（见下方调用点）。
             // 历史备注：曾为串行中转做过 1.5s 错峰（评估抢跑会把主回复压后一个评估时长），
             // 用户侧已排查确认当前渠道无该并发问题，2026-07 应用户要求取消延迟。
-            // instant 模式不受影响：worker 端本来就是主回复跑完才跑评估（天然串行）。
-            const fireLocalEmotionEval = (emotionEvalEnabled && !instantOn && emotionApi) ? () => {
+            // 上云模式不受影响：worker 那边自己安排评估的时机。
+            const fireLocalEmotionEval = (emotionEvalEnabled && !cloudGenRoute && emotionApi) ? () => {
                 setEmotionStatus('evaluating');
                 evaluateEmotionBackground(charForGen, userProfile, systemPrompt, cleanedApiMessages, emotionApi)
                     .then((innerState) => {
@@ -862,7 +1042,10 @@ export const useChatAI = ({
                         setEmotionStatus('');
                     });
             } : null;
-            const instantEmotionEval = (emotionEvalEnabled && instantOn && emotionApi)
+            // 交给云端跑的那份评估配置。两条上云路径共用同一个形状（提示词模板 + 副 API 凭据），
+            // 只是搭在各自请求体的不同位置上：Instant Push 放顶层 emotionEval 字段，
+            // 即时对话放任务 metadata.amsgEmotionEval（那份走加密信封）。
+            const cloudEmotionEval = (emotionEvalEnabled && cloudGenRoute && emotionApi)
                 ? {
                     // includeContext=false: 不嵌 system prompt + 对话历史 (worker 复用本次请求的 messages 作前文),
                     // 把 emotionEval 块压到最小, 让请求体留在 keepalive 64KB 上限内 (关前端也能跑完).
@@ -874,28 +1057,71 @@ export const useChatAI = ({
                 }
                 : undefined;
 
-            // instant 情绪评估在 worker 跑 (副 API), 客户端看不到 LLM 调用时机, 但仍要给用户一个
+            // 上云的情绪评估在 worker 跑 (副 API), 客户端看不到 LLM 调用时机, 但仍要给用户一个
             // "情绪更新中" 的可见信号 (header 徽章, 跟本地模式一致), 否则 "发送中" 消失后一片空白像死了.
-            // 从这里点亮, 到 worker 推回 emotion_update (activeMsgRuntime fire 'instant-emotion-done')
-            // 或安全超时 (worker 旧/失败/前端被杀) 时熄灭.
-            if (instantEmotionEval) {
+            //
+            // 正常的熄灭信号只有一个: worker 把结论推回来之后派发的 CHAT_GEN_EVENTS.emotionDone
+            // (Chat 页的徽章和全局横幅各自监听, 都不依赖本 hook 存活 —— 用户切走 Chat 也能正常熄灭).
+            // 剩下两种情况自己收场: 这一轮压根没发出去 —— 下面两个失败分支当场调
+            // extinguishCloudEmotionBadge; 结论永远没回来 (worker 被杀 / 推送丢了 / 用户部署的是旧版)
+            // —— 徽章的 setTimeout 和横幅的 TTL 同时到点, 两边用的是同一个数.
+            //
+            // 这个数按各自 worker 最长能跑多久给:
+            //   · Instant Push: 一个请求里跑完就回, 90s 足够;
+            //   · 即时对话: worker 那条 fire 的总时长上限是 INSTANT_TOTAL_TIMEOUT_MS（工具循环
+            //     也算在内），评估结果又是跟着主回复的最后一条推送回来的——直接从 worker 模块
+            //     import 那个数 + 一分钟推送在途余量，worker 侧调预算时这里自动跟上
+            //     （ChatBroadcast 的横幅 TTL 同样从它推导，见那边注释）。
+            const cloudEvalTimeoutMs = instantChatRoute ? INSTANT_TOTAL_TIMEOUT_MS + 60_000 : 90_000;
+            /**
+             * 熄灭「情绪更新中」的三件套：撤掉安全网、灭页内徽章、灭全局横幅。
+             *
+             * 这一轮没发出去时两个失败分支都要调它 —— 云端根本不会跑评估，那个正常的熄灭信号
+             * 永远不会来。少调一处的表现是：徽章亮着直到安全网到点，然后弹一句
+             * 「worker 可能是旧版」的提示，而真实原因是这条消息压根没发出去。
+             */
+            const extinguishCloudEmotionBadge = () => {
+                clearCloudEmotionTimer(char.id);
+                setEmotionStatus('');
+                announceChatGen(CHAT_GEN_EVENTS.emotionEnd, { charId: char.id, charName: char.name });
+            };
+            if (cloudEmotionEval) {
                 setEmotionStatus('evaluating');
-                // 全局横幅同步点灯; 熄灭信号是 worker 推回后 activeMsgRuntime 的
-                // 'instant-emotion-done' (ChatBroadcast 直接监听) + 横幅自身 TTL 兜底,
-                // 都不依赖本 hook 存活 —— 用户切走 Chat 也能正常熄灭。
-                announceChatGen(CHAT_GEN_EVENTS.emotionStart, { charId: char.id, charName: char.name });
-                if (instantEmotionTimerRef.current) clearTimeout(instantEmotionTimerRef.current);
-                instantEmotionTimerRef.current = setTimeout(() => {
-                    setEmotionStatus('');
-                    instantEmotionTimerRef.current = null;
-                    // 超时无回音最常见的原因是用户部署的 worker 版本过旧（不支持情绪评估、
-                    // 压根不会推 emotion_update），其次是 worker 被杀/推送丢失。过去这里
-                    // 静默熄灯, 用户只看到「情绪永远不更新」—— 给一条可操作的提示。
-                    announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
-                        charId: char.id, charName: char.name,
-                        reason: '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→Instant 消息设置 更新 worker 后重试',
-                    });
-                }, 90_000);  // 安全网: 正常情况下 worker 推回 emotion_update 会 fire 'instant-emotion-done' 提前熄灭; 只在 worker 旧版/被杀/推送丢失时兜底.
+                // 横幅这一条的存活上限跟徽章同一个数：不带的话横幅按自己那档默认值（本地评估的
+                // 量级）扫，即时对话会出现「横幅先没了、徽章还亮着」，看着像出了两次故障。
+                announceChatGen(CHAT_GEN_EVENTS.emotionStart, {
+                    charId: char.id, charName: char.name, ttlMs: cloudEvalTimeoutMs,
+                });
+                // 布防按 charId 记进模块级 map。到点先看这一轮死没死透：即时对话的待收
+                // 记录还在 = 云端还没给结论（worker 的 2/4/6 分钟重试梯子完全可能把合法
+                // 回复拖过这个点）——这不是「无回音」，安静续期一小段再看，别抢在状态机
+                // 前面宣判、把一个好端端的 worker 说成旧版让用户白重部署。待收记录没了
+                // 而结论（emotionDone）一直没来，才是真的「跑完了但没人回音」。
+                const charIdAtArm = char.id;
+                const charNameAtArm = char.name;
+                const armCloudEmotionSafetyNet = (delayMs: number) => {
+                    clearCloudEmotionTimer(charIdAtArm);
+                    cloudEmotionTimers.set(charIdAtArm, setTimeout(() => {
+                        cloudEmotionTimers.delete(charIdAtArm);
+                        if (instantChatRoute && getInstantChatPending(charIdAtArm)) {
+                            armCloudEmotionSafetyNet(60_000);
+                            return;
+                        }
+                        // 徽章只熄「布防那个角色」的：用户已切到别的角色时，这个 setter
+                        // 管的是人家的徽章，不能碰。
+                        if (currentCharIdRef.current === charIdAtArm) setEmotionStatus('');
+                        // 超时无回音最常见的原因是用户部署的 worker 版本过旧（不支持情绪评估、
+                        // 压根不会推结果回来），其次是 worker 被杀/推送丢失。过去这里
+                        // 静默熄灯, 用户只看到「情绪永远不更新」—— 给一条可操作的提示。
+                        announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
+                            charId: charIdAtArm, charName: charNameAtArm,
+                            reason: instantChatRoute
+                                ? '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→主动消息 2.0 重新部署 worker 后重试'
+                                : '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→Instant 消息设置 更新 worker 后重试',
+                        });
+                    }, delayMs));
+                };
+                armCloudEmotionSafetyNet(cloudEvalTimeoutMs);
             }
 
             // 发送前汇总计时
@@ -988,6 +1214,51 @@ export const useChatAI = ({
                     }
                 }
             }
+            // 主动消息 2.0 本地工具：worker 已配置 + 角色没关掉时注入 schedule/cancel/renew/list，
+            // 并注入「排程现状」背景块（常驻能力简介 + 进行中任务 + 作废待处理，角色自行判断怎么接）。
+            // 是否注入在上面 thinking 门那里就算好了（amsg2ToolsInjected）。
+            // amsg2 和 Instant Push 在设置页已经是双向互斥，正常情况下不可能两个都开，
+            // 这里不需要额外判断（下面的 Instant Push 分支只为历史配置兜底保留）。
+            let amsg2ExpiredIds: string[] = [];
+            let amsg2Notices: Amsg2ExpiredNoticeRecord[] = [];
+            if (amsg2ToolsInjected) {
+                baseReqBody.tools = [...(baseReqBody.tools || []), ...AMSG2_TOOLS];
+                if (!baseReqBody.tool_choice) baseReqBody.tool_choice = 'auto';
+                try {
+                    // 回执这半边是「检出 + 落台账」的结果，带副作用，一轮只算一次；
+                    // 进行中任务那半边每次发请求现取（见下面的 withAmsg2TaskContext）。
+                    const taskContext = await collectAmsg2TaskContext(char, userProfile.name);
+                    amsg2ExpiredIds = taskContext.expiredIds;
+                    amsg2Notices = taskContext.notices;
+                } catch (e) {
+                    // 挂掉的只是作废回执这半边（它要读历史消息和台账）。进行中清单在内存里，
+                    // 照常渲染——角色至少知道自己名下有哪些任务，不至于一问三不知再排一条。
+                    console.warn('[amsg2] 作废回执检出失败，本轮只带进行中清单', e);
+                }
+            }
+
+            /**
+             * 把排程现状块贴到 messages 末尾，每次发请求都按「此刻」的任务清单现算。
+             *
+             * 不写死进 baseReqBody.messages、也不进 loopMessages，是因为工具循环里角色会
+             * 边聊边排：写死的话第二轮起看到的是**排程前**那份空清单，跟工具刚回的「已创建」
+             * 打架，角色于是把同一条再排一遍；攒进历史的话则是好几份互相矛盾的旧清单叠着。
+             * 现算 + 只留一份，角色每轮读到的都是自己名下真实的任务，本轮刚排的还会被点名。
+             */
+            const withAmsg2TaskContext = (messages: any[]): any[] => {
+                if (!amsg2ToolsInjected) return messages;
+                const now = Date.now();
+                const text = buildAmsg2TaskContextText(
+                    getPendingTasks(amsg2Session.getConfig(), now),
+                    amsg2Notices,
+                    now,
+                    resolveCharTimeZone(char),
+                    amsg2CreatedThisTurn,
+                    userProfile.name,
+                );
+                // 常驻简介让这一块总是非空：没任务时角色也得知道自己随时能排。
+                return [...messages, { role: 'system', content: text }];
+            };
 
             // ─── Instant Push 分支 ───
             // 与本地 fetch 对称：sendInstantPushAndAwaitReply 内部完成 sub 获取 / push 监听 /
@@ -997,7 +1268,15 @@ export const useChatAI = ({
             // 瑞幸聊天点单 / 麦当劳 / 瑞幸小程序 这些"客户端工具循环"模式必须走本地 fetch:
             // instant push 会把请求交给 worker 并在这里提前 return, 工具循环(callLuckinTool 等)根本跑不到,
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
-            if (isInstantConfigReady() && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
+            // 双向互斥后理论上到不了：走到这条 trace 说明两边开关同时亮着（脏配置），当断言告警看。
+            const AMSG2_SUPPRESSED_TRACE = 'amsg2-suppressed-by-instant';
+            if (instantPushConfigured && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
+                // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
+                // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
+                // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
+                if (amsg2ToolsInjected) {
+                    appendInstantTraceEntry({ ts: new Date().toISOString(), event: AMSG2_SUPPRESSED_TRACE });
+                }
                 const instantResult = await sendInstantPushAndAwaitReply({
                     contactName: char.name,
                     messages: fullMessages as InstantPushPayload['messages'],
@@ -1013,7 +1292,7 @@ export const useChatAI = ({
                     metadata: { source: 'sullyos-chat', charId: char.id },
                     // 副 API 情绪评估: worker 跑完主回复后用这套跑 eval, 推 emotion_update 回来 (见 worker 包装层).
                     // 放顶层字段, 不进 metadata —— 框架不会回显它, 副 API apiKey 不会泄进 push.
-                    ...(instantEmotionEval ? { emotionEval: instantEmotionEval } : {}),
+                    ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
                 }, char.id, undefined, onInstantPosted);
                 if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
                     // 长报错 (worker 400 校验信息 + CF 错误页可能很长) 走弹窗, 手机用户能
@@ -1039,10 +1318,91 @@ export const useChatAI = ({
                         addToast(`Instant Push: ${errMsg}`, 'error');
                     }
                 }
-                // 发送失败/取消 → worker 不会跑情绪评估, 'instant-emotion-done' 永不到达,
-                // 主动熄灭全局横幅 (否则要等 TTL 兜底)。
-                if (!instantResult.ok && instantEmotionEval) {
-                    announceChatGen(CHAT_GEN_EVENTS.emotionEnd, { charId: char.id, charName: char.name });
+                // 发送失败/取消 → worker 不会跑情绪评估，那个正常的熄灭信号永不到达，当场自己熄。
+                if (!instantResult.ok && cloudEmotionEval) extinguishCloudEmotionBadge();
+                return;
+            }
+
+            // ─── 即时对话（主动消息 2.0 云端生成）分支 ───
+            // 和上面的 Instant Push 对称：这一轮的上下文 + 任务一个 POST 上云，云端跑完
+            // 走推送回来（收件箱同一条管线入库），客户端发完那一刻就自由了。
+            // 设置页那道门已经把两条路做成双向互斥，正常情况下不可能两个都开；
+            // 上面的 Instant Push 分支只为历史配置兜底保留。
+            //
+            // 走不走这条路，构建 payload 之前的 instantChatRoute 已经算完了，这里只认它
+            // 一个值：「这份 prompt 剥没剥时效段」和「这一轮走不走云端」必须是同一个判断，
+            // 各算各的话两边总有一天会不同意，剥过的那份 prompt 就落到别的路上去了。
+            // 没上云的那些情形（点单否决 / IP 配置也还在）在那一段里已经报过 trace，
+            // 这边不重复报，也不重复拦。
+            //
+            // MCP 刻意不在排除名单里：worker fire 时自己解析 tool_config、自己跑后台
+            // MCP（这次 POST 顺手把配置传上去了），云端答得了。排掉它的话，只要全局配着
+            // 一台 enabled 的 MCP 服务器，即时对话就永远静默走回本地——设置页亮着
+            // 「已开启」、界面毫无异样，正是 instant push 静默分流那个坑的复刻。
+            if (instantChatRoute) {
+                // 作废回执跟着 chat 段上云：检出（collectAmsg2TaskContext，带落台账的副作用）
+                // 在上面已经跑过了，本地路径靠 withAmsg2TaskContext 注入的排程清单和能力
+                // 简介到点由 worker 的 instant timely block 现算现渲，唯独回执云端没有——
+                // 只把这一样单独成块贴上，不带清单不带简介，别和到点渲染的那份撞车。
+                const amsg2NoticesBlock = amsg2ToolsInjected && amsg2Notices.length
+                    ? buildAmsg2NoticesText(amsg2Notices, resolveCharTimeZone(char), userProfile.name)
+                    : null;
+                const instantChatResult = await sendInstantChatTurn({
+                    char,
+                    // 云端要发给模型的就是本地这一份，一个字不改（见 fire_pack 的 chat 段）。
+                    chatMessages: (amsg2NoticesBlock
+                        ? [...fullMessages, { role: 'system', content: amsg2NoticesBlock }]
+                        : fullMessages) as Array<{ role: string; content: unknown }>,
+                    // 凭据用本地这一轮的那份：换成别的等于同一句话由不同模型来答，而用户看不出来。
+                    // model / temperature 取 baseReqBody 的终值而不是 effectiveApi 的原始值：
+                    // 上面那段已经按本地规则把 thinking 后缀（claude 系 -thinking）拼好、
+                    // 开思考时把温度删掉了——云端要的就是「本地这一轮会发出去的那份」。
+                    api: { baseUrl: effectiveApi.baseUrl, apiKey: effectiveApi.apiKey, model: baseReqBody.model },
+                    ...(typeof baseReqBody.temperature === 'number' ? { temperature: baseReqBody.temperature } : {}),
+                    maxTokens: baseReqBody.max_tokens,
+                    // 思考链三件套同理取终值：shouldSendThinkingParams 通过时本地会带
+                    // thinking / reasoning_effort / extra_body 三个入口（不同代理认不同的），
+                    // 云端不带的话，凡是靠请求体参数激活思考的渠道（Anthropic 原生、
+                    // OpenAI 系、LiteLLM 桥——即除了 -thinking 模型名后缀之外的全部）
+                    // 一开即时对话思考就静默消失，心象卡片跟着没了。
+                    ...(baseReqBody.thinking || baseReqBody.reasoning_effort || baseReqBody.extra_body
+                        ? {
+                            extraBody: {
+                                ...(baseReqBody.thinking ? { thinking: baseReqBody.thinking } : {}),
+                                ...(baseReqBody.reasoning_effort ? { reasoning_effort: baseReqBody.reasoning_effort } : {}),
+                                ...(baseReqBody.extra_body ? { extra_body: baseReqBody.extra_body } : {}),
+                            },
+                        }
+                        : {}),
+                    userProfile, groups, realtimeConfig,
+                    // 情绪评估也交给云端：worker 到点和主回复并行跑，结果随最后一条推送回来
+                    // （见 worker/amsg/src/emotionEval.ts）。放在这里而不是本地 fire 一枪，
+                    // 是因为用户发完就能关页面——留在本地的话，页面一关情绪底色就停更了。
+                    ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
+                });
+                if (instantChatResult.ok) {
+                    // 这次 POST 已经把权威的那份 fire_pack 传上去了，收尾不必再打脏重传一遍。
+                    instantChatAccepted = true;
+                    // 202 只说明云端收下了，不说明角色真的读到过这些回执：那一轮可能空输出被
+                    // 判 skip-push，也可能 fire 重试打光标 failed。所以这里只记账不销账，等回复
+                    // 真的落库那一刻（activeMsgRuntime 认末段到齐）再调
+                    // settleInstantChatExpiredNotices 写 notifiedAt；这一轮没成的话
+                    // failInstantChatPending 会把它们退回未告知，下一轮重新注入。
+                    // 本地路径同一口径：回复 applyAssistantPostProcessing 落库之后才标记。
+                    if (amsg2ExpiredIds.length && instantChatResult.uuid) {
+                        stageInstantChatExpiredNotices(char.id, instantChatResult.uuid, amsg2ExpiredIds);
+                    }
+                } else {
+                    // 没发出去就是没发出去：明确落一条系统消息 + 弹错，用户可以直接重发。
+                    // **绝不静默退回本地生成** —— 静默分流那种查无可查的坑踩过一次就够了。
+                    const reason = instantChatResult.error || '未知错误';
+                    await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[${reason}]` });
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    if (showError) showError('即时对话发送失败', reason);
+                    else addToast(reason, 'error');
+                    // 没发出去 → 云端不会跑评估，那个正常的熄灭信号永不到达。当场自己熄，
+                    // 否则「情绪更新中」要一直亮到 11 分钟后安全网到点。
+                    if (cloudEmotionEval) extinguishCloudEmotionBadge();
                 }
                 return;
             }
@@ -1632,6 +1992,15 @@ export const useChatAI = ({
             // instant 路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
             announceChatGen(CHAT_GEN_EVENTS.replyArrived, { charId: char.id, charName: char.name });
 
+            // 防穿帮闸：仅当这轮请求真的成功、回执确实进了模型上下文并产出已落库的
+            // 回复，才标记已告知；失败/中断路径不标，下轮重新注入（回执不丢）。
+            // 放在 try 成功尾部（回复已 applyAssistantPostProcessing 落库），与 catch/finally 互斥；
+            // amsg2 与 Instant Push 设置页双向互斥，instant 路径在上方已 return（那条分支
+            // 只为历史配置兜底保留），这里只覆盖本地 fetch 路径。
+            if (amsg2ExpiredIds.length) {
+                void ActiveMsgStore.markExpiredNoticesNotified(char.id, amsg2ExpiredIds);
+            }
+
         } catch (e: any) {
             // 注意: 这个 catch 兜的是「拿到 API 响应之后」的整条后处理管线 (applyAssistantPostProcessing,
             // 13 步)。这里抛错多半不是网络问题, 而是解析/正则/落库异常。别再叫"连接中断"误导排查。
@@ -1665,6 +2034,20 @@ export const useChatAI = ({
             setDiaryStatus('');
             setXhsStatus('');
 
+            // 满血主动消息：一轮聊完把该角色标脏，fire_pack 随即批量同步到 worker 的
+            // client_state（未配 amsg2 任务的角色在 markDirty 内直接忽略，零成本）。
+            // 本轮角色自己排过任务时 char 快照上的清单已经过期，得用工具会话里的最新那份
+            // 打脏——否则本轮新建的首个任务过不了 markDirty 的 hasActiveAiTask 门，
+            // fire_pack 会停在排程那一刻、少掉角色排完之后说的这段。
+            // 即时对话受理成功那一轮跳过：那次 POST 已经把这一轮的 fire_pack（还多带了
+            // chat 段）传上去了，这里再打脏就是同样的内容再走一趟网络。
+            if (!instantChatAccepted) {
+                markAmsgStateDirty({
+                    char: { ...char, activeMsg2Config: amsg2Session.getConfig() },
+                    userProfile, groups, realtimeConfig,
+                });
+            }
+
             // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
             // 使用全局配置（memoryPalaceConfig）。lightLLM 未配置时回退主 apiConfig；
             // embedding 因端点类型特殊（/embeddings），不做回退，必须显式配置。
@@ -1684,7 +2067,7 @@ export const useChatAI = ({
 
                 // 缓冲区处理（LLM提取 + Embedding向量化）
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
+                processNewMessagesWithAutoArchive(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
                         setMemoryPalaceStatus(stage);
                     })
                     .then(async (pipelineResult) => {
@@ -1698,36 +2081,7 @@ export const useChatAI = ({
                             setMemoryPalaceResult(pipelineResult);
                         }
 
-                        // 自动归档：把 palace 提取出的记忆按日期合成 YAML bullets 追加到
-                        // char.memories，同时推 hideBeforeMessageId 自动隐藏已总结的聊天
-                        // 仅在 char.autoArchiveEnabled 显式开启时执行（默认 off，opt-in）
-                        if (updateCharacter && (liveAfter as any).autoArchiveEnabled) {
-                            try {
-                                const patch: any = {};
-                                if (pipelineResult?.autoArchive) {
-                                    patch.memories = mergePalaceFragmentsIntoMemories(
-                                        char.memories || [],
-                                        pipelineResult.autoArchive.fragments,
-                                    );
-                                }
-                                // 隐藏线追平到向量高水位：palace 向量化在 autoArchive 关闭期间会
-                                // 无条件推进 hwm，而 hide 被 gate 冻结，于是「已中招」的角色会出现
-                                // hide 落后于 hwm 的空档。只要全自动记忆现在是开的，每次自动总结都把
-                                // hide 追平到 hwm（hwm 之前的消息都已向量化归档），无需用户手动操作。
-                                // 即便本轮没有新批次（autoArchive 为空），这一步也会把历史空档补上。
-                                const hwm = getMemoryPalaceHighWaterMark(char.id);
-                                const curHide = ((liveAfter as any).hideBeforeMessageId as number) || 0;
-                                if (hwm > curHide) {
-                                    patch.hideBeforeMessageId = hwm;
-                                }
-                                if (Object.keys(patch).length > 0) {
-                                    updateCharacter(char.id, patch);
-                                    console.log(`📚 [AutoArchive] ${patch.memories ? `合并 ${pipelineResult!.autoArchive!.fragments.length} 条 MemoryFragment，` : ''}hideBefore 追平 → ${patch.hideBeforeMessageId ?? curHide}`);
-                                }
-                            } catch (e: any) {
-                                console.warn(`📚 [AutoArchive] 失败（不影响 palace）: ${e?.message || e}`);
-                            }
-                        }
+                        // 全自动记忆双写已由统一封装完成，React 外的入口也不会再漏接返回值。
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
                         if (shouldAutoDigest) {
