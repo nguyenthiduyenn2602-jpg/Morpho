@@ -565,6 +565,7 @@ const Settings: React.FC = () => {
   const [ppZombieStreak, setPpZombieStreak] = useState(0);
   const [showInstantModal, setShowInstantModal] = useState(false);
   const [showVapidModal, setShowVapidModal] = useState(false);
+  const [showAmsg2Modal, setShowAmsg2Modal] = useState(false);
   const [vapidReadyTick, setVapidReadyTick] = useState(0); // 关闭 VAPID 弹窗后刷新顶层徽标
 
   // 模型选择 Modal 的过滤 + 公共前缀（memo 掉，避免每次 Settings 重渲染都重算）
