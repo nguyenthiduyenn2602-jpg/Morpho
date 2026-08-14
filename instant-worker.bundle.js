@@ -2242,16 +2242,7 @@ function sanitizeTable(value) {
   return value;
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-instant@0.9.1/node_modules/@rei-standard/amsg-instant/dist/index.mjs
-var TEXT_ENCODER2 = new TextEncoder();
-var TEXT_DECODER2 = new TextDecoder("utf-8", { fatal: false });
-function utf82(str) {
-  return TEXT_ENCODER2.encode(String(str));
-}
-var KEY_INFO_PREFIX2 = utf82("WebPush: info\0");
-var CEK_INFO2 = utf82("Content-Encoding: aes128gcm\0");
-var NONCE_INFO2 = utf82("Content-Encoding: nonce\0");
-var VAPID_TOKEN_LIFETIME2 = 12 * 3600;
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.3/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER2 = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
