@@ -40,6 +40,7 @@ import {
 
 // SVG 图标库 - Phosphor Icons
 export const Icons: Record<string, React.FC<{ className?: string }>> = {
+  User: ({ className }) => <IdentificationCard className={className} weight="regular" />,
   Character: ({ className }) => <UserCircle className={className} weight="regular" />,
   Chat: ({ className }) => <ChatTeardrop className={className} weight="regular" />,
   GroupChat: ({ className }) => <UsersThree className={className} weight="regular" />,
@@ -58,6 +59,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
+  { id: AppID.User, name: '个人档案', icon: 'User', color: 'rose' },
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },

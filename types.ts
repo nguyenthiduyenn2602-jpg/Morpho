@@ -2,6 +2,7 @@
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
+  User = 'user', // 个人档案：用户姓名、头像、人设与生活记录
   Character = 'character',
   Chat = 'chat',
   GroupChat = 'group_chat', 
