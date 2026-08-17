@@ -1544,6 +1544,7 @@ ${memberTimeline || '(暂无互动记录)'}
                 : '';
             const instruction = buildRoundRobinInstruction(member.name, history, emojiContextStr, {
                 slot,
+                latestUserText,
                 maxLines,
                 maxChars,
             });

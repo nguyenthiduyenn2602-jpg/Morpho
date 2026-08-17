@@ -58,12 +58,16 @@ describe('buildRoundRobinInstruction 双轮圆桌', () => {
     const history = { text: '用户: 讨论一下方案', attachedImages: [], attachedImagesNote: '' };
 
     it('第一轮允许完整发言并限制最多 5 行', () => {
-        const opening = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'opening', maxLines: 5 });
-        const reply = buildRoundRobinInstruction('小北', history, '无', { slot: 'reply', maxLines: 5 });
+        const opening = buildRoundRobinInstruction('阿澜', history, '无', { slot: 'opening', maxLines: 5, latestUserText: '讨论一下方案' });
+        const reply = buildRoundRobinInstruction('小北', history, '无', { slot: 'reply', maxLines: 5, latestUserText: '讨论一下方案' });
         expect(opening).toContain('第一轮第一个');
         expect(reply).toContain('第一轮第二个');
         expect(opening).toContain('最多 5 行');
         expect(opening).not.toContain('[[SKIP]]');
+        expect(reply).toContain('本轮唯一主轴');
+        expect(reply).toContain('<<< 讨论一下方案 >>>');
+        expect(reply).toContain('不能把对方随口延伸的内容误当成用户的新问题');
+        expect(reply).not.toContain('只回应群里另一位成员刚说的话');
     });
 
     it('第二轮要求精简、允许跳过且不再使用点名接力', () => {

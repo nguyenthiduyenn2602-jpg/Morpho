@@ -232,6 +232,8 @@ export type RoundRobinSlot = 'opening' | 'reply' | 'followup' | 'closing';
 
 export interface RoundRobinSlotContext {
     slot?: RoundRobinSlot;
+    /** 触发本轮的用户原话。单独钉在任务区，避免后发成员把前一位成员的话误当成主问题。 */
+    latestUserText?: string;
     /** 硬性行数上限（超出部分会被代码截断，这里同步告知模型） */
     maxLines?: number;
     /** 固定成员槽位可用的整轮文字上限；未传则不限制字数 */
@@ -262,6 +264,7 @@ export function buildRoundRobinInstruction(
     const slot = ctx.slot ?? 'opening';
     const maxLines = ctx.maxLines ?? 8;
     const maxChars = ctx.maxChars;
+    const latestUserText = String(ctx.latestUserText ?? '').trim();
     const isSecondPass = slot === 'followup' || slot === 'closing';
     const isCompactTurn = typeof maxChars === 'number';
 
@@ -278,7 +281,7 @@ export function buildRoundRobinInstruction(
         ? `你是本回合**第一轮第一个**开口的人：上面记录的末尾是用户刚说的话，先由你来接。目标 **2-5 行**。`
         : slot === 'reply'
         ? `你是本回合**第一轮第二个**发言的人：记录末尾已经包含先发言成员刚说完的话。
-你不必每句都朝着用户说——顺着 ta 的话往下接、反驳、追问、拆台、起哄都行，群聊本来就是这样。目标 **2-5 行**。`
+你的任务仍是回应用户发起的同一个话题。可以接、反驳或补充先发成员，但只能围绕用户的本轮原话推进，不能把对方随口延伸的内容误当成用户的新问题。目标 **2-5 行**。`
         : slot === 'followup'
         ? `现在进入**第二轮短回应**：你已经完整看到用户原话、你自己的第一轮发言和另一位成员的第一轮发言。
 只补充新观点、回答对方或推进讨论，不要复述第一轮。目标 **1-3 行**，没什么值得补充时允许跳过。`
@@ -293,6 +296,7 @@ export function buildRoundRobinInstruction(
 
     return `### 【本轮任务：以「${memberName}」的身份在群里发言】
 当前场景：大家正在群里聊天。
+${latestUserText ? `本轮用户原话（本轮唯一主轴）：\n<<< ${latestUserText} >>>\n` : ''}
 最近聊天记录（截至此刻，末尾可能已包含本轮先发言成员的最新消息）：
 ${history.text}
 ${history.attachedImagesNote}
@@ -307,7 +311,7 @@ ${stance}
 4. **私聊**: ${isCompactTurn ? `本轮禁止使用 \`[[PRIVATE: 内容]]\`，所有回复都在群内按上述字数与气泡限制发送。` : `罕见特例，默认不用。只有真的有重大、不便公开的话要单独对用户说时，才输出一条 \`[[PRIVATE: 内容]]\`（只进你和用户的私聊，群里不显示）。**严禁**把 PRIVATE 当"吐槽群友"的工具。`}
 5. 对话质量沿用你的私聊标准：拒绝套路化反应；想表达在乎就提一个只有你们之间才有的具体细节，而不是空泛的关心句；把名字遮住也能从语气认出这句话是你说的；情绪要有层次。
 6. 检查上面的 [私聊空窗期] 与互动时间线：如果你和用户刚私聊过，哪怕群里很久没人说话，也**严禁**说"好久不见"或表现出疏离感。
-7. 角色之间可以互相接话、起哄，不必每句都对着用户说；也允许你只回应群里另一位成员刚说的话。
+7. **用户原话始终是本轮主轴。**角色之间可以互相接话、起哄，但必须仍在回应或推进用户发起的话题；不要只追着另一位成员的枝节、猜测或玩笑跑，更不要把对方的话当成用户的新指令。
 8. 引用回复（可选）：想针对记录里某条具体发言回复时，在你的内容开头加 \`[[QUOTE: 原话片段]]\`（片段取原话开头几个字即可）。偶尔用，别每条都引用。
 9. 红包（可选）：记录里有「拼手气红包…还剩 n 份可抢」且你想抢时，单独一行输出 \`[[GRAB_PACKET]]\` 并配一句真实反应；看到发给自己的专属红包，用 \`[[GRAB_PACKET]]\` 收下或 \`[[RETURN_PACKET]]\` 退回并说明原因。你也可以主动发：拼手气 \`[[SEND_PACKET: lucky:总额:份数:祝福语]]\`，专属 \`[[SEND_PACKET: direct:对方名字:金额:祝福语]]\`。抢不抢由你的性格决定，金额别离谱。
 10. 不要输出 \`[[TO: 名字]]\`。本回合的发言顺序由群聊调度器控制，不需要你点名触发下一位。`;
