@@ -473,8 +473,40 @@ export async function safeFetchJson(
  */
 export function extractContent(data: any): string {
     const msg = data?.choices?.[0]?.message;
-    let text: string = msg?.content || '';
-    if (!text.trim()) text = msg?.reasoning_content || '';
+    const textFromBlocks = (value: any): string => {
+        if (typeof value === 'string') return value;
+        if (!Array.isArray(value)) return '';
+        return value
+            .map((part: any) => {
+                if (typeof part === 'string') return part;
+                if (typeof part?.text === 'string') return part.text;
+                if (typeof part?.output_text === 'string') return part.output_text;
+                return '';
+            })
+            .filter(Boolean)
+            .join('\n');
+    };
+
+    // OpenAI-compatible gateways do not all return the final answer in the
+    // exact same slot. In particular, Claude/Gemini adapters may use content
+    // blocks, choices[].text, or leave content empty and fill reasoning_content.
+    let text = textFromBlocks(msg?.content);
+    if (!text.trim()) text = textFromBlocks(msg?.reasoning_content);
+    if (!text.trim()) text = textFromBlocks(data?.choices?.[0]?.text);
+    if (!text.trim()) text = textFromBlocks(data?.output_text);
+    if (!text.trim() && Array.isArray(data?.output)) {
+        text = data.output
+            .map((item: any) => textFromBlocks(item?.content) || textFromBlocks(item?.text))
+            .filter(Boolean)
+            .join('\n');
+    }
+    if (!text.trim() && Array.isArray(data?.candidates)) {
+        text = data.candidates
+            .flatMap((candidate: any) => candidate?.content?.parts || [])
+            .map((part: any) => textFromBlocks(part?.text ?? part))
+            .filter(Boolean)
+            .join('\n');
+    }
     // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
     text = text.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
     text = text.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory, APIConfig } from '../types';
-import { safeResponseJson } from '../utils/safeApi';
+import { extractContent, safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
@@ -1296,8 +1296,10 @@ ${memberTimeline || '(暂无互动记录)'}
             });
             if (!response.ok) throw new Error(`API 返回 ${response.status}`);
             const data = await safeResponseJson(response);
-            const parsed = parseGroupTopicBox(data.choices?.[0]?.message?.content || '');
-            if (!parsed) throw new Error('总结格式无法解析');
+            const summaryText = extractContent(data);
+            if (!summaryText) throw new Error('模型没有返回可整理的总结正文');
+            const parsed = parseGroupTopicBox(summaryText);
+            if (!parsed) throw new Error('总结正文为空，无法整理');
 
             const box = makeGroupTopicBox(groupForArchive, batchPlan.messages, parsed.title, parsed.summary);
             const updatedGroup: GroupProfile = {
