@@ -1,4 +1,4 @@
-import type { APIConfig } from '../../types';
+import type { APIConfig, CharacterProfile, GroupProfile } from '../../types';
 
 export function normalizeMemberApiConfig(config?: Partial<APIConfig>): APIConfig {
     return {
@@ -16,6 +16,32 @@ export function hasMemberApiConfig(config?: Partial<APIConfig>): boolean {
 export function isMemberApiConfigComplete(config?: Partial<APIConfig>): boolean {
     const normalized = normalizeMemberApiConfig(config);
     return !!(normalized.baseUrl && normalized.apiKey && normalized.model);
+}
+
+/**
+ * 公共话题盒只沿用角色1本轮已经会使用的 API，不在多个第三方端点之间重试。
+ * 这样既修正“群聊走独立 API、整理器却偷走全局 API”的错位，也不会把同一批
+ * 群聊历史额外发送给另一个服务。角色1没有独立配置时才保持旧行为，回退全局 API。
+ */
+export function resolveGroupTopicApi(
+    group: GroupProfile,
+    characters: CharacterProfile[],
+    globalConfig: APIConfig,
+): APIConfig | null {
+    const primaryId = group.members[0];
+    const primary = characters.find(character => character.id === primaryId);
+    const groupOverride = group.memberApiConfigs?.[primaryId];
+    const selected: Partial<APIConfig> | undefined = groupOverride?.apiKey
+        ? {
+            baseUrl: groupOverride.baseUrl || globalConfig.baseUrl,
+            apiKey: groupOverride.apiKey,
+            model: groupOverride.model || globalConfig.model,
+        }
+        : primary?.chatApiConfig?.apiKey
+            ? primary.chatApiConfig
+            : globalConfig;
+    const normalized = normalizeMemberApiConfig(selected);
+    return isMemberApiConfigComplete(normalized) ? normalized : null;
 }
 
 /** 兼容 OpenAI 风格 `{ data: [{ id }] }` 与常见中转站 `{ models: [...] }`。 */

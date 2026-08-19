@@ -472,7 +472,17 @@ export async function safeFetchJson(
  *  - Strips hidden <think>...</think> chain-of-thought blocks
  */
 export function extractContent(data: any): string {
-    const msg = data?.choices?.[0]?.message;
+    // 少数中转会在最外层再包一层 data/result；只解包明确的 completion 结构，
+    // 不把 error.message 之类的报错文字误当成助手正文。
+    const payload = data?.choices || data?.candidates || data?.output || data?.output_text
+        ? data
+        : (data?.data?.choices || data?.data?.candidates || data?.data?.output || data?.data?.output_text)
+            ? data.data
+            : (data?.result?.choices || data?.result?.candidates || data?.result?.output || data?.result?.output_text)
+                ? data.result
+                : data;
+    const choice = payload?.choices?.[0];
+    const msg = choice?.message;
     const textFromBlocks = (value: any): string => {
         if (typeof value === 'string') return value;
         if (!Array.isArray(value)) return '';
@@ -492,16 +502,22 @@ export function extractContent(data: any): string {
     // blocks, choices[].text, or leave content empty and fill reasoning_content.
     let text = textFromBlocks(msg?.content);
     if (!text.trim()) text = textFromBlocks(msg?.reasoning_content);
-    if (!text.trim()) text = textFromBlocks(data?.choices?.[0]?.text);
-    if (!text.trim()) text = textFromBlocks(data?.output_text);
-    if (!text.trim() && Array.isArray(data?.output)) {
-        text = data.output
+    if (!text.trim()) text = textFromBlocks(msg?.reasoning);
+    if (!text.trim()) text = textFromBlocks(msg?.thinking);
+    if (!text.trim()) text = textFromBlocks(msg?.text);
+    // 有些“兼容 OpenAI”的中转把非流式整包仍放在 delta。
+    if (!text.trim()) text = textFromBlocks(choice?.delta?.content);
+    if (!text.trim()) text = textFromBlocks(choice?.delta?.reasoning_content ?? choice?.delta?.reasoning ?? choice?.delta?.thinking);
+    if (!text.trim()) text = textFromBlocks(choice?.text);
+    if (!text.trim()) text = textFromBlocks(payload?.output_text);
+    if (!text.trim() && Array.isArray(payload?.output)) {
+        text = payload.output
             .map((item: any) => textFromBlocks(item?.content) || textFromBlocks(item?.text))
             .filter(Boolean)
             .join('\n');
     }
-    if (!text.trim() && Array.isArray(data?.candidates)) {
-        text = data.candidates
+    if (!text.trim() && Array.isArray(payload?.candidates)) {
+        text = payload.candidates
             .flatMap((candidate: any) => candidate?.content?.parts || [])
             .map((part: any) => textFromBlocks(part?.text ?? part))
             .filter(Boolean)

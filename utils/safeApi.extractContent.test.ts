@@ -40,4 +40,14 @@ describe('extractContent', () => {
         };
         expect(extractContent(data)).toBe('{"summary":"最终正文。"}');
     });
+
+    it('accepts gateways that wrap the completion in data', () => {
+        const data = { data: { choices: [{ message: { content: '{"summary":"嵌套正文。"}' } }] } };
+        expect(extractContent(data)).toBe('{"summary":"嵌套正文。"}');
+    });
+
+    it('accepts non-stream responses returned in delta or reasoning aliases', () => {
+        expect(extractContent({ choices: [{ delta: { content: 'delta 正文' } }] })).toBe('delta 正文');
+        expect(extractContent({ choices: [{ message: { content: '', reasoning: 'reasoning 正文' } }] })).toBe('reasoning 正文');
+    });
 });

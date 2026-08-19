@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory, APIConfig } from '../types';
-import { extractContent, safeResponseJson } from '../utils/safeApi';
+import { extractContent, safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
@@ -19,7 +19,7 @@ import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildEmojiContextStr, buildGroupChatPresetBlock, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock, RoundRobinSlot } from '../utils/groupChat/prompts';
 import { resolveRoundRobinOrder } from '../utils/groupChat/roundRobin';
-import { extractAvailableModelIds, hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig } from '../utils/groupChat/apiConfig';
+import { extractAvailableModelIds, hasMemberApiConfig, isMemberApiConfigComplete, memberApiConfigFingerprint, normalizeMemberApiConfig, resolveGroupTopicApi } from '../utils/groupChat/apiConfig';
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -1274,8 +1274,13 @@ ${memberTimeline || '(暂无互动记录)'}
 
     /** 群公共话题盒：每群只调用一次总结 API，不再按开启记忆宫殿的成员分别复制。 */
     const createNextGroupTopicBox = async (force: boolean = false): Promise<boolean> => {
-        if (!activeGroup || topicArchiveLockRef.current || !apiConfig.apiKey) return false;
+        if (!activeGroup || topicArchiveLockRef.current) return false;
         const groupForArchive = activeGroup;
+        const topicApi = resolveGroupTopicApi(groupForArchive, charactersRef.current, apiConfig);
+        if (!topicApi) {
+            if (force) addToast('请先给角色1配置群聊 API，或在系统设置中填写全局 API', 'error');
+            return false;
+        }
         topicArchiveLockRef.current = true;
         if (force) setIsSummarizing(true);
         try {
@@ -1289,13 +1294,17 @@ ${memberTimeline || '(暂无互动记录)'}
             setGroupPalaceStatus(`正在把 ${batchPlan.messages.length} 条旧群聊整理成公共话题盒…`);
             setSummaryProgress(`正在整理 ${batchPlan.messages.length} 条旧群聊…`);
             const prompt = buildGroupTopicPrompt(groupForArchive, batchPlan.messages, charactersRef.current, userProfile.name);
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            const data = await safeFetchJson(`${topicApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 2000 }),
-            });
-            if (!response.ok) throw new Error(`API 返回 ${response.status}`);
-            const data = await safeResponseJson(response);
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${topicApi.apiKey}` },
+                body: JSON.stringify({
+                    model: topicApi.model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.3,
+                    max_tokens: 2000,
+                    stream: false,
+                }),
+            }, 1, 60_000);
             const summaryText = extractContent(data);
             if (!summaryText) throw new Error('模型没有返回可整理的总结正文');
             const parsed = parseGroupTopicBox(summaryText);
