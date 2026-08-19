@@ -35,6 +35,7 @@ import { WhiteboxSound, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSo
 import { buildHtmlPrompt } from '../utils/htmlPrompt';
 import {
     buildGroupTopicContext,
+    buildLocalGroupTopicFallback,
     buildGroupTopicPrompt,
     GROUP_TOPIC_BUFFER_THRESHOLD,
     GROUP_TOPIC_HOT_ZONE,
@@ -1306,9 +1307,17 @@ ${memberTimeline || '(暂无互动记录)'}
                 }),
             }, 1, 60_000);
             const summaryText = extractContent(data);
-            if (!summaryText) throw new Error('模型没有返回可整理的总结正文');
-            const parsed = parseGroupTopicBox(summaryText);
+            const parsed = summaryText
+                ? parseGroupTopicBox(summaryText)
+                : buildLocalGroupTopicFallback(batchPlan.messages, charactersRef.current, userProfile.name);
+            const usedLocalFallback = !summaryText;
             if (!parsed) throw new Error('总结正文为空，无法整理');
+            if (usedLocalFallback) {
+                console.warn('[GroupChat] 话题盒模型返回空正文，已使用原始群聊本地保底', {
+                    finishReason: data?.choices?.[0]?.finish_reason,
+                    responseKeys: data && typeof data === 'object' ? Object.keys(data) : [],
+                });
+            }
 
             const box = makeGroupTopicBox(groupForArchive, batchPlan.messages, parsed.title, parsed.summary);
             const updatedGroup: GroupProfile = {
@@ -1333,7 +1342,12 @@ ${memberTimeline || '(暂无互动记录)'}
             })));
             const remaining = groupTopicPendingCount(allMsgs, box.sourceEndMessageId);
             setTopicPendingCount(remaining);
-            addToast(`「${box.title}」已成盒，并送达 ${groupForArchive.members.length} 位成员私聊`, 'success');
+            addToast(
+                usedLocalFallback
+                    ? `模型空回，已将原始发言保底整理为「${box.title}」`
+                    : `「${box.title}」已成盒，并送达 ${groupForArchive.members.length} 位成员私聊`,
+                usedLocalFallback ? 'info' : 'success',
+            );
             return true;
         } catch (err: any) {
             console.warn('[GroupChat] 公共话题盒整理失败:', err);

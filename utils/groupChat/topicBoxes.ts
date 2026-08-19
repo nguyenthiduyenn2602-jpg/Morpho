@@ -84,6 +84,46 @@ ${memberProfiles}
 ${logs.slice(0, 30000)}`;
 }
 
+/**
+ * 模型因内容过滤、长度终止或中转异常而返回 200 + 空正文时的本地保底。
+ * 不再调用第二个端点，也不编造语义总结；只从原始消息中均匀抽取可核对的发言，
+ * 保证归档游标能继续推进、旧群聊不会永远卡在待整理区。
+ */
+export function buildLocalGroupTopicFallback(
+    batch: Message[],
+    characters: CharacterProfile[],
+    userName: string,
+): { title: string; summary: string } {
+    const usable = batch.map(message => ({
+        message,
+        text: messageLogText(message).replace(/\s+/g, ' ').trim(),
+    })).filter(item => item.text);
+    const firstTimestamp = usable[0]?.message.timestamp || batch[0]?.timestamp || Date.now();
+    const date = new Date(firstTimestamp);
+    const title = `${date.getMonth() + 1}月${date.getDate()}日群聊片段`;
+    if (usable.length === 0) {
+        return { title, summary: '这段群聊已完成本地归档，但其中没有可展示的文字内容。' };
+    }
+
+    // 首尾 + 中间均匀取样，最多 7 条；保留发言人，避免“摘句失去主体”。
+    const wanted = Math.min(7, usable.length);
+    const picked = new Map<number, typeof usable[number]>();
+    for (let i = 0; i < wanted; i++) {
+        const index = wanted === 1 ? 0 : Math.round(i * (usable.length - 1) / (wanted - 1));
+        picked.set(index, usable[index]);
+    }
+    const nameOf = (message: Message) => message.role === 'user'
+        ? userName
+        : (characters.find(character => character.id === message.charId)?.name || '群成员');
+    const excerpts = [...picked.values()].map(({ message, text }) => {
+        const clipped = text.length > 64 ? `${text.slice(0, 64)}…` : text;
+        return `${nameOf(message)}：“${clipped}”`;
+    });
+    // 技术故障只在 UI toast 里说明，不写进角色以后会读到的共同记忆。
+    const prefix = '这段群聊中，大家留下了这些交流：';
+    return { title, summary: `${prefix}${excerpts.join('；')}`.slice(0, 500) };
+}
+
 export function buildGroupTopicContext(group: GroupProfile): string {
     const boxes = group.topicBoxes || [];
     if (boxes.length === 0) return '';

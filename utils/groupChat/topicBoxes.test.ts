@@ -3,6 +3,7 @@ import type { GroupProfile, Message } from '../../types';
 import {
     buildGroupTopicPrompt,
     buildGroupTopicContext,
+    buildLocalGroupTopicFallback,
     GROUP_TOPIC_HOT_ZONE,
     groupTopicPendingCount,
     makeGroupTopicBox,
@@ -59,5 +60,15 @@ describe('群公共话题盒批处理', () => {
         expect(prompt).toContain('说话简洁');
         expect(prompt).toContain('爱开玩笑');
         expect(prompt).toContain('客观视角');
+    });
+
+    it('模型空回时可从原始群聊本地生成忠实的简版盒子', () => {
+        const chars: any[] = [{ id: 'a', name: 'A' }];
+        const fallback = buildLocalGroupTopicFallback(messages(12), chars, '用户');
+        expect(fallback.title).toMatch(/月.*日群聊片段/);
+        expect(fallback.summary).toContain('大家留下了这些交流');
+        expect(fallback.summary).toContain('用户：');
+        expect(fallback.summary).toContain('A：');
+        expect(fallback.summary.length).toBeLessThanOrEqual(500);
     });
 });
