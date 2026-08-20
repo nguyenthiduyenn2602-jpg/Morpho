@@ -442,6 +442,12 @@ const Settings: React.FC = () => {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isLoadingVisionModels, setIsLoadingVisionModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [selectedPresetName, setSelectedPresetName] = useState('');
+  const selectedApiPreset = useMemo(
+      () => apiPresets.find(preset => preset.id === selectedPresetId) ?? null,
+      [apiPresets, selectedPresetId],
+  );
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
