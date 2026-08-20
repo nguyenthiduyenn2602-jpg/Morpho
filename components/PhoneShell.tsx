@@ -58,6 +58,7 @@ const UserApp = lazyApp(() => import('../apps/UserApp'));
 const Character = lazyApp(() => import('../apps/Character'));
 const Chat = lazyApp(() => import('../apps/Chat'));
 const GroupChat = lazyApp(() => import('../apps/GroupChat'));
+const MomentsApp = lazyApp(() => import('../apps/MomentsApp'));
 const ThemeMaker = lazyApp(() => import('../apps/ThemeMaker'));
 const Gallery = lazyApp(() => import('../apps/Gallery'));
 const FAQApp = lazyApp(() => import('../apps/FAQApp'));
@@ -73,7 +74,7 @@ const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
 const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge, CharCreatorDevApp,
+  Chat, Character, GroupChat, MomentsApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge, CharCreatorDevApp,
 ];
 
 const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
@@ -85,7 +86,7 @@ const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp,
+  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -106,6 +107,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp, isStatusBarHidden } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
+import MomentsScheduler from './MomentsScheduler';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
@@ -776,6 +778,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Character: return <Character />;
       case AppID.Chat: return <Chat />;
       case AppID.GroupChat: return <GroupChat />; 
+      case AppID.Moments: return <MomentsApp />;
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Gallery: return <Gallery />;
       case AppID.FAQ: return <FAQApp />; 
@@ -830,6 +833,7 @@ const PhoneShell: React.FC = () => {
             : { bottom: 'var(--standalone-safe-area-bottom, 0px)' }
         }
       >
+        <MomentsScheduler />
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>

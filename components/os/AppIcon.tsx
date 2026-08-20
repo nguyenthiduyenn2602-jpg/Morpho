@@ -1,11 +1,13 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppConfig } from '../../types';
 import { Icons } from '../../constants';
 import { isPaperWallpaper, useOS } from '../../context/OSContext';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import { getAcnhIcon } from './acnhIcons';
 import { preloadApp } from './appPreload';
+import { DB } from '../../utils/db';
+import { AppID } from '../../types';
 
 interface AppIconProps {
   app: AppConfig;
@@ -30,6 +32,16 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
   const isNook = theme.skin === 'animalcrossing';
   const isPaperDesktop = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
   const preserveCustomOutline = !!customIconUrl && theme.preserveCustomIconOutlines === true;
+  const [momentsUnread, setMomentsUnread] = useState(0);
+  useEffect(() => {
+    if (app.id !== AppID.Moments) return;
+    const refresh = () => DB.getAsset('morpho_moments_settings_v1').then(raw => {
+      try { setMomentsUnread(raw ? (JSON.parse(raw).unreadPostIds?.length || 0) : 0); } catch { setMomentsUnread(0); }
+    }).catch(() => setMomentsUnread(0));
+    refresh();
+    window.addEventListener('moments-settings-updated', refresh);
+    return () => window.removeEventListener('moments-settings-updated', refresh);
+  }, [app.id]);
   // 动森皮肤下标签用深棕色，普通皮肤沿用主题 contentColor。
   const contentColor = isNook ? '#725d42' : (theme.contentColor || '#ffffff');
 
@@ -49,6 +61,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
         className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
         style={{ WebkitTapHighlightColor: 'transparent' }}
       >
+        {momentsUnread > 0 && <span className="absolute -right-1 -top-1 z-20 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] leading-4 text-center shadow">{momentsUnread > 9 ? '9+' : momentsUnread}</span>}
         {/* NookPhone 圆角方块瓦片：纯平面，无边框/无阴影/无高光（对齐参考图） */}
         <div
           className={`${sizeClasses} relative flex items-center justify-center overflow-hidden`}
@@ -95,6 +108,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
           boxShadow: '0 4px 12px rgba(91,72,51,0.055)',
         } : undefined}
       >
+        {momentsUnread > 0 && <span className="absolute -right-1 -top-1 z-20 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] leading-4 text-center shadow">{momentsUnread > 9 ? '9+' : momentsUnread}</span>}
 
         {customIconUrl ? (
             <img

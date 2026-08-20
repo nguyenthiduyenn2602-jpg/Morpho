@@ -36,6 +36,7 @@ import {
   Planet,
   Wrench,
   HouseLine,
+  CirclesFour,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -56,6 +57,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Handbook: ({ className }) => <Notebook className={className} weight="regular" />,
   QQBridge: ({ className }) => <Plugs className={className} weight="regular" />,
   CharCreatorDev: ({ className }) => <Wrench className={className} weight="regular" />,
+  Moments: ({ className }) => <CirclesFour className={className} weight="fill" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -66,6 +68,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Call, name: '电话', icon: 'Call', color: 'emerald' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' },
+  { id: AppID.Moments, name: '朋友圈', icon: 'Moments', color: 'green' },
   // 家园不再做独立桌面图标，改从「小小窝 · 像素家园」里进入（openApp(AppID.WorldHome) 仍可渲染）
   // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
   // { id: AppID.Handbook, name: '手账', icon: 'Handbook', color: 'fuchsia' }, // Hidden temporarily, pending update

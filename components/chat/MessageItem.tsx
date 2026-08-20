@@ -2968,6 +2968,25 @@ const MessageItem = React.memo(({
 
     if (m.type === 'social_card' && m.metadata?.post) {
         const post = m.metadata.post;
+        if (post.platform === 'moments') {
+            const image = post.images?.[0];
+            const commentsCount = Array.isArray(post.comments) ? post.comments.length : 0;
+            const likesCount = Array.isArray(post.likedBy) ? post.likedBy.length : Number(post.likes || 0);
+            return commonLayout(
+                <div className="w-64 overflow-hidden rounded-xl bg-white shadow-sm border border-slate-100">
+                    <div className="px-3 pt-3 flex items-center gap-2">
+                        <TokenImg value={post.authorAvatar} className="w-8 h-8 rounded-md object-cover bg-slate-100" alt="" />
+                        <div className="min-w-0"><div className="text-xs font-semibold text-[#576b95] truncate">{post.authorName}</div><div className="text-[9px] text-slate-400">朋友圈</div></div>
+                    </div>
+                    <div className="px-3 py-2 text-xs leading-relaxed text-slate-700 line-clamp-3 whitespace-pre-wrap">{post.content || '分享了图片'}</div>
+                    {image && <TokenImg value={image} className="w-full h-36 object-cover bg-slate-100" alt="朋友圈图片" />}
+                    <div className="px-3 py-2 flex items-center justify-between text-[9px] text-slate-400">
+                        <span className="truncate max-w-[120px]">{post.location?.visible ? post.location.label : 'Morpho 朋友圈'}</span>
+                        <span>{likesCount}赞 · {commentsCount}评论</span>
+                    </div>
+                </div>
+            );
+        }
         // If the saved image is a raw twemoji codepoint (eg "2728"), convert it to the actual emoji character;
         // otherwise leave whatever the AI / user picked unchanged.
         const rawImage: string | undefined = post.images?.[0];

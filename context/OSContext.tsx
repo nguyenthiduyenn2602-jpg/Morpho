@@ -3207,6 +3207,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Fetch Social App & Room Assets (Optional, depends on mode)
           const sparkUserBg = await DB.getAsset('spark_user_bg');
           const sparkSocialProfile = await DB.getAsset('spark_social_profile');
+          const momentsSettingsRaw = await DB.getAsset('morpho_moments_settings_v1');
+          const momentsMemoryRaw = await DB.getAsset('morpho_moments_memory_v1');
           const roomCustomAssets = await DB.getAsset('room_custom_assets_list');
 
           // theme / customIcons / appearancePresets 直接引用运行态 React state。只有
@@ -3235,7 +3237,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
                   userProfile: sparkSocialProfile ? JSON.parse(sparkSocialProfile) : undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
-                  userBg: sparkUserBg || undefined
+                  userBg: sparkUserBg || undefined,
+                  momentsSettings: momentsSettingsRaw ? JSON.parse(momentsSettingsRaw) : undefined,
+                  momentsMemory: momentsMemoryRaw ? JSON.parse(momentsMemoryRaw) : undefined,
               } : undefined,
               
               roomCustomAssets: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
@@ -4052,6 +4056,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // Restore heavy assets to DB
               if (data.socialAppData.userProfile) await DB.saveAsset('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
               if (data.socialAppData.userBg) await DB.saveAsset('spark_user_bg', data.socialAppData.userBg);
+              if (data.socialAppData.momentsSettings) await DB.saveAsset('morpho_moments_settings_v1', JSON.stringify(data.socialAppData.momentsSettings));
+              if (data.socialAppData.momentsMemory) await DB.saveAsset('morpho_moments_memory_v1', JSON.stringify(data.socialAppData.momentsMemory));
           }
           
           // Restore Room Custom Assets to DB (migrate old format on import)

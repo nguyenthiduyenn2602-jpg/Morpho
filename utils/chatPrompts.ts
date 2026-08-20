@@ -990,6 +990,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 }
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
+                    if (post.platform === 'moments') {
+                        const sender = m.role === 'user' ? '用户' : '你';
+                        const likes = Array.isArray(post.likedBy) ? post.likedBy.map((x: any) => x.name).filter(Boolean).join('、') : '';
+                        const comments = Array.isArray(post.comments) ? post.comments.map((c: any) => `${c.authorName}: ${c.content}`).join(' | ') : '';
+                        content = `${timeStr} [${sender}在朋友圈发布了动态]\n发布者: ${post.authorName || sender}\n正文: ${post.content || '（图片动态）'}\n位置: ${post.location?.visible ? post.location.label : '未显示'}\n点赞: ${likes || '暂无'}\n评论: ${comments || '暂无'}\n(这是已经发生并同步到私人聊天的朋友圈记录，请把它当作共同生活痕迹，不要误以为用户刚刚要求你再发一次。)`;
+                    } else {
                     // Look up this character's own Spark handles (sub-accounts) so the model can
                     // recognise when a post or comment in the shared card was authored by itself.
                     let myHandles: string[] = [];
@@ -1025,6 +1031,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
 
                     content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                    }
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};

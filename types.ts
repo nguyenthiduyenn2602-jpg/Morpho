@@ -6,6 +6,7 @@ export enum AppID {
   Character = 'character',
   Chat = 'chat',
   GroupChat = 'group_chat', 
+  Moments = 'moments', // 朋友圈 — 本地生活流、角色互动与私聊联动
   Date = 'date',
   Gallery = 'gallery',
   Browser = 'browser',
@@ -3084,6 +3085,10 @@ export interface SocialComment {
     isCharacter?: boolean;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 朋友圈二级回复只允许指向一条一级评论。 */
+    replyToCommentId?: string;
+    replyToName?: string;
+    timestamp?: number;
 }
 
 export interface SocialPost {
@@ -3102,6 +3107,45 @@ export interface SocialPost {
     bgStyle?: string;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 老 Spark 与新朋友圈共用 social_posts store，以 platform 隔离。 */
+    platform?: 'spark' | 'moments';
+    location?: { label: string; visible: boolean };
+    /** 点赞人使用稳定身份，避免只存总数后无法渲染微信式点赞栏。 */
+    likedBy?: Array<{ id: string; name: string; charId?: string; type: 'user' | 'character' }>;
+    /** 私聊联动：charId → social_card 消息 id。 */
+    syncedMessageIds?: Record<string, number>;
+    updatedAt?: number;
+}
+
+export type MomentsActivityLevel = 'quiet' | 'normal' | 'lively';
+
+export interface MomentsSettings {
+    version: 1;
+    coverImage?: string;
+    coverPositionY: number;
+    displayNameOverride?: string;
+    invitedCharIds: string[];
+    generationPreset: string;
+    autoPublishEnabled: boolean;
+    activityLevel: MomentsActivityLevel;
+    minIntervalHours: number;
+    lastAutoRunAt: number;
+    nextAutoAt: number;
+    unreadPostIds: string[];
+}
+
+export interface MomentsRoleDigest {
+    charId: string;
+    summary: string;
+    recentTopics: string[];
+    recentFingerprints: string[];
+    compactedPostIds: string[];
+    updatedAt: number;
+}
+
+export interface MomentsMemoryState {
+    version: 1;
+    roles: Record<string, MomentsRoleDigest>;
 }
 
 export interface SubAccount {
@@ -3338,6 +3382,8 @@ export interface FullBackupData {
         userProfile?: SocialAppProfile;
         userId?: string;
         userBg?: string;
+        momentsSettings?: MomentsSettings;
+        momentsMemory?: MomentsMemoryState;
     };
     
     mediaAssets?: {
