@@ -87,12 +87,58 @@ interface PostItemProps {
     onLike: (post: SocialPost) => void;
     onComment: (post: SocialPost) => void;
     onDelete: (post: SocialPost) => void;
+    animateInteractions?: boolean;
+    onInteractionsRevealed?: () => void;
 }
 
-const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike, onComment, onDelete }) => {
+const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike, onComment, onDelete, animateInteractions = false, onInteractionsRevealed }) => {
     const [menu, setMenu] = useState(false);
+    const totalLikes = post.likedBy?.length || 0;
+    const totalComments = post.comments?.length || 0;
+    const [visibleLikes, setVisibleLikes] = useState(animateInteractions ? 0 : totalLikes);
+    const [visibleComments, setVisibleComments] = useState(animateInteractions ? 0 : totalComments);
+    const animatedPostRef = useRef<string | null>(null);
     const isUserLiked = !!post.likedBy?.some(x => x.type === 'user');
     const gridClass = post.images.length === 1 ? 'grid-cols-1 max-w-[220px]' : post.images.length === 2 || post.images.length === 4 ? 'grid-cols-2 max-w-[250px]' : 'grid-cols-3 max-w-[270px]';
+
+    useEffect(() => {
+        if (!animateInteractions) {
+            setVisibleLikes(totalLikes);
+            setVisibleComments(totalComments);
+            return;
+        }
+        if (animatedPostRef.current === post.id) return;
+        animatedPostRef.current = post.id;
+        setVisibleLikes(0);
+        setVisibleComments(0);
+        let likesShown = 0;
+        let commentsShown = 0;
+        const timer = window.setInterval(() => {
+            if (likesShown < totalLikes) {
+                likesShown += 1;
+                setVisibleLikes(likesShown);
+                return;
+            }
+            if (commentsShown < totalComments) {
+                commentsShown += 1;
+                setVisibleComments(commentsShown);
+                return;
+            }
+            window.clearInterval(timer);
+            onInteractionsRevealed?.();
+        }, 420);
+        if (!totalLikes && !totalComments) {
+            window.clearInterval(timer);
+            onInteractionsRevealed?.();
+        }
+        return () => window.clearInterval(timer);
+    }, [animateInteractions, post.id, totalLikes, totalComments, onInteractionsRevealed]);
+
+    const visiblePost: SocialPost = {
+        ...post,
+        likedBy: (post.likedBy || []).slice(0, visibleLikes),
+        comments: (post.comments || []).slice(0, visibleComments),
+    };
     return (
         <article className="flex gap-3 px-4 py-4 border-b border-slate-100 bg-white">
             <TokenImg value={post.authorAvatar || (post.authorType === 'user' ? userAvatar : '')} className="w-10 h-10 rounded-md object-cover shrink-0 bg-slate-100" alt={post.authorName} />
@@ -134,7 +180,7 @@ const PostItem: React.FC<PostItemProps> = ({ post, userName, userAvatar, onLike,
                         </div>
                     )}
                 </div>
-                <CommentsBlock post={post} />
+                <CommentsBlock post={visiblePost} />
             </div>
         </article>
     );
@@ -153,6 +199,14 @@ const ModalShell: React.FC<{ title: string; onClose: () => void; children: React
     </div>
 );
 
+interface MomentDraft {
+    content: string;
+    images: string[];
+    location?: string;
+}
+
+type MomentSendState = 'idle' | 'sending' | 'revealing' | 'error';
+
 const MomentsApp: React.FC = () => {
     const { closeApp, characters, userProfile, apiConfig, addToast } = useOS();
     const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -163,8 +217,12 @@ const MomentsApp: React.FC = () => {
     const [commentTarget, setCommentTarget] = useState<SocialPost | null>(null);
     const [commentText, setCommentText] = useState('');
     const [generating, setGenerating] = useState(false);
+    const [sendState, setSendState] = useState<MomentSendState>('idle');
+    const [sendError, setSendError] = useState('');
+    const [revealingPostId, setRevealingPostId] = useState<string | null>(null);
     const coverUrl = useBlobRefUrl(settings.coverImage);
     const coverInputRef = useRef<HTMLInputElement>(null);
+    const sendingRef = useRef(false);
 
     const reload = useCallback(async () => {
         const [nextPosts, nextSettings] = await Promise.all([loadMomentPosts(), loadMomentsSettings()]);
@@ -179,7 +237,11 @@ const MomentsApp: React.FC = () => {
 
     useEffect(() => {
         reload().catch(err => { setLoading(false); addToast(`朋友圈加载失败：${err.message}`, 'error'); });
-        const handler = () => { loadMomentPosts().then(setPosts).catch(() => undefined); };
+        const handler = () => {
+            // 用户动态生成期间由发布流程统一刷新，避免最终互动先完整闪现、随后再倒回逐条揭示。
+            if (sendingRef.current) return;
+            loadMomentPosts().then(setPosts).catch(() => undefined);
+        };
         window.addEventListener('moments-updated', handler);
         return () => window.removeEventListener('moments-updated', handler);
     }, [reload]);
@@ -241,6 +303,30 @@ const MomentsApp: React.FC = () => {
         setPosts(prev => prev.filter(x => x.id !== post.id));
     };
 
+    const publishUserMoment = useCallback(async (draft: MomentDraft) => {
+        if (sendingRef.current) return;
+        sendingRef.current = true;
+        setComposerOpen(false);
+        setSendError('');
+        setSendState('sending');
+        try {
+            const post = await createUserMoment({ ...draft, characters, userProfile, apiConfig, settings });
+            setPosts(await loadMomentPosts());
+            setRevealingPostId(post.id);
+            setSendState('revealing');
+        } catch (err: any) {
+            setSendError(err?.message || '发布失败');
+            setSendState('error');
+        } finally {
+            sendingRef.current = false;
+        }
+    }, [characters, userProfile, apiConfig, settings]);
+
+    const finishInteractionReveal = useCallback(() => {
+        setRevealingPostId(null);
+        setSendState('idle');
+    }, []);
+
     const displayName = settings.displayNameOverride?.trim() || userProfile.name || '我';
 
     return (
@@ -257,7 +343,7 @@ const MomentsApp: React.FC = () => {
                     <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/35 to-transparent" />
                     <button onClick={closeApp} className="absolute top-[max(14px,env(safe-area-inset-top))] left-3 w-10 h-10 grid place-items-center text-white drop-shadow"><CaretLeft size={30} /></button>
                     <button onClick={() => setSettingsOpen(true)} className="absolute top-[max(14px,env(safe-area-inset-top))] left-14 w-10 h-10 grid place-items-center text-white drop-shadow"><GearSix size={25} /></button>
-                    <button onClick={() => setComposerOpen(true)} className="absolute top-[max(14px,env(safe-area-inset-top))] right-3 w-10 h-10 grid place-items-center text-white drop-shadow"><Camera size={28} weight="fill" /></button>
+                    <button disabled={sendState !== 'idle'} onClick={() => setComposerOpen(true)} className="absolute top-[max(14px,env(safe-area-inset-top))] right-3 w-10 h-10 grid place-items-center text-white drop-shadow disabled:opacity-40"><Camera size={28} weight="fill" /></button>
                     <input ref={coverInputRef} className="hidden" type="file" accept="image/*" onChange={e => uploadCover(e.target.files?.[0]).catch(() => addToast('封面保存失败', 'error'))} />
                 </div>
                 <div className="relative h-[76px] bg-white">
@@ -271,7 +357,9 @@ const MomentsApp: React.FC = () => {
                     <div className="py-16 text-center text-sm text-slate-400">正在打开朋友圈…</div>
                 ) : posts.length ? posts.map(post => (
                     <PostItem key={post.id} post={post} userName={displayName} userAvatar={userProfile.avatar}
-                        onLike={toggleLike} onComment={setCommentTarget} onDelete={removePost} />
+                        onLike={toggleLike} onComment={setCommentTarget} onDelete={removePost}
+                        animateInteractions={post.id === revealingPostId}
+                        onInteractionsRevealed={post.id === revealingPostId ? finishInteractionReveal : undefined} />
                 )) : (
                     <div className="px-8 py-14 text-center text-slate-400">
                         <div className="text-4xl mb-3">◌</div>
@@ -283,14 +371,23 @@ const MomentsApp: React.FC = () => {
                 )}
             </div>
 
+            {sendState !== 'idle' && (
+                <button
+                    type="button"
+                    onClick={() => { if (sendState === 'error') setSendState('idle'); }}
+                    className={`absolute left-1/2 -translate-x-1/2 bottom-[max(22px,env(safe-area-inset-bottom))] z-40 max-w-[86%] rounded-full px-4 py-2.5 shadow-xl text-sm flex items-center gap-2 transition-all ${sendState === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-900/90 text-white'}`}
+                >
+                    {sendState !== 'error' && <span className="w-3.5 h-3.5 rounded-full border-2 border-white/35 border-t-white animate-spin shrink-0" />}
+                    <span className="truncate">{sendState === 'sending' ? '朋友圈正在发送…' : sendState === 'revealing' ? '发送成功，大家正在互动…' : `发送失败：${sendError}`}</span>
+                </button>
+            )}
+
             {settingsOpen && (
                 <SettingsPanel settings={settings} characters={characters} generating={generating}
                     onChange={persistSettings} onGenerate={manualGenerate} onClose={() => setSettingsOpen(false)} />
             )}
             {composerOpen && (
-                <Composer settings={settings} characters={characters} userProfile={userProfile} apiConfig={apiConfig}
-                    onClose={() => setComposerOpen(false)}
-                    onPublished={async () => { setComposerOpen(false); setPosts(await loadMomentPosts()); addToast('朋友圈发布成功', 'success'); }} />
+                <Composer onClose={() => setComposerOpen(false)} onPublish={publishUserMoment} />
             )}
             {commentTarget && (
                 <div className="absolute inset-0 z-50 bg-black/30 flex items-end" onClick={() => setCommentTarget(null)}>
@@ -378,33 +475,23 @@ const SettingsPanel: React.FC<{
 };
 
 const Composer: React.FC<{
-    settings: MomentsSettings;
-    characters: ReturnType<typeof useOS>['characters'];
-    userProfile: ReturnType<typeof useOS>['userProfile'];
-    apiConfig: ReturnType<typeof useOS>['apiConfig'];
     onClose: () => void;
-    onPublished: () => void;
-}> = ({ settings, characters, userProfile, apiConfig, onClose, onPublished }) => {
+    onPublish: (draft: MomentDraft) => void;
+}> = ({ onClose, onPublish }) => {
     const [content, setContent] = useState('');
     const [images, setImages] = useState<string[]>([]);
     const [locationEnabled, setLocationEnabled] = useState(false);
     const [location, setLocation] = useState('');
-    const [publishing, setPublishing] = useState(false);
     const addImages = async (files: FileList | null) => {
         if (!files) return;
         const slots = Math.max(0, 9 - images.length);
         const stored = await Promise.all(Array.from(files).slice(0, slots).map(fileToStoredMomentImage));
         setImages(prev => [...prev, ...stored].slice(0, 9));
     };
-    const publish = async () => {
-        if ((!content.trim() && !images.length) || publishing) return;
-        setPublishing(true);
-        try {
-            await createUserMoment({ content, images, location: locationEnabled ? location : undefined, characters, userProfile, apiConfig, settings });
-            onPublished();
-        } catch (err: any) {
-            window.alert(err?.message || '发布失败');
-        } finally { setPublishing(false); }
+    const publish = () => {
+        if (!content.trim() && !images.length) return;
+        // 立即交给总览页后台发送；Composer 会随父层状态切换而卸载，不在这里等待 API。
+        onPublish({ content, images, location: locationEnabled ? location : undefined });
     };
     return (
         <ModalShell title="发表朋友圈" onClose={onClose}>
@@ -418,9 +505,9 @@ const Composer: React.FC<{
                     <label className="h-12 flex items-center justify-between border-b border-slate-100"><span className="flex items-center gap-2"><MapPin size={18} />所在位置</span><input type="checkbox" checked={locationEnabled} onChange={e => setLocationEnabled(e.target.checked)} className="w-5 h-5 accent-[#07c160]" /></label>
                     {locationEnabled && <input value={location} onChange={e => setLocation(e.target.value)} className="w-full h-11 mt-2 rounded-xl bg-slate-100 px-3 outline-none" placeholder="填写位置（可留空）" />}
                 </div>
-                <p className="mt-5 text-xs text-slate-400 leading-relaxed">发布时会调用一次全局 API，让受邀角色一次性完成点赞和一轮评论；生成完成后整条互动同时出现。</p>
+                <p className="mt-5 text-xs text-slate-400 leading-relaxed">点击发表后会返回朋友圈并在后台调用一次全局 API；动态发送完成后，点赞和评论会陆续出现。</p>
             </div>
-            <div className="p-4 border-t border-slate-100"><button onClick={publish} disabled={publishing || (!content.trim() && !images.length)} className="w-full h-12 rounded-xl bg-[#07c160] text-white font-semibold disabled:opacity-40">{publishing ? '大家正在赶来评论…' : '发表'}</button></div>
+            <div className="p-4 border-t border-slate-100"><button onClick={publish} disabled={!content.trim() && !images.length} className="w-full h-12 rounded-xl bg-[#07c160] text-white font-semibold disabled:opacity-40">发表</button></div>
         </ModalShell>
     );
 };
