@@ -11,6 +11,7 @@ import type {
 import { DB } from './db';
 import { ContextBuilder } from './context';
 import { extractContent, safeResponseJson } from './safeApi';
+import { resolveRefToDataUrl } from './blobRef';
 
 const SETTINGS_ASSET_ID = 'morpho_moments_settings_v1';
 const MEMORY_ASSET_ID = 'morpho_moments_memory_v1';
@@ -168,8 +169,20 @@ const jsonObjectFromText = (raw: string): any => {
     throw new Error('朋友圈 JSON 不完整');
 };
 
-async function callMomentsDirector(api: APIConfig, prompt: string): Promise<any> {
+export const buildMomentsUserContent = (prompt: string, imageUrls: string[]): string | Array<Record<string, any>> => {
+    const validImages = imageUrls.filter(url => /^data:image\//i.test(url) || /^https?:\/\//i.test(url));
+    if (!validImages.length) return prompt;
+    return [
+        { type: 'text', text: prompt },
+        ...validImages.map(url => ({ type: 'image_url', image_url: { url } })),
+    ];
+};
+
+async function callMomentsDirector(api: APIConfig, prompt: string, images: string[] = []): Promise<any> {
     if (!api.baseUrl || !api.apiKey || !api.model) throw new Error('请先在设置里配置全局 API');
+    const resolvedImages = images.length
+        ? (await Promise.all(images.map(resolveRefToDataUrl))).filter(Boolean)
+        : [];
     const response = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
@@ -177,7 +190,7 @@ async function callMomentsDirector(api: APIConfig, prompt: string): Promise<any>
             model: api.model,
             messages: [
                 { role: 'system', content: '你是朋友圈生活流导演。严格只输出一个合法 JSON 对象，不要 markdown，不要解释。' },
-                { role: 'user', content: prompt },
+                { role: 'user', content: buildMomentsUserContent(prompt, resolvedImages) },
             ],
             temperature: 0.92,
             max_tokens: 5000,
@@ -368,7 +381,7 @@ ${options.content || '（只发了图片）'}
 ${briefs}
 
 只输出：{"comments":[{"id":"c1","authorId":"角色ID","content":"评论"},{"id":"c2","authorId":"角色ID","content":"回复","replyToCommentId":"c1","replyToName":"名字"}]}`;
-    const result = await callMomentsDirector(options.apiConfig, prompt);
+    const result = await callMomentsDirector(options.apiConfig, prompt, options.images);
     const comments = normalizeComments(result?.comments, invited, '', createdAt);
     const commentingIds = new Set(comments.map(comment => comment.authorCharId).filter(Boolean));
     if (invited.some(char => !commentingIds.has(char.id))) {

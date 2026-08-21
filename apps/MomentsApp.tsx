@@ -7,6 +7,7 @@ import { useOS } from '../context/OSContext';
 import type { MomentsSettings, SocialComment, SocialPost } from '../types';
 import TokenImg from '../components/os/TokenImg';
 import { putImageBlob, useBlobRefUrl } from '../utils/blobRef';
+import { processImageToBlob } from '../utils/file';
 import {
     DEFAULT_MOMENTS_SETTINGS,
     createUserMoment,
@@ -28,6 +29,14 @@ const formatMomentTime = (timestamp: number): string => {
 };
 
 const fileToStoredImage = async (file: File): Promise<string> => putImageBlob(file);
+
+// 动态图片只存本机；发布给视觉模型时再从 blobref 解析为 data URL。
+// 先把手机原片压到适合识图的尺寸，避免 1—9 张照片把单次请求膨胀到几十 MB。
+const fileToStoredMomentImage = async (file: File): Promise<string> => putImageBlob(await processImageToBlob(file, {
+    maxWidth: 1280,
+    quality: 0.84,
+    forceJpeg: true,
+}));
 
 const ImageTile: React.FC<{ value: string; className?: string; onRemove?: () => void }> = ({ value, className = '', onRemove }) => (
     <div className={`relative overflow-hidden bg-slate-100 ${className}`}>
@@ -384,7 +393,7 @@ const Composer: React.FC<{
     const addImages = async (files: FileList | null) => {
         if (!files) return;
         const slots = Math.max(0, 9 - images.length);
-        const stored = await Promise.all(Array.from(files).slice(0, slots).map(fileToStoredImage));
+        const stored = await Promise.all(Array.from(files).slice(0, slots).map(fileToStoredMomentImage));
         setImages(prev => [...prev, ...stored].slice(0, 9));
     };
     const publish = async () => {
