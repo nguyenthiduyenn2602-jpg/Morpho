@@ -1928,6 +1928,20 @@ export interface StoryTheaterArchive {
     createdAt: number;
 }
 
+/** 剧情剧场每条时间线独立的 NAI 配图偏好；接口、模型和采样参数仍读取全局生图 2.0。 */
+export interface StoryTheaterImageConfig {
+    enabled: boolean;
+    /** 本剧情独立画师串，不修改角色私聊生图设置。 */
+    styleTags?: string;
+    /** 默认横图 1216×832，可在剧情顶部单独改画幅。 */
+    width: number;
+    height: number;
+    /** 用户当前剧情身份的外观锚点。 */
+    userAnchor?: string;
+    /** 所有出场角色各自的外观锚点，key 为 CharacterProfile.id。 */
+    characterAnchors: Record<string, string>;
+}
+
 /** 剧场里用户所扮演的身份；已有角色按 characterId 动态读取，自定义身份来自面具箱。 */
 export type StoryTheaterMaskSelection =
     | { type: 'user' }
@@ -1959,6 +1973,8 @@ export interface StoryTheaterEntry {
     /** 本剧情中用户执笔的身份；缺省时使用真实用户档案。 */
     mask?: StoryTheaterMaskSelection;
     characterIds: string[];
+    /** 开启后每轮正文完成后自动生成一张剧情配图。 */
+    imageGeneration?: StoryTheaterImageConfig;
     /** true=像【陪伴】一样，把第三人称正文分别写入每个角色的正常记忆流。 */
     writesToCharacterMemory: boolean;
     /** 每位演员各自的剧情时间锚点（datetime-local 字符串），允许跨时区/跨世界线。 */

@@ -47,6 +47,9 @@ import {
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
+import StoryImageSettingsButton from './StoryImageSettings';
+import { generateStoryTheaterImage } from '../../../utils/storyTheaterImage';
+import { putImageBlob, useBlobRefUrl } from '../../../utils/blobRef';
 
 interface Props {
     entry: StoryTheaterEntry;
@@ -246,6 +249,14 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
             return <section key={index} className='pl-4 border-l-2 border-slate-300'><div className='text-[10px] font-bold text-slate-500'>{block.title || '附加信息'}</div><div className='mt-2'><LabeledRows lines={lines} /></div></section>;
         })}
     </div>;
+};
+
+const StoryRoundImage: React.FC<{ value?: string }> = ({ value }) => {
+    const src = useBlobRefUrl(value);
+    if (!src) return null;
+    return <figure className='mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-200 shadow-sm'>
+        <img src={src} alt='本轮剧情配图' className='block h-auto w-full object-cover' />
+    </figure>;
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
@@ -669,7 +680,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 const mirrorIds = Object.values((rerollTarget.metadata?.theaterMirrorIds || {}) as Record<string, number>).map(Number).filter(Boolean);
                 await DB.deleteMessages([rerollTarget.id, ...mirrorIds]);
             }
-            await saveCentralAndMirrors('assistant', content, {
+            const assistantMessageId = await saveCentralAndMirrors('assistant', content, {
                 theaterPromptTokens: promptTokenCount,
                 theaterPromptTokensExact: promptTokenCountExact,
                 ...(affinityInputs.length > 0 ? { theaterAffinityInputs: affinityInputs } : {}),
@@ -678,6 +689,38 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setAffinityDrafts({});
             setShowAffinityInput(false);
             await loadMessages();
+            if (entry.imageGeneration?.enabled) {
+                setMemoryStatus('正在绘制本轮剧情…');
+                try {
+                    const imageResult = await generateStoryTheaterImage({
+                        apiConfig,
+                        entry,
+                        actors,
+                        userName: promptIdentityName,
+                        history: [
+                            ...visibleHistory.slice(-6)
+                                .filter(message => message.role === 'user' || message.role === 'assistant')
+                                .map(message => ({ role: message.role as 'user' | 'assistant', content: message.content })),
+                            ...(!assistantOpening && text ? [{ role: 'user' as const, content: text }] : []),
+                            { role: 'assistant' as const, content },
+                        ],
+                    });
+                    const theaterImageRef = typeof imageResult.image === 'string'
+                        ? imageResult.image
+                        : await putImageBlob(imageResult.image);
+                    await DB.updateMessageMetadata(assistantMessageId, previous => ({
+                        ...previous,
+                        theaterImageRef,
+                        theaterImagePrompt: imageResult.prompt,
+                    }));
+                    await loadMessages();
+                } catch (imageError: any) {
+                    console.error('[StoryTheater] image generation failed', imageError);
+                    addToast(`本轮剧情已生成，但配图失败：${imageError?.message || imageError}`, 'error');
+                } finally {
+                    setMemoryStatus('');
+                }
+            }
             if (entry.writesToCharacterMemory) void applyActorMemoryPipeline();
             else void archiveIfNeeded();
         } catch (error: any) {
@@ -693,7 +736,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setSending(false);
             setRerollingId(null);
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, threadId]);
+    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, sending, threadId]);
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
     const pendingRetryInput = getPendingStoryRetryInput(messages);
@@ -711,6 +754,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 <button onClick={onBack} className='w-9 h-9 rounded-full grid place-items-center'><ArrowLeft size={20} /></button>
                 <div className='min-w-0 flex-1'><div className='text-[9px] tracking-[.24em] uppercase font-bold text-violet-500'>Story theater</div><h1 className='font-serif font-semibold truncate'>{entry.title}</h1></div>
                 {onOpenVectorMemory && <button onClick={onOpenVectorMemory} className='w-9 h-9 rounded-full grid place-items-center text-violet-600' title='本剧情向量记忆' aria-label='本剧情向量记忆'><Database size={18} /></button>}
+                <StoryImageSettingsButton entry={entry} onChange={onEntryChange} />
                 <StoryAppearanceButton />
                 <button onClick={onEdit} className='w-9 h-9 rounded-full grid place-items-center'><GearSix size={19} /></button>
             </div>
@@ -760,13 +804,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 <div className='pb-5 pl-7'>
                                     {message.role === 'user'
                                         ? <p className='text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p>
-                                        : <StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />}
+                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundImage value={message.metadata?.theaterImageRef} /></>}
                                 </div>
                             </details>;
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundImage value={message.metadata?.theaterImageRef} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}

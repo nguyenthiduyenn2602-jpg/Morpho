@@ -45,9 +45,10 @@ export function extractNovelAiModelIds(data: any): string[] {
     const source = Array.isArray(data) ? data
         : Array.isArray(data?.data) ? data.data
             : Array.isArray(data?.models) ? data.models : [];
-    return [...new Set(source.map((item: any) => typeof item === 'string' ? item : item?.id || item?.name)
+    const ids: string[] = source.map((item: any) => typeof item === 'string' ? item : item?.id || item?.name)
         .filter((item: any): item is string => typeof item === 'string' && !!item.trim())
-        .map((item: string) => item.trim()))].sort((a, b) => a.localeCompare(b));
+        .map((item: string) => item.trim());
+    return [...new Set<string>(ids)].sort((a, b) => a.localeCompare(b));
 }
 
 export async function fetchNovelAiModels(config: NovelAiImageGenerationApiConfig): Promise<string[]> {
@@ -186,12 +187,13 @@ export function buildNovelAiPayload(
     cfg: CharacterNovelAiImageGenerationConfig,
     request: ImageGenerationDirective,
     seed = Math.floor(Math.random() * 0xffffffff),
-    referenceImageBase64 = '',
+    referenceImageBase64: string | string[] = '',
 ): Record<string, any> {
     const prompt = buildNovelAiPrompt(cfg, request);
     const negative = splitNovelAiTags(cfg.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS).join(', ');
     const caption = { base_caption: prompt, char_captions: [] as any[] };
     const negativeCaption = { base_caption: negative, char_captions: [] as any[] };
+    const referenceImages = (Array.isArray(referenceImageBase64) ? referenceImageBase64 : [referenceImageBase64]).filter(Boolean);
     return {
         input: prompt,
         model: api.model || DEFAULT_NAI_IMAGE_MODEL,
@@ -218,9 +220,9 @@ export function buildNovelAiPayload(
             skip_cfg_above_sigma: null,
             use_coords: false,
             characterPrompts: [],
-            reference_image_multiple: referenceImageBase64 ? [referenceImageBase64] : [],
-            reference_information_extracted_multiple: referenceImageBase64 ? [1] : [],
-            reference_strength_multiple: referenceImageBase64 ? [Math.min(1, Math.max(0, cfg.referenceStrength ?? 0.6))] : [],
+            reference_image_multiple: referenceImages,
+            reference_information_extracted_multiple: referenceImages.map(() => 1),
+            reference_strength_multiple: referenceImages.map(() => Math.min(1, Math.max(0, cfg.referenceStrength ?? 0.6))),
             deliberate_euler_ancestral_bug: false,
             prefer_brownian: true,
             v4_prompt: { caption, use_coords: false, use_order: true },
@@ -237,10 +239,19 @@ export async function generateNovelAiCharacterImage(
     if (!api.apiKey.trim()) throw new Error('NovelAI API Key 尚未配置');
     const cfg = char.novelAiImageGeneration;
     if (!cfg?.enabled) throw new Error('当前角色尚未开启生图 2.0');
-    const referenceImageBase64 = cfg.referenceImageUrl?.trim()
-        ? await fetchReferenceImageBase64(cfg.referenceImageUrl.trim())
-        : '';
+    return generateNovelAiImage(api, cfg, request, cfg.referenceImageUrl ? [cfg.referenceImageUrl] : []);
+}
 
+/** 通用 NAI 生成入口：供私聊角色与多人剧情剧场共用同一套全局 API。 */
+export async function generateNovelAiImage(
+    api: NovelAiImageGenerationApiConfig,
+    cfg: CharacterNovelAiImageGenerationConfig,
+    request: ImageGenerationDirective,
+    referenceImageUrls: string[] = [],
+): Promise<Blob | string> {
+    if (!api.apiKey.trim()) throw new Error('NovelAI API Key 尚未配置');
+    const urls = referenceImageUrls.map(url => url.trim()).filter(Boolean);
+    const referenceImages = urls.length ? await Promise.all(urls.map(fetchReferenceImageBase64)) : [];
     const response = await fetch(novelAiGenerateEndpoint(api.baseUrl), {
         method: 'POST',
         headers: {
@@ -248,7 +259,7 @@ export async function generateNovelAiCharacterImage(
             Accept: 'application/zip, application/json, image/*',
             Authorization: `Bearer ${api.apiKey.trim()}`,
         },
-        body: JSON.stringify(buildNovelAiPayload(api, cfg, request, undefined, referenceImageBase64)),
+        body: JSON.stringify(buildNovelAiPayload(api, cfg, request, undefined, referenceImages)),
     });
     if (!response.ok) throw new Error(await readNovelAiError(response, `NovelAI 生图失败（HTTP ${response.status}）`));
 

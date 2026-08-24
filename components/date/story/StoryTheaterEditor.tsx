@@ -41,6 +41,19 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
     const presetStats = getPresetPromptStats(effectivePreset);
 
     const update = <K extends keyof StoryTheaterEntry>(key: K, value: StoryTheaterEntry[K]) => setDraft(current => ({ ...current, [key]: value, updatedAt: Date.now() }));
+    const updateImage = (patch: Partial<NonNullable<StoryTheaterEntry['imageGeneration']>>) => setDraft(current => ({
+        ...current,
+        imageGeneration: {
+            enabled: current.imageGeneration?.enabled === true,
+            styleTags: current.imageGeneration?.styleTags || '',
+            width: current.imageGeneration?.width || 1216,
+            height: current.imageGeneration?.height || 832,
+            userAnchor: current.imageGeneration?.userAnchor || '',
+            characterAnchors: current.imageGeneration?.characterAnchors || {},
+            ...patch,
+        },
+        updatedAt: Date.now(),
+    }));
     const toggleCharacter = (char: CharacterProfile) => setDraft(current => {
         const adding = !current.characterIds.includes(char.id);
         const characterIds = adding ? [...current.characterIds, char.id] : current.characterIds.filter(id => id !== char.id);
@@ -52,6 +65,18 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
             selectedWorldbookIds: adding ? Array.from(new Set([...current.selectedWorldbookIds, ...(char.mountedWorldbooks || []).map(book => book.id)])) : current.selectedWorldbookIds.filter(id => validBooks.has(id)),
             characterMemoryDates: { ...current.characterMemoryDates, ...(adding && !current.characterMemoryDates[char.id] ? { [char.id]: localDateTime() } : {}) },
             characterContextLimits: { ...current.characterContextLimits, ...(adding && !current.characterContextLimits[char.id] ? { [char.id]: 100 } : {}) },
+            imageGeneration: {
+                enabled: current.imageGeneration?.enabled === true,
+                styleTags: current.imageGeneration?.styleTags || '',
+                width: current.imageGeneration?.width || 1216,
+                height: current.imageGeneration?.height || 832,
+                userAnchor: current.imageGeneration?.userAnchor || '',
+                characterAnchors: {
+                    ...(current.imageGeneration?.characterAnchors || {}),
+                    ...(adding && !current.imageGeneration?.characterAnchors?.[char.id]
+                        ? { [char.id]: char.novelAiImageGeneration?.characterTags || '' } : {}),
+                },
+            },
             updatedAt: Date.now(),
         };
     });
@@ -96,6 +121,12 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
                 </button>
                 {(maskLocked || draft.writesToCharacterMemory) && <p className='mt-2 text-[10px] leading-5 text-slate-500'>{draft.writesToCharacterMemory ? '真实时间陪伴只能使用真实的你，不能扮演已有角色或原创人物。' : '第一段内容发出后，当前身份会锁定，避免中途更换导致人物记忆与叙事视角错位。'}</p>}
                 <div className='mt-4 grid grid-cols-2 gap-2.5'>{characters.map(char => { const selected = draft.characterIds.includes(char.id); const isMask = draft.mask?.type === 'character' && draft.mask.id === char.id; return <button key={char.id} disabled={isMask} onClick={() => toggleCharacter(char)} className={`flex items-center gap-3 p-3 rounded-2xl border text-left disabled:opacity-45 ${selected ? 'bg-violet-50 border-violet-300' : 'bg-white border-slate-200'}`}><img src={char.avatar} alt='' className='w-10 h-10 rounded-full object-cover' /><span className='min-w-0 flex-1'><span className='block text-sm font-semibold truncate'>{char.name}</span>{isMask && <span className='block text-[9px] text-violet-500'>当前由你扮演</span>}</span><span className={`w-4 h-4 rounded-full border-2 ${selected ? 'bg-violet-600 border-violet-600' : 'border-slate-300'}`} /></button>; })}</div>
+                <div className='mt-5 rounded-2xl border border-violet-200 bg-violet-50/70 p-4'>
+                    <div className='text-xs font-bold text-violet-800'>剧情配图 · 人物锚点</div>
+                    <p className='mt-1 text-[10px] leading-5 text-violet-600'>用英文逗号填写发型、发色、瞳色、体型等固定特征。每轮只把当前画面里真正出镜的人交给 NAI，支持多人同框。</p>
+                    <label className='mt-4 block'><span className='text-[10px] font-bold text-slate-500'>{resolvedMask.name || '你'} · 用户侧锚点</span><textarea value={draft.imageGeneration?.userAnchor || ''} onChange={event => updateImage({ userAnchor: event.target.value })} placeholder='1girl, blonde hair, pink eyes, long hair' className='mt-1.5 min-h-20 w-full resize-y rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-xs leading-5 outline-none' /></label>
+                    <div className='mt-3 space-y-3'>{actors.map(actor => <label key={actor.id} className='block'><span className='text-[10px] font-bold text-slate-500'>{actor.name} · 出场人物锚点</span><textarea value={draft.imageGeneration?.characterAnchors?.[actor.id] || ''} onChange={event => updateImage({ characterAnchors: { ...(draft.imageGeneration?.characterAnchors || {}), [actor.id]: event.target.value } })} placeholder='1boy, black hair, golden eyes, mature male' className='mt-1.5 min-h-20 w-full resize-y rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-xs leading-5 outline-none' /></label>)}</div>
+                </div>
             </section>
             <section className='pt-6 border-t border-slate-200'>
                 <div className='text-[9px] tracking-[.22em] uppercase font-bold text-violet-500'>03 / Memory</div><h2 className='mt-1 text-lg font-semibold'>这段故事是真的吗</h2>
