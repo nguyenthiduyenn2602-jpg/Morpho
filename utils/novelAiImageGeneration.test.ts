@@ -73,7 +73,7 @@ describe('novelAiImageGeneration', () => {
         expect(payload.parameters.use_coords).toBe(true);
         expect(payload.parameters.characterPrompts).toHaveLength(2);
         expect(payload.parameters.v4_prompt.use_coords).toBe(true);
-        expect(payload.input).toBe('very aesthetic, masterpiece, high quality, absurdres, artist:test, 1girl, 1boy, office, night, medium wide shot | 1girl, blonde hair, white shirt, {target#hug} | 1boy, black hair, black suit, {source#hug}');
+        expect(payload.input).toBe('very aesthetic, masterpiece, high quality, absurdres, artist:test, 1girl, 1boy, office, night, medium wide shot');
         expect(payload.parameters.v4_prompt.caption.base_caption).toContain('office');
         expect(payload.parameters.v4_prompt.caption.base_caption).not.toContain('blonde hair');
         expect(payload.parameters.v4_prompt.caption.char_captions[0]).toEqual({

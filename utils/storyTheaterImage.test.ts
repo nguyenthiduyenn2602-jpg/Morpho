@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStoryFrameMainPrompt, buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
+import { buildStoryFrameMainPrompt, buildStoryFramePackedPrompt, buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
 
 const participants = [
     { key: 'user', name: '沈欢', anchor: '1girl, blonde hair, pink eyes' },
@@ -54,6 +54,11 @@ describe('storyTheaterImage', () => {
         expect(storyboard.frames[0].characters[1].negative).toContain('blonde hair');
         expect(storyboard.frames[0].characters[1].negative).toContain('silver hair');
         expect(storyboard.frames[0].characters.map(character => character.center.x)).toEqual([0.1, 0.5, 0.9]);
+        const packed = buildStoryFramePackedPrompt(storyboard.frames[0]);
+        expect(packed).toContain('left character: girl, 1.35::blonde hair, pink eyes::');
+        expect(packed).toContain('center character: boy, 1.35::black hair, blue eyes::');
+        expect(packed).toContain('right character: boy, 1.35::silver hair, red eyes::');
+        expect(packed.match(/blonde hair/g)).toHaveLength(1);
     });
 
     it('asks the planner to support any number of visible people', () => {

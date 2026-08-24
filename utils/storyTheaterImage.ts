@@ -374,6 +374,34 @@ export function buildStoryFrameMainPrompt(frame: StoryImageFramePlan): string {
         .join(', ');
 }
 
+const packedCharacterPosition = (character: StoryImageCharacterPlan, index: number, total: number): string => {
+    if (total === 1) return 'center';
+    if (character.center.x <= 0.3) return 'left';
+    if (character.center.x >= 0.7) return 'right';
+    return index === 0 ? 'left' : index === total - 1 ? 'right' : 'center';
+};
+
+const characterIdentityOnly = (prompt: string): string => {
+    const match = prompt.match(/^\s*(girl|boy|woman|man|milf|dilf|other)\s*,\s*(1\.35::[\s\S]*?::)(?:\s*,|$)/i);
+    return match ? `${match[1]}, ${match[2]}` : prompt;
+};
+
+/**
+ * Put every visible person's identity in one ordinary base prompt. Native V4 character
+ * captions are still sent as a spatial aid, but the image no longer depends on a relay
+ * preserving those nested fields in order to see hair/eye colors at all.
+ */
+export function buildStoryFramePackedPrompt(frame: StoryImageFramePlan): string {
+    const main = buildStoryFrameMainPrompt(frame);
+    const characters = frame.characters || [];
+    if (!characters.length) return main;
+    const identityLine = characters.map((character, index) => {
+        const position = packedCharacterPosition(character, index, characters.length);
+        return `${position} character: ${characterIdentityOnly(character.prompt)}`;
+    }).join('; ');
+    return `${main}, three distinct characters, fixed identity lineup from left to right, ${identityLine}`;
+}
+
 export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {
     const novelApi = apiConfig.novelAiImageGeneration;
     if (!novelApi?.baseUrl?.trim() || !novelApi.apiKey?.trim() || !novelApi.model?.trim()) throw new Error('全局生图 2.0 的 URL、API Key 或模型尚未配置完整');
@@ -386,7 +414,7 @@ export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry
             // Some compatible relays silently discard NovelAI V4 char_captions. Keep the
             // native character prompts, but also lead the base prompt with weighted identity
             // anchors so hair, eyes and other fixed traits survive those relays.
-            prompt: structuredCharacters.length > 0 ? buildStoryFrameMainPrompt(frame) : frame.finalPrompt,
+            prompt: structuredCharacters.length > 0 ? buildStoryFramePackedPrompt(frame) : frame.finalPrompt,
             selfie: false,
             includeUser: false,
             characterPrompts: structuredCharacters.map(character => ({
