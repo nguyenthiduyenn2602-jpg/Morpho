@@ -376,31 +376,7 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
             && !frame.characters.some(character => hasStoryImagePlaceholder(removeGeneratedIdentityTags(character.prompt)))
         );
         if (strict && validFrames.length === 0) throw new Error('生图导演没有提取出本轮的具体动作；已停止生图，未消耗 NAI 次数');
-        if (strict && validFrames.length < 2 && validFrames[0]) {
-            // Some compatible chat endpoints enforce a smaller completion cap
-            // than the requested max_tokens and cut the second worldbook block.
-            // Reusing the one complete frozen instant is safer than inventing a
-            // second action or discarding the whole round. NovelAI's seed still
-            // gives the user two independent renders of that story moment.
-            const first = validFrames[0];
-            const second: StoryImageFramePlan = {
-                ...first,
-                kind: 'highlight',
-                title: '剧情配图二',
-                description: `${first.description}（同一剧情瞬间的第二张）`,
-                visible: [...first.visible],
-                characters: first.characters.map(character => ({ ...character, center: { ...character.center } })),
-            };
-            const frames = [{ ...first, kind: 'motion' as const, title: '剧情配图一' }, second];
-            return {
-                state: {
-                    ...protocol.state,
-                    frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
-                },
-                frames,
-            };
-        }
-        return strict ? { ...protocol, frames: validFrames.slice(0, 2) } : protocol;
+        return strict ? { ...protocol, frames: validFrames.slice(0, 1) } : protocol;
     }
     let parsed: any;
     const jsonObject = extractJsonObject(raw);
@@ -525,21 +501,20 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
             role: 'system',
             content: [
                 'You are a dedicated NovelAI prompt compiler following the attached worldbook image format. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
-                'Extract two drawable frozen instants from the NEWEST ROUND. Do not classify them as movement/highlight frames and do not invent, intensify, continue or rearrange any action that the story did not state.',
+                'Extract ONE richly detailed drawable frozen instant from the NEWEST ROUND. Do not classify it or invent, intensify, continue or rearrange any action that the story did not state.',
                 'Preserve identity anchors exactly. They are authoritative and will be injected by code after your text is parsed.',
-                'Return exactly TWO concise single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown. The literal field names must remain exactly `Scene Composition`, `Character 1 Prompt`, `Character 1 UC`, `Character 2 Prompt`... Never rename a field to `user Prompt`, a character key, or a character name:',
+                'Return exactly ONE complete single-line Tavern Scene Plugin block and nothing else. Do NOT return JSON or Markdown. The literal field names must remain exactly `Scene Composition`, `Character 1 Prompt`, `Character 1 UC`, `Character 2 Prompt`... Never rename a field to `user Prompt`, a character key, or a character name:',
                 '<image>image###Scene Composition: [counts, short location, framing]; Character 1 Prompt: [exact key], [exact name], [specific clothing], [specific body pose], [exact hand/body placement], [specific expression], ([source/target/mutual]#[concrete action])|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
-                '<image>image###Scene Composition: [counts, short location, different framing]; Character 1 Prompt: [same fixed identity locator], [a second concrete frozen instant]|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
                 'WORLD BOOK PRIORITY: (1) if the newest round contains a described photo/video/live-stream, draw moments from that media; (2) otherwise draw two representative moments explicitly present in the current interaction; (3) for NSFW text, choose the most visually clear and sensually intense moments already written. Add nsfw only when explicit anatomy is visible.',
-                'The NEWEST ROUND is the only authority for action. Each block depicts one instant, never a sequence. If the round contains two distinct drawable instants, output them in story order. If it contains only one, both blocks must keep exactly the same people, body positions, hand placements and interaction, changing only camera distance or angle.',
+                'The NEWEST ROUND is the only authority for action. The block depicts one instant, never a sequence. Select the single clearest moment that best expresses the action and relationship already written.',
                 'Scene Composition contains subject counts, the physical setting, time/light only when stated or needed, and a camera angle/framing that reveals the selected action. Do not add decorative props or scenery that the story did not mention.',
                 'Each Character N Prompt starts with that participant key and name exactly, then identity-independent clothing, one body pose, one concrete interaction, one hand/body placement and one expression taken from the selected instant. Follow PARTICIPANTS order and include only visible people.',
                 'Do not write hair, eye color, age, skin or other identity traits in Character Prompt. Code injects the fixed identity anchor and discards generated identity traits, so character identity cannot be changed here.',
                 'For interactions use only paired (source#same action) and (target#same action), or (mutual#same action). Participant IDs belong only at the beginning of Character Prompt and are forbidden inside interaction parentheses.',
                 'centers uses the 5x5 grid a1-e5. Infer positions from the story. Use b3/d3 for separated pairs and a3/c3/e3 for separated trios; overlap centers only when their bodies actually overlap in the selected action.',
                 'Never copy schema placeholders such as clothing, pose, expression, action or exclusions. Every Character Prompt must contain a concrete visible verb/body placement taken from the NEWEST ROUND.',
-                'Keep each character prompt extremely compact: key, name, clothing/nude, one pose, one hand placement, one expression, and exactly ONE paired interaction tag. Use NAI tags, not prose or redundant synonyms. Character UC must be exactly `bad anatomy, bad hands`. Both blocks together must stay under 900 output tokens.',
-                'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
+                'Write each character prompt in detailed NAI tags: key, name, clothing state, body orientation, pose, limb and hand placement, facial expression, visible physical state, and the paired interaction tag. Preserve every visually important detail from the chosen instant; do not replace details with vague prose. Character UC starts with `bad anatomy, bad hands` and may add concrete contradictions to exclude.',
+                'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the block.',
             ].join('\n'),
         },
         { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nEARLIER CONTEXT (continuity only)\n${earlierHistory || '(none)'}\n\nNEWEST ROUND (extract the exact action from here)\n${newestRound || '(opening scene)'}` },
@@ -644,8 +619,9 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
         console.error('[StoryTheater] image director output rejected', raw.slice(0, 1600));
         throw error;
     }
-    const count = options.entry.imageGeneration.imageCount === 1 ? 1 : 2;
-    const plans = count === 1 ? [storyboard.frames[0]] : storyboard.frames.slice(0, 2);
+    // One detailed worldbook block per round. Ignore legacy timelines that
+    // persisted imageCount=2 so they cannot silently request a second image.
+    const plans = [storyboard.frames[0]];
     const frames: StoryGeneratedImageFrame[] = [];
     for (const plan of plans) {
         if (!plan?.finalPrompt) continue;

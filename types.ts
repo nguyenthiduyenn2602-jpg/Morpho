@@ -1935,7 +1935,7 @@ export interface StoryTheaterImageConfig {
     styleTags?: string;
     /** 本剧情独立负面提示词；留空时沿用生图 2.0 内置默认值。 */
     negativeTags?: string;
-    /** 每轮自动生成的关键帧数量，默认两张。 */
+    /** 兼容旧数据；当前见面模式固定每轮生成一张详细配图。 */
     imageCount?: 1 | 2;
     /** 默认横图 1216×832，可在剧情顶部单独改画幅。 */
     width: number;

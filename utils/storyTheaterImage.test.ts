@@ -76,10 +76,10 @@ describe('storyTheaterImage', () => {
             userName: '沈欢',
             history: [{ role: 'assistant', content: '三个人走进办公室。' }],
         });
-        expect(messages[0].content).toContain('Tavern Scene Plugin blocks');
+        expect(messages[0].content).toContain('Tavern Scene Plugin block');
         expect(messages[0].content).toContain('Do NOT return JSON');
         expect(messages[0].content).toContain('WORLD BOOK PRIORITY');
-        expect(messages[0].content).toContain('changing only camera distance or angle');
+        expect(messages[0].content).toContain('ONE richly detailed drawable frozen instant');
         expect(messages[0].content).toContain('forbidden inside interaction parentheses');
         expect(messages[0].content).not.toContain('largest movement or spatial change');
         expect(messages[0].content).not.toContain('relationship high point');
@@ -108,20 +108,18 @@ describe('storyTheaterImage', () => {
         const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body; user Prompt: user, 沈欢, lying on back, hands gripping sheets, (source#holding hands)|centers:a3; user UC: bad hands; character:a Prompt: character:a, 苏郁, kneeling beside her, holding her hand, (target#holding hands)|centers:c3; character:a UC: bad anatomy; character:b Prompt: character:b, 秦少川, sitting by her head, touching her cheek|centers:e3; character:b UC: bad anatomy;
 <image>image###Scene Composition: 1girl, 2boys, bedroom, upper body; user Prompt: user, 沈欢, lying on back, hand on shoulder, (mutual#eye contact)|centers:a3; user UC: bad hands; 苏郁 Prompt: character:a, 苏郁, leaning closer, hand in her hand, (mutual#eye contact)|centers:c3; 苏郁 UC: bad anatomy; 秦少川 Prompt: character:b, 秦少川, watching beside her, hand on cheek|centers:e3; 秦少川 UC: bad anatomy;`;
         const storyboard = parseStoryImageStoryboard(raw, participants, true);
-        expect(storyboard.frames).toHaveLength(2);
+        expect(storyboard.frames).toHaveLength(1);
         expect(storyboard.frames[0].characters.map(character => character.key)).toEqual(['user', 'character:a', 'character:b']);
         expect(storyboard.frames[0].characters[1].prompt).toContain('black hair, blue eyes');
-        expect(storyboard.frames[1].characters[2].prompt).toContain('silver hair, red eyes');
+        expect(storyboard.frames[0].characters[2].prompt).toContain('silver hair, red eyes');
     });
 
-    it('reuses the one complete story instant when the second worldbook block is cut off', () => {
+    it('keeps the one complete story instant when a legacy second block is cut off', () => {
         const raw = `<image>image###Scene Composition: 1girl, 1boy, bedroom, full body; Character 1 Prompt: user, 沈欢, lying on back, hands gripping sheets, (source#holding hands)|centers:b3; Character 1 UC: bad anatomy, bad hands; Character 2 Prompt: character:a, 苏郁, kneeling beside her, hand around hers, (target#holding hands)|centers:d3; Character 2 UC: bad anatomy, bad hands;###</image>
 <image>image###Scene Composition: 1girl, 1boy, bedroom, close-up; Character 1 Prompt: user, 沈欢, nude`;
         const storyboard = parseStoryImageStoryboard(raw, participants, true);
-        expect(storyboard.frames).toHaveLength(2);
-        expect(storyboard.frames[1].sharedAction).toBe(storyboard.frames[0].sharedAction);
-        expect(storyboard.frames[1].characters).toEqual(storyboard.frames[0].characters);
-        expect(storyboard.frames[1].description).toContain('同一剧情瞬间');
+        expect(storyboard.frames).toHaveLength(1);
+        expect(storyboard.frames[0].sharedAction).toContain('holding hands');
     });
 
     it('rejects copied protocol placeholders before spending an NAI call', () => {
