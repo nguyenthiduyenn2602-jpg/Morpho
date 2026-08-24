@@ -133,6 +133,14 @@ const identityLeakTags = (value: string): string[] => value
     .map(tag => tag.trim())
     .filter(tag => /(?:hair|eyes?|iris|pupil|skin|freckles?|scar|mole|tattoo|horns?|ears?|tail)/i.test(tag));
 
+const removeGeneratedIdentityTags = (value: unknown): string => cleanTags(value)
+    .split(',')
+    .map(tag => tag.trim())
+    .filter(Boolean)
+    .filter(tag => !parseCharacterSubject(tag))
+    .filter(tag => !/(?:hair|eyes?|iris|pupil|skin|freckles?|scar|mole|tattoo|horns?|ears?|tail)/i.test(tag))
+    .join(', ');
+
 export function parseStoryImageCenter(value: unknown, fallback = 'c3'): { x: number; y: number } {
     const token = String(value || fallback).trim().toLowerCase();
     const match = token.match(/^([a-e])([1-5])$/);
@@ -182,7 +190,9 @@ const buildStoryImageCharacterPlans = (
         const participant = participants.find(person => person.key === character?.key || person.name === character?.name)
             || selected[index];
         if (!participant) return null;
-        const prompt = [strengthenCharacterAnchor(participant.anchor), cleanTags(character?.prompt || character?.tags || character?.action || character?.roleAction)]
+        // The planner may repeat or hallucinate identity tags. Fixed anchors are the
+        // source of truth; the generated slot is allowed to add only clothing/action.
+        const prompt = [strengthenCharacterAnchor(participant.anchor), removeGeneratedIdentityTags(character?.prompt || character?.tags || character?.action || character?.roleAction)]
             .filter(Boolean).join(', ');
         if (!prompt) return null;
         return {
@@ -205,7 +215,92 @@ const buildStoryImageCharacterPlans = (
     });
 };
 
+const extractStoryImageBlocks = (raw: string): string[] => {
+    const source = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+    const blocks: string[] = [];
+    const wrapped = /<image>\s*image###([\s\S]*?)###\s*<\/image>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = wrapped.exec(source)) && blocks.length < 2) blocks.push(match[1].trim());
+    if (blocks.length) return blocks;
+    const bare = /image###([\s\S]*?)###/gi;
+    while ((match = bare.exec(source)) && blocks.length < 2) blocks.push(match[1].trim());
+    return blocks;
+};
+
+const readProtocolField = (block: string, label: string): string => {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = block.match(new RegExp(`(?:^|;)\\s*${escaped}\\s*:\\s*([^;]*)(?=;|$)`, 'i'));
+    return cleanTags(match?.[1]);
+};
+
+const parseProtocolCharacterSlot = (value: string): { prompt: string; center: string } => {
+    const centerMatch = value.match(/\|\s*centers?\s*:\s*([a-e][1-5]|auto)/i);
+    return {
+        prompt: cleanTags(value.replace(/\|\s*centers?\s*:\s*(?:[a-e][1-5]|auto)/ig, '')),
+        center: centerMatch?.[1]?.toLowerCase() === 'auto' ? 'c3' : (centerMatch?.[1] || ''),
+    };
+};
+
+/** Parse the Tavern Scene Plugin / worldbook semicolon protocol. */
+export function parseStoryImageProtocol(raw: string, participants: StoryImageParticipant[]): { state: StoryImageState; frames: StoryImageFramePlan[] } | null {
+    const blocks = extractStoryImageBlocks(raw);
+    if (!blocks.length) return null;
+    const titles = ['动作变化帧', '关系高光帧'];
+    const descriptions = ['本轮动作变化最明显的一瞬间', '本轮最值得描绘的互动瞬间'];
+    const frames = blocks.map((block, frameIndex) => {
+        const sceneComposition = readProtocolField(block, 'Scene Composition');
+        const slots: Array<{ key: string; prompt: string; negative: string; center: string }> = [];
+        const used = new Set<string>();
+        for (let index = 1; index <= Math.min(4, participants.length); index += 1) {
+            const rawPrompt = readProtocolField(block, `Character ${index} Prompt`);
+            if (!rawPrompt) continue;
+            const parsedSlot = parseProtocolCharacterSlot(rawPrompt);
+            const lower = parsedSlot.prompt.toLowerCase();
+            const matched = participants.find(person => !used.has(person.key) && (
+                lower.includes(person.key.toLowerCase()) || lower.includes(person.name.toLowerCase())
+            )) || participants.find(person => !used.has(person.key));
+            if (!matched) continue;
+            used.add(matched.key);
+            const withoutLocator = parsedSlot.prompt
+                .replace(new RegExp(matched.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '')
+                .replace(new RegExp(matched.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '');
+            slots.push({
+                key: matched.key,
+                prompt: cleanTags(withoutLocator),
+                negative: readProtocolField(block, `Character ${index} UC`),
+                center: parsedSlot.center || defaultCenterCodes(participants.length)[index - 1] || 'c3',
+            });
+        }
+        const visible = slots.map(slot => slot.key);
+        const plan = parseStoryImagePromptPlan(JSON.stringify({ visible, sceneTags: sceneComposition }), participants);
+        return {
+            ...plan,
+            kind: (frameIndex === 0 ? 'motion' : 'highlight') as 'motion' | 'highlight',
+            title: titles[frameIndex] || '剧情关键帧',
+            description: descriptions[frameIndex] || '本轮剧情关键帧',
+            characters: buildStoryImageCharacterPlans(slots, plan.visible, participants),
+        };
+    }).filter(frame => frame.sceneTags && frame.characters.length > 0);
+    if (!frames.length) return null;
+    const visibleKeys = [...new Set(frames.flatMap(frame => frame.visible))];
+    const state: StoryImageState = {
+        location: frames[0].sceneTags,
+        time: '', lighting: '', atmosphere: '',
+        cast: participants.filter(person => visibleKeys.includes(person.key)).map(person => ({
+            key: person.key, name: person.name, clothing: person.anchor || '人物锚点未填写', position: '', pose: '', expression: '',
+        })),
+        continuityChange: frames[0].description,
+        frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
+    };
+    return { state, frames };
+}
+
 export function parseStoryImageStoryboard(raw: string, participants: Array<{ key: string; name: string; anchor: string }>, strict = false): { state: StoryImageState; frames: StoryImageFramePlan[] } {
+    const protocol = parseStoryImageProtocol(raw, participants);
+    if (protocol) {
+        if (strict && protocol.frames.length < 2) throw new Error('生图导演只返回了一张配图段落；已停止生图，未消耗 NAI 次数');
+        return protocol;
+    }
     let parsed: any;
     const jsonObject = extractJsonObject(raw);
     try { parsed = JSON.parse(jsonObject || stripJsonFence(raw)); } catch { parsed = null; }
@@ -327,18 +422,18 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
             role: 'system',
             content: [
                 'You are a dedicated NovelAI prompt compiler for a story. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
-                'Read the newest round and previous visual state. Preserve identity anchors exactly. Choose two concrete frozen instants. The only priorities are: (1) who each person is and looks like, (2) what all visible people are doing together, (3) a very short physical location and camera composition.',
-                'Return ONLY valid compact JSON with this shape:',
-                '{"scene":{"location":"Chinese: only a physical placement such as 卧室床上/客厅沙发/浴室/墙边"},"cast":[{"key":"participant key","name":"Chinese","appearance":"copy the fixed identity anchor plus only clothing visible now"}],"continuityChange":"Chinese, one short sentence","frames":[{"title":"动作变化帧","description":"Chinese, one frozen instant","visible":["participant key"],"sharedAction":"ONE English tag sequence describing what every visible person is doing together","sceneComposition":"short location and camera framing only","characters":[{"key":"participant key","action":"English tags for this character role in sharedAction, including paired source#/target# contact tag","center":"b3"}]},{"title":"关系高光帧","description":"Chinese, a different frozen instant","visible":["participant key"],"sharedAction":"ONE English tag sequence describing what every visible person is doing together","sceneComposition":"short location and camera framing only","characters":[{"key":"participant key","action":"English tags for this character role in sharedAction, including paired source#/target# contact tag","center":"d3"}]}]}',
+                'Read the newest round and previous visual state. Choose two concrete frozen instants. The priorities are: (1) fixed participant identity, (2) one readable group action, (3) a short physical location and camera composition.',
+                'Preserve identity anchors exactly. They are authoritative and will be injected by code after your text is parsed.',
+                'Return exactly TWO single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown:',
+                '<image>image###Scene Composition: 1girl, 2boys, bedroom, full body; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:id, name, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>',
+                '<image>image###Scene Composition: 1girl, 2boys, bedroom, three-quarter body; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:id, name, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>',
                 'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest visually legible sensual beat; add nsfw to sceneComposition only when explicit anatomy is actually visible.',
-                'Frame 1 captures the largest movement or spatial change. Frame 2 captures a different relationship high point. Pick only the body parts and framing needed to make the shared action readable; do not default to a portrait or headshot.',
-                'sharedAction is the highest-priority generated text. It must be one coherent group-level action, not separate mini-descriptions per person. State who initiates, who receives and where hands/bodies are. Use paired (source#action)/(target#action) tags for contact. Describe one instant, never a sequence of moments.',
-                'sceneComposition is deliberately low priority and short: bed/sofa/bathroom/wall or similarly simple placement + one camera framing. Usually 2-6 comma-separated tags. Do not write subject counts; code derives exact 1girl/2boys-style counts from identity anchors. Do not add decorative background, time, weather, atmosphere, cinematic lighting, depth, props or scenery unless the action cannot be understood without it.',
-                'Each characters.action is the role-specific half of the SAME sharedAction, not a separate event: body pose, local hand placement, expression, and paired (source#action)/(target#action) or (mutual#action) tag. Code prepends the fixed identity anchor to this action inside that person\'s native V4 character prompt. Never repeat or alter hair, eyes, age or body identity in action.',
-                'center uses the 5x5 grid a1-e5. Preserve top-to-bottom character order as left-to-right placement. Use b3/d3 for two separated people, a3/c3/e3 for three, and c3/c3 or c3/d3 for overlapping contact.',
-                'The visible array contains only people actually visible in that frame and may contain any number of people. Character keys and name order must exactly follow PARTICIPANTS. Identity anchors are injected by code, so never contradict their hairstyle, hair color, eye color or fixed traits.',
-                'No prose outside JSON, no Markdown, dialogue, captions, UI, watermark or explanation.',
-                'Keep Chinese fields under 40 Chinese characters. Never write placeholders such as “沿用当前”“依照正文” or “未明确”.',
+                'Block 1 captures the largest movement or spatial change. Block 2 captures a different relationship high point. Describe one instant per block, never a sequence. Pick the framing needed to make the action readable; do not default to portraits or headshots.',
+                'Scene Composition is deliberately short: exact subject counts + bed/sofa/bathroom/wall or similarly simple placement + one camera framing. Do not add decorative background, weather, cinematic lighting, props or scenery unless needed to understand the action.',
+                'Each Character N Prompt is one participant\'s role in the SAME group action: first copy that participant key and name exactly, then clothing, body pose, hand placement, expression, and paired (source#action)/(target#action) or (mutual#action) tags. Follow PARTICIPANTS order and include only visible people. Never output a Character slot for an absent person.',
+                'Do not write hair, eye color, age, skin or other identity traits in Character Prompt. Code injects the fixed identity anchor and discards generated identity traits, so character identity cannot be changed here.',
+                'centers uses the 5x5 grid a1-e5. Use b3/d3 for two separated people, a3/c3/e3 for three, and c3/c3 or c3/d3 for overlapping contact.',
+                'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
             ].join('\n'),
         },
         { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nRECENT STORY\n${history || '(opening scene)'}` },
@@ -399,7 +494,7 @@ export function buildStoryFramePackedPrompt(frame: StoryImageFramePlan): string 
         const position = packedCharacterPosition(character, index, characters.length);
         return `${position} character: ${characterIdentityOnly(character.prompt)}`;
     }).join('; ');
-    return `${main}, three distinct characters, fixed identity lineup from left to right, ${identityLine}`;
+    return `${main}, ${characters.length} distinct characters, fixed identity lineup from left to right, ${identityLine}`;
 }
 
 export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {

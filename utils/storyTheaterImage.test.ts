@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStoryFrameMainPrompt, buildStoryFramePackedPrompt, buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
+import { buildStoryFrameMainPrompt, buildStoryFramePackedPrompt, buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageProtocol, parseStoryImageStoryboard } from './storyTheaterImage';
 
 const participants = [
     { key: 'user', name: '沈欢', anchor: '1girl, blonde hair, pink eyes' },
@@ -74,8 +74,22 @@ describe('storyTheaterImage', () => {
             userName: '沈欢',
             history: [{ role: 'assistant', content: '三个人走进办公室。' }],
         });
-        expect(messages[0].content).toContain('any number of people');
+        expect(messages[0].content).toContain('Tavern Scene Plugin blocks');
+        expect(messages[0].content).toContain('Do NOT return JSON');
         expect(messages[1].content).toContain('三个人走进办公室');
+    });
+
+    it('parses two worldbook image blocks and keeps fixed anchors authoritative', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body; Character 1 Prompt: user, 沈欢, pink hair, kneeling, looking right, (source#holding hands)|centers:a3; Character 1 UC: bad hands; Character 2 Prompt: character:a, 苏郁, brown hair, black shirt, standing, (target#holding hands)|centers:c3; Character 2 UC: bad anatomy; Character 3 Prompt: character:b, 秦少川, black hair, white shirt, watching|centers:e3; Character 3 UC: bad anatomy;###</image>
+<image>image###Scene Composition: 1girl, 2boys, bedroom, three-quarter body; Character 1 Prompt: user, 沈欢, smiling, (mutual#eye contact)|centers:a3; Character 1 UC: bad hands; Character 2 Prompt: character:a, 苏郁, black shirt, (mutual#eye contact)|centers:c3; Character 2 UC: bad anatomy; Character 3 Prompt: character:b, 秦少川, white shirt, watching|centers:e3; Character 3 UC: bad anatomy;###</image>`;
+        const parsed = parseStoryImageProtocol(raw, participants);
+        expect(parsed?.frames).toHaveLength(2);
+        expect(parsed?.frames[0].characters[0].prompt).toContain('1.35::blonde hair, pink eyes::');
+        expect(parsed?.frames[0].characters[0].prompt).not.toContain('pink hair');
+        expect(parsed?.frames[0].characters[1].prompt).toContain('1.35::black hair, blue eyes::');
+        expect(parsed?.frames[0].characters[1].prompt).not.toContain('brown hair');
+        expect(parsed?.frames[0].characters[2].prompt).toContain('1.35::silver hair, red eyes::');
+        expect(parsed?.frames[0].characters.map(character => character.center.x)).toEqual([0.1, 0.5, 0.9]);
     });
 
     it('parses continuity state and keeps each frame limited to its visible identities', () => {
