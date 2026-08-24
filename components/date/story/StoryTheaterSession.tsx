@@ -372,7 +372,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         const busyKey = `${message.id}:${frameIndex}`;
         setRegeneratingFrameKey(busyKey);
         try {
-            const image = await generateStoryTheaterFrameImage(apiConfig, entry, frame.finalPrompt);
+            const image = await generateStoryTheaterFrameImage(apiConfig, entry, frame);
             const imageRef = typeof image === 'string' ? image : await putImageBlob(image);
             await DB.updateMessageMetadata(message.id, previous => {
                 const nextFrames = Array.isArray(previous?.theaterImageFrames) ? [...previous.theaterImageFrames] : [];

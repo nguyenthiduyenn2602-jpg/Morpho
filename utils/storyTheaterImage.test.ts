@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStoryImagePlanningMessages, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
+import { buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
 
 const participants = [
     { key: 'user', name: '沈欢', anchor: '1girl, blonde hair, pink eyes' },
@@ -51,8 +51,13 @@ describe('storyTheaterImage', () => {
             ],
             continuityChange: '苏郁从办公桌后走到窗边，缩短了与沈欢的距离',
             frames: [
-                { title: '动作变化帧', description: '苏郁走向窗边的一刻', visible: ['user', 'character:a'], sceneTags: '1girl, 1boy, walking closer, office, medium shot' },
-                { title: '情绪高光帧', description: '沈欢在暖光里抬眼', visible: ['user'], sceneTags: '1girl, medium close-up, rule of thirds, shallow depth of field' },
+                { title: '动作变化帧', description: '苏郁走向窗边的一刻', visible: ['user', 'character:a'], sceneTags: '1girl, 1boy, office, medium wide shot', characters: [
+                    { key: 'user', prompt: 'white shirt, leaning by window, {target#approaching}', center: 'b3' },
+                    { key: 'character:a', prompt: 'black suit, walking, {source#approaching}', center: 'd3' },
+                ] },
+                { title: '关系高光帧', description: '沈欢在暖光里抬眼', visible: ['user'], sceneTags: '1girl, office window, upper body, rule of thirds', characters: [
+                    { key: 'user', prompt: 'white shirt, looking up, soft smile', center: 'c3' },
+                ] },
             ],
         }), participants);
         expect(storyboard.state.location).toBe('办公室窗边');
@@ -61,6 +66,15 @@ describe('storyTheaterImage', () => {
         expect(storyboard.frames).toHaveLength(2);
         expect(storyboard.frames[1].finalPrompt).toContain('blonde hair');
         expect(storyboard.frames[1].finalPrompt).not.toContain('black hair');
+        expect(storyboard.frames[0].characters[0].prompt).toContain('blonde hair');
+        expect(storyboard.frames[0].characters[1].prompt).toContain('{source#approaching}');
+        expect(storyboard.frames[0].characters[1].center).toEqual({ x: 0.7, y: 0.5 });
+    });
+
+    it('maps the worldbook five-by-five centers to NovelAI coordinates', () => {
+        expect(parseStoryImageCenter('a1')).toEqual({ x: 0.1, y: 0.1 });
+        expect(parseStoryImageCenter('c3')).toEqual({ x: 0.5, y: 0.5 });
+        expect(parseStoryImageCenter('e5')).toEqual({ x: 0.9, y: 0.9 });
     });
 
     it('passes the previous visual state to the continuity planner', () => {

@@ -57,6 +57,31 @@ describe('novelAiImageGeneration', () => {
         expect(payload.parameters.v4_negative_prompt.caption.base_caption).toContain('lowres');
     });
 
+    it('sends worldbook-style character prompts through native V4 captions and coordinates', () => {
+        const payload = buildNovelAiPayload({
+            baseUrl: 'https://image.novelai.net', apiKey: 'token', model: 'nai-diffusion-4-5-full',
+            width: 1216, height: 832, sampler: 'k_euler_ancestral', steps: 28, scale: 5,
+            qualityToggle: true,
+        }, { enabled: true, styleTags: 'artist:test' }, {
+            prompt: '1girl, 1boy, office, night, medium wide shot',
+            selfie: false,
+            characterPrompts: [
+                { prompt: '1girl, blonde hair, white shirt, {target#hug}', negative: 'black hair', center: { x: 0.3, y: 0.5 } },
+                { prompt: '1boy, black hair, black suit, {source#hug}', negative: 'blonde hair', center: { x: 0.7, y: 0.5 } },
+            ],
+        }, 123);
+        expect(payload.parameters.use_coords).toBe(true);
+        expect(payload.parameters.characterPrompts).toHaveLength(2);
+        expect(payload.parameters.v4_prompt.use_coords).toBe(true);
+        expect(payload.parameters.v4_prompt.caption.base_caption).toContain('office');
+        expect(payload.parameters.v4_prompt.caption.base_caption).not.toContain('blonde hair');
+        expect(payload.parameters.v4_prompt.caption.char_captions[0]).toEqual({
+            centers: [{ x: 0.3, y: 0.5 }],
+            char_caption: '1girl, blonde hair, white shirt, {target#hug}',
+        });
+        expect(payload.parameters.v4_negative_prompt.caption.char_captions[1].char_caption).toBe('blonde hair');
+    });
+
     it('injects an optional reference image into the NovelAI payload', () => {
         const payload = buildNovelAiPayload({
             baseUrl: 'https://image.novelai.net', apiKey: 'token', model: 'nai-diffusion-4-5-full',

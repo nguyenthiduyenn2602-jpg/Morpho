@@ -191,8 +191,32 @@ export function buildNovelAiPayload(
 ): Record<string, any> {
     const prompt = buildNovelAiPrompt(cfg, request);
     const negative = splitNovelAiTags(cfg.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS).join(', ');
-    const caption = { base_caption: prompt, char_captions: [] as any[] };
-    const negativeCaption = { base_caption: negative, char_captions: [] as any[] };
+    const characterPrompts = (request.characterPrompts || [])
+        .map(character => {
+            const x = Math.max(0.1, Math.min(0.9, Number(character.center?.x) || 0.5));
+            const y = Math.max(0.1, Math.min(0.9, Number(character.center?.y) || 0.5));
+            return {
+                prompt: character.prompt.trim(),
+                uc: (character.negative || '').trim(),
+                center: { x, y },
+            };
+        })
+        .filter(character => character.prompt);
+    const caption = {
+        base_caption: prompt,
+        char_captions: characterPrompts.map(character => ({
+            centers: [character.center],
+            char_caption: character.prompt,
+        })),
+    };
+    const negativeCaption = {
+        base_caption: negative,
+        char_captions: characterPrompts.map(character => ({
+            centers: [character.center],
+            char_caption: character.uc,
+        })),
+    };
+    const useCoords = characterPrompts.length > 0;
     const referenceImages = (Array.isArray(referenceImageBase64) ? referenceImageBase64 : [referenceImageBase64]).filter(Boolean);
     return {
         input: prompt,
@@ -218,14 +242,14 @@ export function buildNovelAiPayload(
             noise_schedule: 'karras',
             legacy_v3_extend: false,
             skip_cfg_above_sigma: null,
-            use_coords: false,
-            characterPrompts: [],
+            use_coords: useCoords,
+            characterPrompts,
             reference_image_multiple: referenceImages,
             reference_information_extracted_multiple: referenceImages.map(() => 1),
             reference_strength_multiple: referenceImages.map(() => Math.min(1, Math.max(0, cfg.referenceStrength ?? 0.6))),
             deliberate_euler_ancestral_bug: false,
             prefer_brownian: true,
-            v4_prompt: { caption, use_coords: false, use_order: true },
+            v4_prompt: { caption, use_coords: useCoords, use_order: true },
             v4_negative_prompt: { caption: negativeCaption, legacy_uc: false },
         },
     };

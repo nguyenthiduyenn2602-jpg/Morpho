@@ -6,7 +6,18 @@ import { DEFAULT_NAI_NEGATIVE_TAGS, DEFAULT_NAI_QUALITY_TAGS, generateNovelAiIma
 export interface StoryImageHistoryItem { role: 'user' | 'assistant'; content: string; }
 export interface StoryImagePromptPlan { visible: string[]; sceneTags: string; finalPrompt: string; }
 export interface StoryImageCastState { key: string; name: string; clothing: string; position: string; pose: string; expression: string; }
-export interface StoryImageFramePlan extends StoryImagePromptPlan { kind: 'motion' | 'highlight'; title: string; description: string; }
+export interface StoryImageCharacterPlan {
+    key: string;
+    prompt: string;
+    negative: string;
+    center: { x: number; y: number };
+}
+export interface StoryImageFramePlan extends StoryImagePromptPlan {
+    kind: 'motion' | 'highlight';
+    title: string;
+    description: string;
+    characters: StoryImageCharacterPlan[];
+}
 export interface StoryImageState {
     location: string;
     time: string;
@@ -27,6 +38,8 @@ interface GenerateStoryTheaterImageOptions {
     previousState?: StoryImageState;
 }
 
+type StoryImageParticipant = { key: string; name: string; anchor: string };
+
 const cleanText = (value: unknown, fallback = '未明确'): string => String(value || '').trim() || fallback;
 const cleanTags = (value: unknown): string => String(value || '')
     .replace(/^```(?:json)?\s*|\s*```$/gi, '')
@@ -36,6 +49,23 @@ const cleanTags = (value: unknown): string => String(value || '')
     .replace(/(?:,\s*){2,}/g, ', ')
     .trim().replace(/^,+|,+$/g, '').trim();
 const stripJsonFence = (raw: string): string => String(raw || '').trim().replace(/^```(?:json)?\s*|\s*```$/gi, '').trim();
+
+const defaultCenterCodes = (count: number): string[] => {
+    if (count <= 1) return ['c3'];
+    if (count === 2) return ['b3', 'd3'];
+    if (count === 3) return ['b3', 'c3', 'd3'];
+    return ['b2', 'd2', 'b4', 'd4'];
+};
+
+export function parseStoryImageCenter(value: unknown, fallback = 'c3'): { x: number; y: number } {
+    const token = String(value || fallback).trim().toLowerCase();
+    const match = token.match(/^([a-e])([1-5])$/);
+    const safe = match || fallback.toLowerCase().match(/^([a-e])([1-5])$/) || ['c3', 'c', '3'];
+    return {
+        x: Number((0.1 + (safe[1].charCodeAt(0) - 97) * 0.2).toFixed(1)),
+        y: Number((0.1 + (Number(safe[2]) - 1) * 0.2).toFixed(1)),
+    };
+}
 
 export function parseStoryImagePromptPlan(raw: string, participants: Array<{ key: string; name: string; anchor: string }>): StoryImagePromptPlan {
     const stripped = stripJsonFence(raw);
@@ -60,14 +90,43 @@ export function parseStoryImagePromptPlan(raw: string, participants: Array<{ key
     return { visible: resolved.map(person => person.key), sceneTags, finalPrompt: [...anchors, sceneTags].filter(Boolean).join(', ') };
 }
 
+const buildStoryImageCharacterPlans = (
+    rawCharacters: any[],
+    visible: string[],
+    participants: StoryImageParticipant[],
+): StoryImageCharacterPlan[] => {
+    const selected = participants.filter(person => visible.includes(person.key));
+    const source = rawCharacters.length > 0 ? rawCharacters : selected.map((person, index) => ({
+        key: person.key,
+        prompt: '',
+        negative: '',
+        center: defaultCenterCodes(selected.length)[index] || 'c3',
+    }));
+    return source.slice(0, 4).map((character, index) => {
+        const participant = participants.find(person => person.key === character?.key || person.name === character?.name)
+            || selected[index];
+        if (!participant) return null;
+        const prompt = [cleanTags(participant.anchor), cleanTags(character?.prompt || character?.tags)]
+            .filter(Boolean).join(', ');
+        if (!prompt) return null;
+        return {
+            key: participant.key,
+            prompt,
+            negative: cleanTags(character?.negative || character?.uc),
+            center: parseStoryImageCenter(character?.center, defaultCenterCodes(source.length)[index] || 'c3'),
+        };
+    }).filter((character): character is StoryImageCharacterPlan => Boolean(character));
+};
+
 export function parseStoryImageStoryboard(raw: string, participants: Array<{ key: string; name: string; anchor: string }>): { state: StoryImageState; frames: StoryImageFramePlan[] } {
     let parsed: any;
     try { parsed = JSON.parse(stripJsonFence(raw)); } catch { parsed = null; }
     if (!parsed || typeof parsed !== 'object') {
         const base = parseStoryImagePromptPlan(raw, participants);
-        const motion: StoryImageFramePlan = { ...base, kind: 'motion', title: '动作变化帧', description: '本轮动作变化最明显的一瞬间' };
-        const highlightBase = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, medium close-up, emotional focus, rule of thirds, shallow depth of field, simple coherent background` }), participants);
-        const highlight: StoryImageFramePlan = { ...highlightBase, kind: 'highlight', title: '情绪高光帧', description: '本轮最值得描绘的情绪与互动瞬间' };
+        const characters = buildStoryImageCharacterPlans([], base.visible, participants);
+        const motion: StoryImageFramePlan = { ...base, characters, kind: 'motion', title: '动作变化帧', description: '本轮动作变化最明显的一瞬间' };
+        const highlightBase = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, interaction focus, clear body language, rule of thirds, coherent detailed background` }), participants);
+        const highlight: StoryImageFramePlan = { ...highlightBase, characters, kind: 'highlight', title: '关系高光帧', description: '本轮最值得描绘的情绪与互动瞬间' };
         return {
             state: {
                 location: '沿用当前剧情场景', time: '沿用当前时间', lighting: '沿用当前光线', atmosphere: '沿用当前氛围',
@@ -81,11 +140,16 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
 
     const rawFrames = Array.isArray(parsed.frames) ? parsed.frames.slice(0, 2) : [];
     const frameKinds: Array<'motion' | 'highlight'> = ['motion', 'highlight'];
-    const defaultTitles = ['动作变化帧', '情绪高光帧'];
+    const defaultTitles = ['动作变化帧', '关系高光帧'];
     const frames: StoryImageFramePlan[] = rawFrames.map((frame: any, index: number) => {
-        const plan = parseStoryImagePromptPlan(JSON.stringify({ visible: frame?.visible, sceneTags: frame?.sceneTags || frame?.tags }), participants);
+        const rawCharacters = Array.isArray(frame?.characters) ? frame.characters : [];
+        const visible = Array.isArray(frame?.visible) && frame.visible.length > 0
+            ? frame.visible.map(String)
+            : rawCharacters.map((character: any) => String(character?.key || character?.name || '')).filter(Boolean);
+        const plan = parseStoryImagePromptPlan(JSON.stringify({ visible, sceneTags: frame?.sceneTags || frame?.tags }), participants);
         return {
             ...plan,
+            characters: buildStoryImageCharacterPlans(rawCharacters, plan.visible, participants),
             kind: frameKinds[index] || 'highlight',
             title: cleanText(frame?.title, defaultTitles[index] || '剧情关键帧'),
             description: cleanText(frame?.description, index === 0 ? '本轮动作变化最明显的一瞬间' : '本轮最值得描绘的情绪与互动瞬间'),
@@ -93,8 +157,8 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
     });
     if (frames.length < 2 && frames[0]) {
         const base = frames[0];
-        const highlight = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, medium close-up, emotional focus, rule of thirds, shallow depth of field, simple coherent background` }), participants);
-        frames.push({ ...highlight, kind: 'highlight', title: '情绪高光帧', description: '本轮最值得描绘的情绪与互动瞬间' });
+        const highlight = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, interaction focus, clear body language, rule of thirds, coherent detailed background` }), participants);
+        frames.push({ ...highlight, characters: base.characters, kind: 'highlight', title: '关系高光帧', description: '本轮最值得描绘的情绪与互动瞬间' });
     }
     if (!frames.length) return parseStoryImageStoryboard(cleanTags(parsed?.sceneTags || parsed?.prompt), participants);
 
@@ -136,14 +200,17 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
         {
             role: 'system',
             content: [
-                'You are the continuity director and CG storyboard artist for a NovelAI-illustrated story.',
-                'Read the newest round and the previous visual state. Unless the story explicitly changes location, time, clothing or lighting, preserve them exactly. Never invent a scene transition.',
+                'You are the continuity director and NovelAI V4 multi-character storyboard artist for a story. All depicted characters are adults.',
+                'Read the newest round and the previous visual state. Unless the story explicitly changes location, time, clothing, hairstyle, hair color, eye color or lighting, preserve them exactly. Never invent a scene transition or replace a supplied identity anchor.',
                 'Return ONLY valid compact JSON with this shape:',
-                '{"scene":{"location":"Chinese","time":"Chinese","lighting":"Chinese","atmosphere":"Chinese"},"cast":[{"key":"participant key","name":"Chinese","clothing":"Chinese detailed","position":"Chinese","pose":"Chinese","expression":"Chinese"}],"continuityChange":"Chinese: the largest visual change from the previous round","frames":[{"title":"动作变化帧","description":"Chinese detailed CG action description","visible":["participant key"],"sceneTags":"English NovelAI/Danbooru tags"},{"title":"情绪高光帧","description":"Chinese detailed CG description of the single most drawable moment","visible":["participant key"],"sceneTags":"English NovelAI/Danbooru tags"}]}',
-                'Frame 1 captures the largest movement or spatial change in this round. Choose a camera distance that clearly shows the action and interaction.',
-                'Frame 2 captures the most emotionally or dramatically valuable instant. Prefer a deliberate medium close-up or close-up, clear subject placement (center or rule of thirds), shallow depth of field and a simple coherent background.',
-                'Each sceneTags must include subject count, exact clothing, composition, pose and interaction, expressions, location, lighting, camera angle, depth of field and atmosphere.',
-                'The visible array contains only people actually visible in that frame and may contain any number of people. Do not repeat identity anchors inside sceneTags.',
+                '{"scene":{"location":"Chinese","time":"Chinese","lighting":"Chinese","atmosphere":"Chinese"},"cast":[{"key":"participant key","name":"Chinese","clothing":"Chinese detailed","position":"Chinese","pose":"Chinese","expression":"Chinese"}],"continuityChange":"Chinese: largest visual change","frames":[{"title":"动作变化帧","description":"Chinese detailed CG description of one frozen instant","visible":["participant key"],"sceneTags":"English global scene/composition tags","characters":[{"key":"participant key","prompt":"English clothing, pose, action, expression and source#/target# interaction tags","negative":"English per-character contradictory/exclusion tags","center":"b3"}]},{"title":"关系高光帧","description":"Chinese detailed CG description of a different frozen instant","visible":["participant key"],"sceneTags":"English global scene/composition tags","characters":[{"key":"participant key","prompt":"English clothing, pose, action, expression and source#/target# interaction tags","negative":"English per-character contradictory/exclusion tags","center":"d3"}]}]}',
+                'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest and most visually legible sensual beat; add nsfw to sceneTags only when explicit anatomy is actually visible.',
+                'Frame 1 captures the largest movement or spatial change. Use a wide, medium-wide or full/three-quarter body composition that clearly shows bodies, limbs, props and environment.',
+                'Frame 2 captures a different emotionally or dramatically valuable instant. Choose upper body, half body, lower body, full body, POV, from above or from below according to the action. Do NOT default to a face portrait or headshot: show at least the torso and every body part needed to understand the interaction.',
+                'sceneTags are the V4 base caption: include exact subject count, complete environment/location, time, lighting, atmosphere, camera distance, angle, depth, foreground/background separation and composition. Never omit the setting. Do not put identity anchors here.',
+                'characters are V4 character captions. Include every visible person exactly once. Their prompt must include current clothing state, body pose, hands, gaze, expression and concrete interaction. Use matching {source#action}/{target#action} tags when people touch or act on one another.',
+                'center uses the 5x5 grid a1-e5. Prefer b2-d4; c3 is center. Two separated people usually use b3/d3; overlapping interaction may use c3/c3 or c3/d3. Avoid a1/e5 unless the composition truly requires an edge crop.',
+                'The visible array contains only people actually visible in that frame and may contain any number of people. Character keys and name order must exactly follow PARTICIPANTS. Identity anchors are injected by code, so never contradict their hairstyle, hair color, eye color or fixed traits.',
                 'No prose outside JSON, no Markdown, dialogue, captions, UI, watermark or explanation.',
             ].join('\n'),
         },
@@ -160,10 +227,21 @@ const storyNovelConfig = (entry: StoryTheaterEntry): CharacterNovelAiImageGenera
     negativeTags: entry.imageGeneration?.negativeTags?.trim() || DEFAULT_NAI_NEGATIVE_TAGS,
 });
 
-export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, prompt: string): Promise<Blob | string> {
+export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {
     const novelApi = apiConfig.novelAiImageGeneration;
     if (!novelApi?.baseUrl?.trim() || !novelApi.apiKey?.trim() || !novelApi.model?.trim()) throw new Error('全局生图 2.0 的 URL、API Key 或模型尚未配置完整');
-    const directive: ImageGenerationDirective = { prompt, selfie: false, includeUser: false };
+    const directive: ImageGenerationDirective = typeof frame === 'string'
+        ? { prompt: frame, selfie: false, includeUser: false }
+        : {
+            prompt: frame.sceneTags,
+            selfie: false,
+            includeUser: false,
+            characterPrompts: frame.characters.map(character => ({
+                prompt: character.prompt,
+                negative: character.negative,
+                center: character.center,
+            })),
+        };
     return generateNovelAiImage({ ...novelApi, width: entry.imageGeneration?.width || 1216, height: entry.imageGeneration?.height || 832 }, storyNovelConfig(entry), directive);
 }
 
@@ -187,7 +265,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const frames: StoryGeneratedImageFrame[] = [];
     for (const plan of plans) {
         if (!plan?.finalPrompt) continue;
-        frames.push({ ...plan, image: await generateStoryTheaterFrameImage(options.apiConfig, options.entry, plan.finalPrompt) });
+        frames.push({ ...plan, image: await generateStoryTheaterFrameImage(options.apiConfig, options.entry, plan) });
     }
     if (!frames.length) throw new Error('没有整理出可生成的剧情关键帧');
     return { state: storyboard.state, frames };

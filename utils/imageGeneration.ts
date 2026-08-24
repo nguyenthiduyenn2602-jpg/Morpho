@@ -20,6 +20,12 @@ export interface ImageGenerationDirective {
     selfie: boolean;
     /** 画面中是否出现用户本人；主要供 NovelAI 2.0 注入用户形象锚点。 */
     includeUser?: boolean;
+    /** NovelAI V4 的分角色提示与画面坐标；普通私聊生图可不填写。 */
+    characterPrompts?: Array<{
+        prompt: string;
+        negative?: string;
+        center?: { x: number; y: number };
+    }>;
 }
 
 const DIRECTIVE_RE = /\[\[GENERATE_IMAGE\]\]\s*([\s\S]*?)\s*\[\[\/GENERATE_IMAGE\]\]/i;
