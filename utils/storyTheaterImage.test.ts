@@ -48,9 +48,9 @@ describe('storyTheaterImage', () => {
         const prompt = buildStoryFrameMainPrompt(storyboard.frames[0]);
         expect(prompt).toContain('1girl, 2boys');
         expect(prompt).not.toContain('blonde hair');
-        expect(storyboard.frames[0].characters[0].prompt).toContain('girl, blonde hair, pink eyes, looking right');
+        expect(storyboard.frames[0].characters[0].prompt).toContain('girl, 1.35::blonde hair, pink eyes::, looking right');
         expect(storyboard.frames[0].characters[0].prompt).not.toContain('1girl');
-        expect(storyboard.frames[0].characters[1].prompt).toContain('boy, black hair, blue eyes, looking left');
+        expect(storyboard.frames[0].characters[1].prompt).toContain('boy, 1.35::black hair, blue eyes::, looking left');
         expect(storyboard.frames[0].characters[1].negative).toContain('blonde hair');
         expect(storyboard.frames[0].characters[1].negative).toContain('silver hair');
         expect(storyboard.frames[0].characters.map(character => character.center.x)).toEqual([0.1, 0.5, 0.9]);

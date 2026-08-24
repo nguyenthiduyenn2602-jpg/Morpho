@@ -149,6 +149,8 @@ export function extractNovelAiDirective(raw: string): { directive: ImageGenerati
 
 export function splitNovelAiTags(value: string): string[] {
     return (value || '')
+        .replace(/&#x20;|&nbsp;/gi, ' ')
+        .replace(/\\+\s*$/, '')
         .split(/[，,\n]+/)
         .map(tag => tag.trim())
         .filter(Boolean);
@@ -217,9 +219,16 @@ export function buildNovelAiPayload(
         })),
     };
     const useCoords = characterPrompts.length > 0;
+    // Some NAI-compatible relays only forward the legacy `input` field and silently
+    // discard V4's structured char_captions. The pipe form is NovelAI's compatible
+    // multi-character notation, while the native V4 structure below remains the
+    // authoritative path for relays that preserve it.
+    const compatibleInput = characterPrompts.length > 0
+        ? [prompt, ...characterPrompts.map(character => character.prompt)].join(' | ')
+        : prompt;
     const referenceImages = (Array.isArray(referenceImageBase64) ? referenceImageBase64 : [referenceImageBase64]).filter(Boolean);
     return {
-        input: prompt,
+        input: compatibleInput,
         model: api.model || DEFAULT_NAI_IMAGE_MODEL,
         action: 'generate',
         parameters: {

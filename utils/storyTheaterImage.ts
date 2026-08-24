@@ -116,6 +116,18 @@ const normalizeCharacterAnchor = (value: unknown): string => cleanTags(value)
     })
     .join(', ');
 
+/**
+ * V4 多人物时，固定外貌必须比本轮动作更难被覆盖。保留人物类别在权重组外，
+ * 这样基础提示词仍能可靠统计 1girl / 2boys；其余固定锚点整体提高权重。
+ */
+const strengthenCharacterAnchor = (value: unknown): string => {
+    const tags = normalizeCharacterAnchor(value).split(',').map(tag => tag.trim()).filter(Boolean);
+    const subjectIndex = tags.findIndex(tag => !!parseCharacterSubject(tag));
+    const subject = subjectIndex >= 0 ? tags.splice(subjectIndex, 1)[0] : '';
+    const identity = tags.length ? `1.35::${tags.join(', ')}::` : '';
+    return [subject, identity].filter(Boolean).join(', ');
+};
+
 const identityLeakTags = (value: string): string[] => value
     .split(',')
     .map(tag => tag.trim())
@@ -170,7 +182,7 @@ const buildStoryImageCharacterPlans = (
         const participant = participants.find(person => person.key === character?.key || person.name === character?.name)
             || selected[index];
         if (!participant) return null;
-        const prompt = [normalizeCharacterAnchor(participant.anchor), cleanTags(character?.prompt || character?.tags || character?.action || character?.roleAction)]
+        const prompt = [strengthenCharacterAnchor(participant.anchor), cleanTags(character?.prompt || character?.tags || character?.action || character?.roleAction)]
             .filter(Boolean).join(', ');
         if (!prompt) return null;
         return {

@@ -73,6 +73,7 @@ describe('novelAiImageGeneration', () => {
         expect(payload.parameters.use_coords).toBe(true);
         expect(payload.parameters.characterPrompts).toHaveLength(2);
         expect(payload.parameters.v4_prompt.use_coords).toBe(true);
+        expect(payload.input).toBe('very aesthetic, masterpiece, high quality, absurdres, artist:test, 1girl, 1boy, office, night, medium wide shot | 1girl, blonde hair, white shirt, {target#hug} | 1boy, black hair, black suit, {source#hug}');
         expect(payload.parameters.v4_prompt.caption.base_caption).toContain('office');
         expect(payload.parameters.v4_prompt.caption.base_caption).not.toContain('blonde hair');
         expect(payload.parameters.v4_prompt.caption.char_captions[0]).toEqual({
@@ -80,6 +81,15 @@ describe('novelAiImageGeneration', () => {
             char_caption: '1girl, blonde hair, white shirt, {target#hug}',
         });
         expect(payload.parameters.v4_negative_prompt.caption.char_captions[1].char_caption).toBe('blonde hair');
+    });
+
+    it('cleans HTML spaces and a pasted trailing slash from negative tags', () => {
+        const payload = buildNovelAiPayload({
+            baseUrl: 'https://image.novelai.net', apiKey: 'token', model: 'nai-diffusion-4-5-full',
+            width: 832, height: 1216, sampler: 'k_euler_ancestral', steps: 28, scale: 5,
+            qualityToggle: true,
+        }, { enabled: true, negativeTags: 'text,&#x20; logo, colored inner hair\\' }, { prompt: 'portrait', selfie: false }, 123);
+        expect(payload.parameters.negative_prompt).toBe('text, logo, colored inner hair');
     });
 
     it('injects an optional reference image into the NovelAI payload', () => {
