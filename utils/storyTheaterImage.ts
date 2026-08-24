@@ -297,6 +297,22 @@ const storyNovelConfig = (entry: StoryTheaterEntry): CharacterNovelAiImageGenera
     negativeTags: entry.imageGeneration?.negativeTags?.trim() || DEFAULT_NAI_NEGATIVE_TAGS,
 });
 
+const weightStoryIdentityAnchor = (value: string): string => {
+    const anchor = value.trim();
+    if (!anchor || anchor.startsWith('{') || anchor.startsWith('[')) return anchor;
+    return `{${anchor}}`;
+};
+
+export function buildStoryFrameMainPrompt(frame: StoryImageFramePlan): string {
+    const identityAnchors = (frame.characters || [])
+        .map(character => weightStoryIdentityAnchor(character.prompt || ''))
+        .filter(Boolean);
+    return [...identityAnchors, frame.sceneTags]
+        .map(part => part.trim())
+        .filter(Boolean)
+        .join(', ');
+}
+
 export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {
     const novelApi = apiConfig.novelAiImageGeneration;
     if (!novelApi?.baseUrl?.trim() || !novelApi.apiKey?.trim() || !novelApi.model?.trim()) throw new Error('全局生图 2.0 的 URL、API Key 或模型尚未配置完整');
@@ -306,7 +322,10 @@ export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry
     const directive: ImageGenerationDirective = typeof frame === 'string'
         ? { prompt: frame, selfie: false, includeUser: false }
         : {
-            prompt: structuredCharacters.length > 0 ? frame.sceneTags : frame.finalPrompt,
+            // Some compatible relays silently discard NovelAI V4 char_captions. Keep the
+            // native character prompts, but also lead the base prompt with weighted identity
+            // anchors so hair, eyes and other fixed traits survive those relays.
+            prompt: structuredCharacters.length > 0 ? buildStoryFrameMainPrompt(frame) : frame.finalPrompt,
             selfie: false,
             includeUser: false,
             characterPrompts: structuredCharacters.map(character => ({

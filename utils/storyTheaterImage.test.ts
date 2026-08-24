@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
+import { buildStoryFrameMainPrompt, buildStoryImagePlanningMessages, parseStoryImageCenter, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
 
 const participants = [
     { key: 'user', name: '沈欢', anchor: '1girl, blonde hair, pink eyes' },
@@ -23,6 +23,34 @@ describe('storyTheaterImage', () => {
         const plan = parseStoryImagePromptPlan('VISIBLE: character:a\nTAGS: 1boy, close-up, rainy night', participants);
         expect(plan.visible).toEqual(['character:a']);
         expect(plan.finalPrompt).toBe('1boy, black hair, blue eyes, 1boy, close-up, rainy night');
+    });
+
+    it('duplicates weighted identity anchors into the base prompt before action and scene', () => {
+        const storyboard = parseStoryImageStoryboard(JSON.stringify({
+            scene: { location: '卧室床边' },
+            cast: participants.map(person => ({ key: person.key, name: person.name, appearance: person.anchor })),
+            continuityChange: '三个人从门边走到床边',
+            frames: [
+                {
+                    title: '动作变化帧', description: '三个人在床边停下', visible: participants.map(person => person.key),
+                    sharedAction: 'three people standing close together beside bed',
+                    sceneComposition: 'bedroom, full body, balanced composition',
+                    characters: participants.map((person, index) => ({ key: person.key, center: ['b3', 'c3', 'd3'][index] })),
+                },
+                {
+                    title: '关系高光帧', description: '三个人彼此对视', visible: participants.map(person => person.key),
+                    sharedAction: 'three people looking at each other',
+                    sceneComposition: 'bedroom, three-quarter body',
+                    characters: participants.map((person, index) => ({ key: person.key, center: ['b3', 'c3', 'd3'][index] })),
+                },
+            ],
+        }), participants, true);
+        const prompt = buildStoryFrameMainPrompt(storyboard.frames[0]);
+        expect(prompt).toContain('{1girl, blonde hair, pink eyes}');
+        expect(prompt).toContain('{1boy, black hair, blue eyes}');
+        expect(prompt).toContain('{1boy, silver hair, red eyes}');
+        expect(prompt.indexOf('blonde hair')).toBeLessThan(prompt.indexOf('three people standing'));
+        expect(prompt.indexOf('three people standing')).toBeLessThan(prompt.indexOf('bedroom'));
     });
 
     it('asks the planner to support any number of visible people', () => {
