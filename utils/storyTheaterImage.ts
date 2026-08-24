@@ -370,13 +370,37 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
 export function parseStoryImageStoryboard(raw: string, participants: Array<{ key: string; name: string; anchor: string }>, strict = false): { state: StoryImageState; frames: StoryImageFramePlan[] } {
     const protocol = parseStoryImageProtocol(raw, participants);
     if (protocol) {
-        if (strict && protocol.frames.length < 2) throw new Error('生图导演只返回了一张配图段落；已停止生图，未消耗 NAI 次数');
-        if (strict && protocol.frames.some(frame =>
-            !hasConcreteStoryImageAction(frame.sharedAction)
-            || frame.characters.length === 0
-            || frame.characters.some(character => hasStoryImagePlaceholder(removeGeneratedIdentityTags(character.prompt)))
-        )) throw new Error('生图导演没有提取出本轮的具体动作；已停止生图，未消耗 NAI 次数');
-        return protocol;
+        const validFrames = protocol.frames.filter(frame =>
+            hasConcreteStoryImageAction(frame.sharedAction)
+            && frame.characters.length > 0
+            && !frame.characters.some(character => hasStoryImagePlaceholder(removeGeneratedIdentityTags(character.prompt)))
+        );
+        if (strict && validFrames.length === 0) throw new Error('生图导演没有提取出本轮的具体动作；已停止生图，未消耗 NAI 次数');
+        if (strict && validFrames.length < 2 && validFrames[0]) {
+            // Some compatible chat endpoints enforce a smaller completion cap
+            // than the requested max_tokens and cut the second worldbook block.
+            // Reusing the one complete frozen instant is safer than inventing a
+            // second action or discarding the whole round. NovelAI's seed still
+            // gives the user two independent renders of that story moment.
+            const first = validFrames[0];
+            const second: StoryImageFramePlan = {
+                ...first,
+                kind: 'highlight',
+                title: '剧情配图二',
+                description: `${first.description}（同一剧情瞬间的第二张）`,
+                visible: [...first.visible],
+                characters: first.characters.map(character => ({ ...character, center: { ...character.center } })),
+            };
+            const frames = [{ ...first, kind: 'motion' as const, title: '剧情配图一' }, second];
+            return {
+                state: {
+                    ...protocol.state,
+                    frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
+                },
+                frames,
+            };
+        }
+        return strict ? { ...protocol, frames: validFrames.slice(0, 2) } : protocol;
     }
     let parsed: any;
     const jsonObject = extractJsonObject(raw);
@@ -514,7 +538,7 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
                 'For interactions use only paired (source#same action) and (target#same action), or (mutual#same action). Participant IDs belong only at the beginning of Character Prompt and are forbidden inside interaction parentheses.',
                 'centers uses the 5x5 grid a1-e5. Infer positions from the story. Use b3/d3 for separated pairs and a3/c3/e3 for separated trios; overlap centers only when their bodies actually overlap in the selected action.',
                 'Never copy schema placeholders such as clothing, pose, expression, action or exclusions. Every Character Prompt must contain a concrete visible verb/body placement taken from the NEWEST ROUND.',
-                'Keep each character prompt compact (about 8-16 comma-separated tags) so both blocks finish within the response limit. Character UC is the short fixed string `bad anatomy, bad hands` unless one extra concrete exclusion is necessary.',
+                'Keep each character prompt extremely compact: key, name, clothing/nude, one pose, one hand placement, one expression, and exactly ONE paired interaction tag. Use NAI tags, not prose or redundant synonyms. Character UC must be exactly `bad anatomy, bad hands`. Both blocks together must stay under 900 output tokens.',
                 'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
             ].join('\n'),
         },

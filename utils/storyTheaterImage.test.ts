@@ -114,6 +114,16 @@ describe('storyTheaterImage', () => {
         expect(storyboard.frames[1].characters[2].prompt).toContain('silver hair, red eyes');
     });
 
+    it('reuses the one complete story instant when the second worldbook block is cut off', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 1boy, bedroom, full body; Character 1 Prompt: user, 沈欢, lying on back, hands gripping sheets, (source#holding hands)|centers:b3; Character 1 UC: bad anatomy, bad hands; Character 2 Prompt: character:a, 苏郁, kneeling beside her, hand around hers, (target#holding hands)|centers:d3; Character 2 UC: bad anatomy, bad hands;###</image>
+<image>image###Scene Composition: 1girl, 1boy, bedroom, close-up; Character 1 Prompt: user, 沈欢, nude`;
+        const storyboard = parseStoryImageStoryboard(raw, participants, true);
+        expect(storyboard.frames).toHaveLength(2);
+        expect(storyboard.frames[1].sharedAction).toBe(storyboard.frames[0].sharedAction);
+        expect(storyboard.frames[1].characters).toEqual(storyboard.frames[0].characters);
+        expect(storyboard.frames[1].description).toContain('同一剧情瞬间');
+    });
+
     it('rejects copied protocol placeholders before spending an NAI call', () => {
         const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>
 <image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>`;
