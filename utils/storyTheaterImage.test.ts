@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStoryImagePlanningMessages, parseStoryImagePromptPlan } from './storyTheaterImage';
+import { buildStoryImagePlanningMessages, parseStoryImagePromptPlan, parseStoryImageStoryboard } from './storyTheaterImage';
 
 const participants = [
     { key: 'user', name: '沈欢', anchor: '1girl, blonde hair, pink eyes' },
@@ -40,5 +40,47 @@ describe('storyTheaterImage', () => {
         });
         expect(messages[0].content).toContain('any number of people');
         expect(messages[1].content).toContain('三个人走进办公室');
+    });
+
+    it('parses continuity state and keeps each frame limited to its visible identities', () => {
+        const storyboard = parseStoryImageStoryboard(JSON.stringify({
+            scene: { location: '办公室窗边', time: '傍晚', lighting: '暖色侧光', atmosphere: '安静而暧昧' },
+            cast: [
+                { key: 'user', name: '沈欢', clothing: '白色衬衫', position: '画面左侧', pose: '靠在窗边', expression: '微笑' },
+                { key: 'character:a', name: '苏郁', clothing: '黑色西装', position: '画面右侧', pose: '俯身靠近', expression: '专注' },
+            ],
+            continuityChange: '苏郁从办公桌后走到窗边，缩短了与沈欢的距离',
+            frames: [
+                { title: '动作变化帧', description: '苏郁走向窗边的一刻', visible: ['user', 'character:a'], sceneTags: '1girl, 1boy, walking closer, office, medium shot' },
+                { title: '情绪高光帧', description: '沈欢在暖光里抬眼', visible: ['user'], sceneTags: '1girl, medium close-up, rule of thirds, shallow depth of field' },
+            ],
+        }), participants);
+        expect(storyboard.state.location).toBe('办公室窗边');
+        expect(storyboard.state.continuityChange).toContain('缩短');
+        expect(storyboard.state.cast[0].clothing).toBe('白色衬衫');
+        expect(storyboard.frames).toHaveLength(2);
+        expect(storyboard.frames[1].finalPrompt).toContain('blonde hair');
+        expect(storyboard.frames[1].finalPrompt).not.toContain('black hair');
+    });
+
+    it('passes the previous visual state to the continuity planner', () => {
+        const messages = buildStoryImagePlanningMessages({
+            entry: {
+                id: 'story', title: '测试', premise: '', presetId: 'preset', presetOverride: undefined,
+                openingMode: 'user', mask: { type: 'user' }, characterIds: ['a'], writesToCharacterMemory: false,
+                characterMemoryDates: {}, carryCharacterMemory: true, characterContextLimits: {}, selectedWorldbookIds: [],
+                archives: [], archiveStrategy: 'summary', archiveAfter: 20, createdAt: 1, updatedAt: 1,
+                imageGeneration: { enabled: true, width: 1216, height: 832, imageCount: 2, characterAnchors: {} },
+            },
+            actors: [],
+            userName: '沈欢',
+            history: [{ role: 'assistant', content: '她仍站在窗边。' }],
+            previousState: {
+                location: '办公室窗边', time: '傍晚', lighting: '暖色侧光', atmosphere: '安静', cast: [],
+                continuityChange: '首次建立场景', frames: [],
+            },
+        });
+        expect(messages[1].content).toContain('办公室窗边');
+        expect(messages[0].content).toContain('preserve them exactly');
     });
 });

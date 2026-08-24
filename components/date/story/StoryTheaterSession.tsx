@@ -48,7 +48,12 @@ import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memo
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
 import StoryImageSettingsButton from './StoryImageSettings';
-import { generateStoryTheaterImage } from '../../../utils/storyTheaterImage';
+import {
+    generateStoryTheaterFrameImage,
+    generateStoryTheaterImages,
+    type StoryGeneratedImageFrame,
+    type StoryImageState,
+} from '../../../utils/storyTheaterImage';
 import { putImageBlob, useBlobRefUrl } from '../../../utils/blobRef';
 
 interface Props {
@@ -251,12 +256,59 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
     </div>;
 };
 
-const StoryRoundImage: React.FC<{ value?: string }> = ({ value }) => {
+const StoryImageStateCard: React.FC<{ state?: StoryImageState }> = ({ state }) => {
+    if (!state) return null;
+    return <section className='mt-5 overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60'>
+        <div className='border-b border-violet-200 px-4 py-3'><div className='text-[9px] font-bold uppercase tracking-[.2em] text-violet-500'>CG continuity</div><div className='mt-1 text-xs font-bold text-violet-900'>本轮画面状态</div></div>
+        <div className='grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-3 text-[10px] leading-5'>
+            <div><span className='block font-bold text-slate-400'>场景</span><span className='text-slate-700'>{state.location}</span></div>
+            <div><span className='block font-bold text-slate-400'>时间与光线</span><span className='text-slate-700'>{state.time} · {state.lighting}</span></div>
+            <div className='col-span-2'><span className='block font-bold text-slate-400'>画面氛围</span><span className='text-slate-700'>{state.atmosphere}</span></div>
+            <div className='col-span-2'><span className='block font-bold text-violet-500'>相较上一轮最大的变化</span><span className='text-slate-700'>{state.continuityChange}</span></div>
+        </div>
+        {state.cast.length > 0 && <div className='border-t border-violet-200 px-4 py-3'><div className='mb-2 text-[9px] font-bold text-slate-400'>出场人物</div><div className='space-y-2'>{state.cast.map((person, index) => <div key={`${person.key}-${index}`} className='rounded-xl bg-white/80 px-3 py-2 text-[10px] leading-5'><strong className='text-slate-800'>{person.name}</strong><div className='text-slate-500'>服饰：{person.clothing}</div><div className='text-slate-500'>位置与动作：{person.position}；{person.pose}</div><div className='text-slate-500'>神态：{person.expression}</div></div>)}</div></div>}
+        {state.frames.length > 0 && <div className='border-t border-violet-200 px-4 py-3'><div className='mb-2 text-[9px] font-bold text-slate-400'>本轮关键帧</div><div className='space-y-2'>{state.frames.map((frame, index) => <div key={`${frame.kind}-${index}`} className='text-[10px] leading-5'><strong className='text-violet-700'>{frame.title}</strong><span className='ml-2 text-slate-600'>{frame.description}</span></div>)}</div></div>}
+    </section>;
+};
+
+type StoredStoryImageFrame = Omit<StoryGeneratedImageFrame, 'image'> & { imageRef: string };
+
+const StoryFrameImage: React.FC<{ frame: StoredStoryImageFrame; busy: boolean; onRegenerate: () => void }> = ({ frame, busy, onRegenerate }) => {
+    const src = useBlobRefUrl(frame.imageRef);
+    if (!src) return null;
+    return <figure className='mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm'>
+        <img src={src} alt={frame.title || '本轮剧情配图'} className='block h-auto w-full object-cover' />
+        <figcaption className='flex items-center gap-3 border-t border-slate-200 bg-white px-3 py-2.5'><span className='min-w-0 flex-1'><strong className='block text-[10px] text-slate-700'>{frame.title}</strong><span className='mt-0.5 block truncate text-[9px] text-slate-400'>{frame.description}</span></span><button type='button' disabled={busy} onClick={onRegenerate} className='inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-[9px] font-bold text-slate-500 disabled:opacity-40'>{busy ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}重新生成</button></figcaption>
+    </figure>;
+};
+
+const LegacyStoryRoundImage: React.FC<{ value?: string }> = ({ value }) => {
     const src = useBlobRefUrl(value);
     if (!src) return null;
     return <figure className='mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-200 shadow-sm'>
         <img src={src} alt='本轮剧情配图' className='block h-auto w-full object-cover' />
     </figure>;
+};
+
+const StoryRoundVisuals: React.FC<{
+    message: Message;
+    busyKey: string;
+    onRegenerate: (frameIndex: number) => void;
+}> = ({ message, busyKey, onRegenerate }) => {
+    const state = message.metadata?.theaterImageState as StoryImageState | undefined;
+    const frames = Array.isArray(message.metadata?.theaterImageFrames)
+        ? message.metadata.theaterImageFrames as StoredStoryImageFrame[]
+        : [];
+    return <>
+        <StoryImageStateCard state={state} />
+        {frames.map((frame, frameIndex) => <StoryFrameImage
+            key={`${message.id}-${frame.kind}-${frameIndex}`}
+            frame={frame}
+            busy={busyKey === `${message.id}:${frameIndex}`}
+            onRegenerate={() => onRegenerate(frameIndex)}
+        />)}
+        {frames.length === 0 && <LegacyStoryRoundImage value={message.metadata?.theaterImageRef} />}
+    </>;
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
@@ -289,6 +341,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const [messagePage, setMessagePage] = useState(0);
     const [showQuickPreset, setShowQuickPreset] = useState(false);
     const [rerollingId, setRerollingId] = useState<number | null>(null);
+    const [regeneratingFrameKey, setRegeneratingFrameKey] = useState('');
     const [messageMenu, setMessageMenu] = useState<Message | null>(null);
     const [editingMessage, setEditingMessage] = useState<Message | null>(null);
     const [deletingMessage, setDeletingMessage] = useState<Message | null>(null);
@@ -305,6 +358,37 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     }, [threadId]);
 
     useEffect(() => { void loadMessages(); }, [loadMessages]);
+
+    const regenerateStoryFrame = useCallback(async (message: Message, frameIndex: number) => {
+        if (regeneratingFrameKey) return;
+        const frames = Array.isArray(message.metadata?.theaterImageFrames)
+            ? message.metadata.theaterImageFrames as StoredStoryImageFrame[]
+            : [];
+        const frame = frames[frameIndex];
+        if (!frame?.finalPrompt) {
+            addToast('这张旧配图没有保存可复用的分镜提示词', 'error');
+            return;
+        }
+        const busyKey = `${message.id}:${frameIndex}`;
+        setRegeneratingFrameKey(busyKey);
+        try {
+            const image = await generateStoryTheaterFrameImage(apiConfig, entry, frame.finalPrompt);
+            const imageRef = typeof image === 'string' ? image : await putImageBlob(image);
+            await DB.updateMessageMetadata(message.id, previous => {
+                const nextFrames = Array.isArray(previous?.theaterImageFrames) ? [...previous.theaterImageFrames] : [];
+                nextFrames[frameIndex] = { ...nextFrames[frameIndex], imageRef };
+                return { ...previous, theaterImageFrames: nextFrames };
+            });
+            await loadMessages();
+            addToast('这张关键帧已经重新生成', 'success');
+        } catch (error: any) {
+            console.error('[StoryTheater] frame regeneration failed', error);
+            addToast(`重新生成失败：${error?.message || error}`, 'error');
+        } finally {
+            setRegeneratingFrameKey('');
+        }
+    }, [addToast, apiConfig, entry, loadMessages, regeneratingFrameKey]);
+
     useEffect(() => {
         setContextTokens(0);
         setContextTokensExact(false);
@@ -690,13 +774,17 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setShowAffinityInput(false);
             await loadMessages();
             if (entry.imageGeneration?.enabled) {
-                setMemoryStatus('正在绘制本轮剧情…');
+                setMemoryStatus('正在整理画面状态并绘制本轮关键帧…');
                 try {
-                    const imageResult = await generateStoryTheaterImage({
+                    const previousImageState = [...visibleHistory].reverse()
+                        .map(message => message.metadata?.theaterImageState as StoryImageState | undefined)
+                        .find(Boolean);
+                    const imageResult = await generateStoryTheaterImages({
                         apiConfig,
                         entry,
                         actors,
                         userName: promptIdentityName,
+                        previousState: previousImageState,
                         history: [
                             ...visibleHistory.slice(-6)
                                 .filter(message => message.role === 'user' || message.role === 'assistant')
@@ -705,13 +793,16 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                             { role: 'assistant' as const, content },
                         ],
                     });
-                    const theaterImageRef = typeof imageResult.image === 'string'
-                        ? imageResult.image
-                        : await putImageBlob(imageResult.image);
+                    const storedFrames: StoredStoryImageFrame[] = [];
+                    for (const frame of imageResult.frames) {
+                        const imageRef = typeof frame.image === 'string' ? frame.image : await putImageBlob(frame.image);
+                        const { image: _image, ...plan } = frame;
+                        storedFrames.push({ ...plan, imageRef });
+                    }
                     await DB.updateMessageMetadata(assistantMessageId, previous => ({
                         ...previous,
-                        theaterImageRef,
-                        theaterImagePrompt: imageResult.prompt,
+                        theaterImageState: imageResult.state,
+                        theaterImageFrames: storedFrames,
                     }));
                     await loadMessages();
                 } catch (imageError: any) {
@@ -804,13 +895,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 <div className='pb-5 pl-7'>
                                     {message.role === 'user'
                                         ? <p className='text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p>
-                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundImage value={message.metadata?.theaterImageRef} /></>}
+                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} /></>}
                                 </div>
                             </details>;
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundImage value={message.metadata?.theaterImageRef} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}
