@@ -23,11 +23,12 @@ const fallback = (entry: StoryTheaterEntry): StoryTheaterImageConfig => ({
 const Toggle: React.FC<{ value: boolean; onChange: (value: boolean) => void }> = ({ value, onChange }) => <button type='button' aria-pressed={value} onClick={() => onChange(!value)} className={`relative h-7 w-12 shrink-0 rounded-full transition ${value ? 'bg-violet-600' : 'bg-slate-200'}`}><span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${value ? 'left-6' : 'left-1'}`} /></button>;
 
 const StoryImageSettingsButton: React.FC<Props> = ({ entry, onChange }) => {
-    const { apiConfig, addToast } = useOS();
+    const { apiConfig, addToast, characters, userProfile } = useOS();
     const [open, setOpen] = useState(false);
     const [draft, setDraft] = useState<StoryTheaterImageConfig>(() => fallback(entry));
     useEffect(() => { if (open) setDraft(fallback(entry)); }, [entry, open]);
     const globalReady = Boolean(apiConfig.novelAiImageGeneration?.baseUrl && apiConfig.novelAiImageGeneration?.apiKey && apiConfig.novelAiImageGeneration?.model);
+    const actors = characters.filter(character => entry.characterIds.includes(character.id));
     const save = async () => {
         if (draft.enabled && !globalReady) {
             addToast('请先在任一私聊的“生图 2.0”里配置全局 URL、Key 和模型', 'error');
@@ -60,10 +61,16 @@ const StoryImageSettingsButton: React.FC<Props> = ({ entry, onChange }) => {
                     <div className='py-4'><div className='flex items-center justify-between gap-4'><div><div className='text-sm font-semibold'>每轮自动配图</div><p className='mt-1 text-[10px] leading-5 text-slate-500'>正文先显示，再整理画面状态与关键帧。</p></div><Toggle value={draft.enabled} onChange={enabled => setDraft(current => ({ ...current, enabled }))} /></div></div>
                     {!globalReady && <div className='mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[10px] leading-5 text-amber-700'>全局生图 2.0 尚未完整配置。可以先填写本页，开启前需到私聊生图 2.0 设置 URL、Key 与模型。</div>}
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>本剧情画师串 / 风格</span><textarea value={draft.styleTags || ''} onChange={event => setDraft(current => ({ ...current, styleTags: event.target.value }))} placeholder='artist:name, cinematic lighting, detailed background' className='mt-1.5 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /></label>
+                    <div className='border-t border-slate-200 py-4'>
+                        <div className='text-[10px] font-bold text-slate-500'>本剧情人物锚点</div>
+                        <p className='mt-1 text-[9px] leading-4 text-slate-400'>用英文逗号填写发型、发色、瞳色、体型等固定外貌。人物锚点优先于共享动作和简单场景。</p>
+                        <label className='mt-3 block'><span className='text-[10px] font-bold text-slate-500'>{userProfile.name || '你'} · 当前剧情身份</span><textarea value={draft.userAnchor || ''} onChange={event => setDraft(current => ({ ...current, userAnchor: event.target.value }))} placeholder='1girl, blonde hair, pink eyes, long hair' className='mt-1.5 min-h-20 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /></label>
+                        <div className='mt-3 space-y-3'>{actors.map(actor => <label key={actor.id} className='block'><span className='text-[10px] font-bold text-slate-500'>{actor.name} · 出场人物</span><textarea value={draft.characterAnchors?.[actor.id] || ''} onChange={event => setDraft(current => ({ ...current, characterAnchors: { ...(current.characterAnchors || {}), [actor.id]: event.target.value } }))} placeholder='1boy, black hair, golden eyes, mature male' className='mt-1.5 min-h-20 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /></label>)}</div>
+                    </div>
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>本剧情负面提示词</span><textarea value={draft.negativeTags || ''} onChange={event => setDraft(current => ({ ...current, negativeTags: event.target.value }))} placeholder='留空使用内置默认负面词；填写后仅覆盖本条剧情' className='mt-1.5 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /><span className='mt-1.5 block text-[9px] leading-4 text-slate-400'>不会修改私聊生图 2.0 或其他剧情的负面词。</span></label>
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>每轮图片数量</span><select value={draft.imageCount === 1 ? '1' : '2'} onChange={event => setDraft(current => ({ ...current, imageCount: event.target.value === '1' ? 1 : 2 }))} className='mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs outline-none'><option value='2'>两张 · 动作变化帧 + 情绪特写帧（默认）</option><option value='1'>一张 · 只保留最值得描绘的高光帧</option></select></label>
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>配图画幅</span><select value={`${draft.width}x${draft.height}`} onChange={event => { const [width, height] = event.target.value.split('x').map(Number); setDraft(current => ({ ...current, width, height })); }} className='mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs outline-none'><option value='1216x832'>横图 1216×832（默认）</option><option value='1344x768'>宽横图 1344×768</option><option value='1024x1024'>方图 1024×1024</option><option value='832x1216'>竖图 832×1216</option><option value='768x1344'>长竖图 768×1344</option></select></label>
-                    <p className='border-t border-slate-200 py-4 text-[10px] leading-5 text-slate-400'>人物锚点在“剧情设置 → 让谁参与”下方调整；多人场景会按本轮真正出镜的人物组合标签。</p>
+                    <p className='border-t border-slate-200 py-4 text-[10px] leading-5 text-slate-400'>多人场景只会注入本轮真正出镜的人物锚点；修改仅作用于当前剧情。</p>
                 </div>
                 <div className='shrink-0 px-5 pt-4'><button type='button' onClick={() => void save()} className='h-12 w-full rounded-2xl bg-slate-900 text-xs font-bold text-white'>保存配图设置</button></div>
             </div>
