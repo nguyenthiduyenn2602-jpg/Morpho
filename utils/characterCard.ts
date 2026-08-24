@@ -23,6 +23,7 @@ export const CARD_STRIPPED_FIELDS = [
   'proactiveConfig',
   'activeMsg2Config',
   'imageGeneration',        // 本地参考脸与生图偏好，不随分享角色卡外发
+  'novelAiImageGeneration', // 本地 NAI 画师串与生图偏好，不随分享角色卡外发
 
   // 2) 美化
   'embeddedTheme',           // CharacterExportData 上的内嵌主题（导入侧一并剥离）

@@ -210,6 +210,35 @@ export interface CharacterImageGenerationConfig {
   allowProactive?: boolean;
 }
 
+/** NovelAI 文生图后端。支持官方端点及保持同一请求格式的中转。 */
+export interface NovelAiImageGenerationApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  width: number;
+  height: number;
+  sampler: string;
+  steps: number;
+  scale: number;
+  qualityToggle: boolean;
+  /** 最近一次无扣费连通性检测通过的时间。 */
+  verifiedAt?: number;
+  verifiedSignature?: string;
+}
+
+/** 每个角色独立的 NAI 标签与触发策略。 */
+export interface CharacterNovelAiImageGenerationConfig {
+  enabled: boolean;
+  allowProactive?: boolean;
+  /** 发型、发色、瞳色、体型等固定 Danbooru/NAI 标签。 */
+  characterTags?: string;
+  /** 画师串、画风与渲染标签。 */
+  styleTags?: string;
+  /** 每张图固定追加的质量标签。 */
+  qualityTags?: string;
+  negativeTags?: string;
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
@@ -247,6 +276,8 @@ export interface APIConfig {
   temperature?: number;
   /** 私聊本地生图使用的独立后端。 */
   imageGeneration?: ImageGenerationApiConfig;
+  /** 私聊本地 NovelAI 文生图后端。 */
+  novelAiImageGeneration?: NovelAiImageGenerationApiConfig;
 }
 
 export interface InstantPushConfig {
@@ -2270,6 +2301,9 @@ export interface CharacterProfile {
 
   /** 私聊本地生图设置；群聊与 Instant Push 均不读取。 */
   imageGeneration?: CharacterImageGenerationConfig;
+
+  /** 私聊本地 NovelAI 生图 2.0 设置；启用时优先于旧生图。 */
+  novelAiImageGeneration?: CharacterNovelAiImageGenerationConfig;
 
   impression?: UserImpression;
 

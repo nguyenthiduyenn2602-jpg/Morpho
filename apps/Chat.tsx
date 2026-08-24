@@ -43,6 +43,7 @@ import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import ImageGenerationSettingsModal from '../components/chat/ImageGenerationSettingsModal';
+import NovelAiImageGenerationSettingsModal from '../components/chat/NovelAiImageGenerationSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
@@ -186,6 +187,7 @@ const Chat: React.FC = () => {
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showThinkingChainModal, setShowThinkingChainModal] = useState(false);
     const [showImageGenerationModal, setShowImageGenerationModal] = useState(false);
+    const [showNovelAiImageGenerationModal, setShowNovelAiImageGenerationModal] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -1423,6 +1425,12 @@ const Chat: React.FC = () => {
                 if (!char) break;
                 setShowPanel('none');
                 setShowImageGenerationModal(true);
+                break;
+            }
+            case 'novelai-image-generation': {
+                if (!char) break;
+                setShowPanel('none');
+                setShowNovelAiImageGenerationModal(true);
                 break;
             }
         }
@@ -3580,6 +3588,7 @@ const Chat: React.FC = () => {
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
                     imageGenerationEnabled={!!char.imageGeneration?.enabled}
+                    novelAiImageGenerationEnabled={!!char.novelAiImageGeneration?.enabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -3617,6 +3626,19 @@ const Chat: React.FC = () => {
                 <ImageGenerationSettingsModal
                     isOpen={showImageGenerationModal}
                     onClose={() => setShowImageGenerationModal(false)}
+                    char={char}
+                    apiConfig={apiConfig}
+                    instantActive={isInstantConfigReady()}
+                    updateCharacter={updateCharacter}
+                    updateApiConfig={updateApiConfig}
+                    addToast={addToast}
+                />
+            )}
+
+            {char && (
+                <NovelAiImageGenerationSettingsModal
+                    isOpen={showNovelAiImageGenerationModal}
+                    onClose={() => setShowNovelAiImageGenerationModal(false)}
                     char={char}
                     apiConfig={apiConfig}
                     instantActive={isInstantConfigReady()}

@@ -47,6 +47,8 @@ interface ChatInputAreaProps {
     showThinkingChain?: boolean;
     // 当前角色本地生图开关
     imageGenerationEnabled?: boolean;
+    // 当前角色 NovelAI 生图 2.0 开关
+    novelAiImageGenerationEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -69,6 +71,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     htmlModeEnabled = false,
     showThinkingChain = false,
     imageGenerationEnabled = false,
+    novelAiImageGenerationEnabled = false,
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
@@ -724,6 +727,21 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   {imageGenerationEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-pink-400 border-slate-900' : 'bg-pink-500 border-white'}`} />}
                               </div>
                               <span className="text-xs font-bold">生图</span>
+                            </button>
+
+                            <button
+                              onClick={() => onPanelAction('novelai-image-generation')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  novelAiImageGenerationEnabled
+                                    ? (isDiscordStyle ? 'bg-violet-500/20 text-violet-300 border-violet-400/40' : 'bg-violet-100 text-violet-600 border-violet-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100')
+                              }`}>
+                                  <Sparkle className="w-6 h-6" weight="fill" />
+                                  {novelAiImageGenerationEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">生图2.0</span>
                             </button>
 
                             {/* Proactive Message Button（从第一页移到第二页） */}

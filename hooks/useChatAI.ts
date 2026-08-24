@@ -70,6 +70,11 @@ import {
     persistGeneratedCharacterImage,
 } from '../utils/imageGeneration';
 import type { ImageGenerationDirective } from '../utils/imageGeneration';
+import {
+    buildNovelAiDecisionPrompt,
+    extractNovelAiDirective,
+    generateNovelAiCharacterImage,
+} from '../utils/novelAiImageGeneration';
 
 // ─── 云端情绪评估的安全网定时器（模块级，按角色）───
 // 为什么不放 hook 里：结论（emotionDone）是全局事件，用户切了角色、离开聊天页之后
@@ -845,8 +850,14 @@ export const useChatAI = ({
             // 图片 API 只能由当前打开的客户端调用。明确索图的这一轮必须留在本地；
             // 若用户允许角色主动发图，模型需要先在本地作出生图决定，因此该角色的对话轮也保持本地。
             // 这里只否决本轮的云端生成，不改主动消息配置，worker 后续推来的消息仍可正常接收。
-            const imageGenerationNeedsLocal = !!charForGen.imageGeneration?.enabled
-                && (isExplicitImageRequest(latestUserText) || !!charForGen.imageGeneration.allowProactive);
+            // 2.0 与旧版可以同时保留配置，但同一角色只启用一条生成链：NovelAI 2.0 优先。
+            const novelAiImageGenerationEnabled = !!charForGen.novelAiImageGeneration?.enabled;
+            const legacyImageGenerationEnabled = !novelAiImageGenerationEnabled && !!charForGen.imageGeneration?.enabled;
+            const activeImageGenerationAllowsProactive = novelAiImageGenerationEnabled
+                ? !!charForGen.novelAiImageGeneration?.allowProactive
+                : !!charForGen.imageGeneration?.allowProactive;
+            const imageGenerationNeedsLocal = (novelAiImageGenerationEnabled || legacyImageGenerationEnabled)
+                && (isExplicitImageRequest(latestUserText) || activeImageGenerationAllowsProactive);
             // 本机 / 内网的 MCP 服务器（docs/mcp-client.md 教用户填的 http://localhost:18061
             // 就是这一类）：上云那一轮前端不注入 MCP 说明块，而 worker 从 CF 那头连不上这类
             // 地址、上云清单里压根没有它——两边都不说，角色这一轮彻底不知道自己有工具。
@@ -866,7 +877,7 @@ export const useChatAI = ({
             const instantPushRoute = instantPushConfigured && !imageGenerationNeedsLocal;
             const instantChatRoute = instantChatOn && !instantChatVeto && !instantPushRoute;
             // 生图只在前端本地生成时启用；两条云端路线都不能代替用户从本机调用图片 API。
-            const localImageGenerationEnabled = !!charForGen.imageGeneration?.enabled
+            const localImageGenerationEnabled = (novelAiImageGenerationEnabled || legacyImageGenerationEnabled)
                 && !instantPushRoute
                 && !instantChatRoute;
             // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，三种原因去向不同：
@@ -994,7 +1005,9 @@ export const useChatAI = ({
                 luckinChat: luckinChatOn ? luckinChatRef?.current : undefined,
                 timelyByWorker: instantChatRoute,
                 extraSystemPrompt: localImageGenerationEnabled
-                    ? buildImageGenerationDecisionPrompt(charForGen, userProfile)
+                    ? (novelAiImageGenerationEnabled
+                        ? buildNovelAiDecisionPrompt(charForGen, userProfile)
+                        : buildImageGenerationDecisionPrompt(charForGen, userProfile))
                     : undefined,
             }));
             const systemPrompt = payload.systemPrompt;
@@ -1923,18 +1936,28 @@ export const useChatAI = ({
             let pendingGeneratedImage: { image: Blob | string; directive: ImageGenerationDirective } | null = null;
             let rawAiContent = data.choices?.[0]?.message?.content || '';
             if (localImageGenerationEnabled) {
-                const parsedImage = extractImageGenerationDirective(rawAiContent);
+                const parsedImage = novelAiImageGenerationEnabled
+                    ? extractNovelAiDirective(rawAiContent)
+                    : extractImageGenerationDirective(rawAiContent);
                 if (parsedImage.directive) {
-                    const mayGenerate = !!charForGen.imageGeneration?.allowProactive
+                    const mayGenerate = activeImageGenerationAllowsProactive
                         || isExplicitImageRequest(latestUserText);
                     // 默认关闭主动发图时，客户端再做一次语义保险丝，避免模型误触而产生费用。
                     if (mayGenerate) {
                         rawAiContent = parsedImage.cleaned || '……给你看。';
                         setSearchStatus(`${char.name} 正在生成图片…`);
                         try {
-                            const imageApi = apiConfig.imageGeneration;
-                            if (!imageApi) throw new Error('请先在「＋ → 生图」中配置图片 API');
-                            const image = await generateCharacterImage(imageApi, charForGen, parsedImage.directive);
+                            const image = novelAiImageGenerationEnabled
+                                ? await (async () => {
+                                    const imageApi = apiConfig.novelAiImageGeneration;
+                                    if (!imageApi) throw new Error('请先在「＋ → 生图2.0」中配置 NovelAI API');
+                                    return generateNovelAiCharacterImage(imageApi, charForGen, parsedImage.directive!);
+                                })()
+                                : await (async () => {
+                                    const imageApi = apiConfig.imageGeneration;
+                                    if (!imageApi) throw new Error('请先在「＋ → 生图」中配置图片 API');
+                                    return generateCharacterImage(imageApi, charForGen, parsedImage.directive!);
+                                })();
                             pendingGeneratedImage = { image, directive: parsedImage.directive };
                         } catch (error: any) {
                             addToast(error?.message || '图片生成失败', 'error');
