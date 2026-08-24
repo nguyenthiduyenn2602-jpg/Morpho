@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle, MagicWand, SpinnerGap, XCircle } from '@phosphor-icons/react';
+import { CheckCircle, ImageSquare, MagicWand, MagnifyingGlass, SpinnerGap, Trash, XCircle } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, NovelAiImageGenerationApiConfig } from '../../types';
 import {
     DEFAULT_NAI_IMAGE_API_URL,
@@ -7,6 +7,7 @@ import {
     DEFAULT_NAI_NEGATIVE_TAGS,
     DEFAULT_NAI_QUALITY_TAGS,
     DEFAULT_NAI_SAMPLER,
+    fetchNovelAiModels,
     isNovelAiApiVerified,
     novelAiApiSignature,
     testNovelAiConnection,
@@ -51,7 +52,15 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
     const [styleTags, setStyleTags] = useState(savedChar?.styleTags || '');
     const [qualityTags, setQualityTags] = useState(savedChar?.qualityTags || DEFAULT_NAI_QUALITY_TAGS);
     const [negativeTags, setNegativeTags] = useState(savedChar?.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS);
+    const [referenceImageUrl, setReferenceImageUrl] = useState(savedChar?.referenceImageUrl || '');
+    const [referencePreview, setReferencePreview] = useState(savedChar?.referenceImageUrl || '');
+    const [referenceStatus, setReferenceStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(savedChar?.referenceImageUrl ? 'loading' : 'idle');
+    const [referenceStrength, setReferenceStrength] = useState(savedChar?.referenceStrength ?? 0.6);
     const [testing, setTesting] = useState(false);
+    const [loadingModels, setLoadingModels] = useState(false);
+    const [models, setModels] = useState<string[]>([]);
+    const [modelQuery, setModelQuery] = useState('');
+    const [modelMessage, setModelMessage] = useState('');
 
     useEffect(() => {
         if (!isOpen) return;
@@ -63,6 +72,14 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
         setStyleTags(char.novelAiImageGeneration?.styleTags || '');
         setQualityTags(char.novelAiImageGeneration?.qualityTags || DEFAULT_NAI_QUALITY_TAGS);
         setNegativeTags(char.novelAiImageGeneration?.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS);
+        const reference = char.novelAiImageGeneration?.referenceImageUrl || '';
+        setReferenceImageUrl(reference);
+        setReferencePreview(reference);
+        setReferenceStatus(reference ? 'loading' : 'idle');
+        setReferenceStrength(char.novelAiImageGeneration?.referenceStrength ?? 0.6);
+        setModels([]);
+        setModelQuery('');
+        setModelMessage('');
     }, [isOpen, char.id, apiConfig.novelAiImageGeneration, char.novelAiImageGeneration]);
 
     const connected = useMemo(() => isNovelAiApiVerified(draftApi), [draftApi]);
@@ -76,6 +93,8 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
         styleTags: styleTags.trim(),
         qualityTags: qualityTags.trim(),
         negativeTags: negativeTags.trim(),
+        referenceImageUrl: referenceImageUrl.trim() || undefined,
+        referenceStrength: Math.min(1, Math.max(0, Number(referenceStrength) || 0.6)),
     });
 
     const normalizedApi = (): NovelAiImageGenerationApiConfig => ({
@@ -121,6 +140,40 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
         setDraftApi(previous => ({ ...previous, [key]: value }));
     };
 
+    const loadModels = async () => {
+        setLoadingModels(true);
+        setModelMessage('正在获取可用模型…');
+        try {
+            const found = await fetchNovelAiModels(normalizedApi());
+            setModels(found);
+            setModelQuery('');
+            setModelMessage(`已获取 ${found.length} 个模型`);
+        } catch (error: any) {
+            setModelMessage(error?.message || '获取模型失败');
+        } finally {
+            setLoadingModels(false);
+        }
+    };
+
+    const loadReference = () => {
+        const value = referenceImageUrl.trim();
+        if (!value) {
+            setReferencePreview('');
+            setReferenceStatus('idle');
+            return;
+        }
+        if (!/^https?:\/\//i.test(value)) {
+            setReferencePreview('');
+            setReferenceStatus('error');
+            addToast('参考图请填写 http(s) 图片直链', 'error');
+            return;
+        }
+        setReferenceStatus('loading');
+        setReferencePreview(value);
+    };
+
+    const filteredModels = models.filter(model => model.toLowerCase().includes(modelQuery.trim().toLowerCase()));
+
     return (
         <div className="fixed inset-0 z-[130] flex items-end justify-center bg-black/25 backdrop-blur-[2px]" onClick={onClose}>
             <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[30px] bg-[#f8fafc] shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -155,7 +208,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
                         <div className="flex items-center justify-between">
                             <div>
                                 <h3 className="font-bold text-slate-800">NovelAI 接口</h3>
-                                <p className="mt-1 text-[11px] text-slate-400">官方地址或兼容 /ai/generate-image 的中转地址</p>
+                                <p className="mt-1 text-[11px] text-slate-400">可填写官方域名或中转站提供的完整生图地址</p>
                             </div>
                             <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${connected ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
                                 {connected ? <CheckCircle weight="fill" /> : <XCircle weight="fill" />}{connected ? '端点可达' : '未检测'}
@@ -167,19 +220,56 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
                         <label className={labelClass}>API Key
                             <input type="password" autoComplete="off" className={inputClass} value={draftApi.apiKey} onChange={e => updateApi('apiKey', e.target.value)} placeholder="NovelAI token / 中转 Key" />
                         </label>
-                        <label className={labelClass}>模型
-                            <input list="nai-models" className={inputClass} value={draftApi.model} onChange={e => updateApi('model', e.target.value)} />
-                            <datalist id="nai-models">
-                                <option value="nai-diffusion-4-5-full" />
-                                <option value="nai-diffusion-4-5-curated" />
-                                <option value="nai-diffusion-4-full" />
-                                <option value="nai-diffusion-3" />
-                            </datalist>
-                        </label>
+                        <div>
+                            <span className={labelClass}>模型</span>
+                            <div className="mt-1.5 flex gap-2">
+                                <input className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:ring-2 focus:ring-violet-100" value={draftApi.model} onChange={e => updateApi('model', e.target.value)} placeholder="也可以手动填写模型名" />
+                                <button type="button" disabled={loadingModels || !draftApi.baseUrl.trim()} onClick={() => void loadModels()} className="shrink-0 rounded-2xl border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 disabled:opacity-50">
+                                    {loadingModels ? <SpinnerGap className="animate-spin" /> : '获取模型'}
+                                </button>
+                            </div>
+                        </div>
+                        {models.length > 0 && (
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2.5">
+                                <div className="relative">
+                                    <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input value={modelQuery} onChange={e => setModelQuery(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none focus:border-violet-300" placeholder={`搜索 ${models.length} 个可用模型…`} />
+                                </div>
+                                <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                                    {filteredModels.length ? filteredModels.map(model => (
+                                        <button key={model} type="button" onClick={() => updateApi('model', model)} className={`w-full rounded-lg px-3 py-2 text-left font-mono text-[11px] break-all ${draftApi.model === model ? 'bg-violet-100 font-bold text-violet-700' : 'bg-white text-slate-600 hover:bg-slate-100'}`}>{model}</button>
+                                    )) : <div className="py-3 text-center text-xs text-slate-400">没有匹配的模型</div>}
+                                </div>
+                            </div>
+                        )}
+                        {modelMessage && <p className={`text-[10px] leading-relaxed ${models.length ? 'text-emerald-600' : 'text-rose-500'}`}>{modelMessage}</p>}
                         <button type="button" disabled={testing} onClick={testAndSave} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3 text-sm font-bold text-white disabled:opacity-60">
                             {testing && <SpinnerGap className="animate-spin" />}{testing ? '检测中…' : '检测端点并保存'}
                         </button>
                         <p className="text-[10px] leading-relaxed text-slate-400">检测不会提交生图任务或扣除 Anlas；部分中转不支持 OPTIONS 时可直接保存后实测。</p>
+                    </section>
+
+                    <section className="space-y-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
+                        <div className="flex items-center gap-2">
+                            <ImageSquare className="text-violet-500" weight="fill" />
+                            <div><h3 className="font-bold text-slate-800">角色参考图</h3><p className="mt-1 text-[11px] text-slate-400">可选；填写公开图片直链，生成时用于参考人物形象</p></div>
+                        </div>
+                        <div className="flex gap-2">
+                            <input className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:ring-2 focus:ring-violet-100" value={referenceImageUrl} onChange={e => { setReferenceImageUrl(e.target.value); setReferenceStatus('idle'); }} placeholder="https://.../reference.png" />
+                            <button type="button" onClick={loadReference} className="shrink-0 rounded-2xl bg-violet-500 px-3 text-xs font-bold text-white">加载</button>
+                        </div>
+                        {referencePreview && (
+                            <div className="relative overflow-hidden rounded-2xl bg-slate-100">
+                                <img src={referencePreview} alt="角色参考图预览" className="max-h-72 w-full object-contain" onLoad={() => setReferenceStatus('success')} onError={() => setReferenceStatus('error')} />
+                                <span className={`absolute bottom-2 left-2 rounded-full px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur ${referenceStatus === 'success' ? 'bg-emerald-500/90' : referenceStatus === 'error' ? 'bg-rose-500/90' : 'bg-black/55'}`}>{referenceStatus === 'success' ? '加载成功' : referenceStatus === 'error' ? '加载失败' : '正在加载…'}</span>
+                                <button type="button" title="清除参考图" onClick={() => { setReferenceImageUrl(''); setReferencePreview(''); setReferenceStatus('idle'); }} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur"><Trash /></button>
+                            </div>
+                        )}
+                        {referenceStatus === 'error' && <p className="text-xs text-rose-500">图片无法打开。请确认这是无需登录、没有防盗链限制的图片直链。</p>}
+                        <label className={labelClass}>参考强度：{referenceStrength.toFixed(2)}
+                            <input type="range" min="0" max="1" step="0.05" value={referenceStrength} onChange={e => setReferenceStrength(Number(e.target.value))} className="mt-2 w-full accent-violet-500" />
+                        </label>
+                        <p className="text-[10px] leading-relaxed text-slate-400">仅保存 URL。真正生成时会在本地读取图片并转换为 NAI 参考图数据；若图床禁止跨域读取，会提示你更换直链。</p>
                     </section>
 
                     <section className="space-y-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">

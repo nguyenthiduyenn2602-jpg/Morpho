@@ -230,6 +230,10 @@ export interface NovelAiImageGenerationApiConfig {
 export interface CharacterNovelAiImageGenerationConfig {
   enabled: boolean;
   allowProactive?: boolean;
+  /** 可公开访问的参考图 URL；发送前转成 NovelAI 所需的 base64。 */
+  referenceImageUrl?: string;
+  /** NovelAI 参考图强度，默认 0.6。 */
+  referenceStrength?: number;
   /** 发型、发色、瞳色、体型等固定 Danbooru/NAI 标签。 */
   characterTags?: string;
   /** 用户本人出现在双人/多人画面时追加的固定形象标签。 */

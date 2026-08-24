@@ -19,11 +19,50 @@ const NAI_DIRECTIVE_RE = /\[\[GENERATE_NAI_IMAGE\]\]\s*([\s\S]*?)\s*\[\[\/GENERA
 
 export function normalizeNovelAiBase(value: string): string {
     const raw = (value || DEFAULT_NAI_IMAGE_API_URL).trim().replace(/\/+$/, '');
-    return raw.replace(/\/ai\/generate-image$/i, '');
+    return raw.replace(/\/(?:ai\/generate-image|api\/generate|generate|novelai)$/i, '');
 }
 
 export function novelAiGenerateEndpoint(value: string): string {
-    return `${normalizeNovelAiBase(value)}/ai/generate-image`;
+    const raw = (value || DEFAULT_NAI_IMAGE_API_URL).trim().replace(/\/+$/, '');
+    try {
+        const url = new URL(raw);
+        // 砂糖绘画的 /api/generate 是网页简易接口；/novelai 才接收标准 NAI payload。
+        if (/\.loliyc\.com$/i.test(url.hostname) && /\/(?:api\/generate|generate)$/i.test(url.pathname)) {
+            return `${url.origin}/novelai`;
+        }
+    } catch { /* 下方仍按普通字符串兼容 */ }
+    if (/\/(?:ai\/generate-image|novelai)$/i.test(raw)) return raw;
+    return `${normalizeNovelAiBase(raw)}/ai/generate-image`;
+}
+
+export function novelAiModelsEndpoint(value: string): string {
+    const raw = (value || DEFAULT_NAI_IMAGE_API_URL).trim();
+    try { return `${new URL(raw).origin}/v1/models`; }
+    catch { return `${normalizeNovelAiBase(raw)}/v1/models`; }
+}
+
+export function extractNovelAiModelIds(data: any): string[] {
+    const source = Array.isArray(data) ? data
+        : Array.isArray(data?.data) ? data.data
+            : Array.isArray(data?.models) ? data.models : [];
+    return [...new Set(source.map((item: any) => typeof item === 'string' ? item : item?.id || item?.name)
+        .filter((item: any): item is string => typeof item === 'string' && !!item.trim())
+        .map((item: string) => item.trim()))].sort((a, b) => a.localeCompare(b));
+}
+
+export async function fetchNovelAiModels(config: NovelAiImageGenerationApiConfig): Promise<string[]> {
+    let response: Response;
+    try {
+        response = await fetch(novelAiModelsEndpoint(config.baseUrl), {
+            headers: config.apiKey.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : undefined,
+        });
+    } catch (error: any) {
+        throw new Error(error?.message === 'Load failed' ? '浏览器无法连接模型列表，可能是网络或 CORS 限制' : (error?.message || '获取模型失败'));
+    }
+    if (!response.ok) throw new Error(await readNovelAiError(response, `获取模型失败（HTTP ${response.status}）`));
+    const models = extractNovelAiModelIds(await response.json().catch(() => null));
+    if (!models.length) throw new Error('接口已返回，但没有识别到可用模型');
+    return models;
 }
 
 /** FNV-1a，仅用于让绿灯随配置变化自动失效。 */
@@ -147,6 +186,7 @@ export function buildNovelAiPayload(
     cfg: CharacterNovelAiImageGenerationConfig,
     request: ImageGenerationDirective,
     seed = Math.floor(Math.random() * 0xffffffff),
+    referenceImageBase64 = '',
 ): Record<string, any> {
     const prompt = buildNovelAiPrompt(cfg, request);
     const negative = splitNovelAiTags(cfg.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS).join(', ');
@@ -178,9 +218,9 @@ export function buildNovelAiPayload(
             skip_cfg_above_sigma: null,
             use_coords: false,
             characterPrompts: [],
-            reference_image_multiple: [],
-            reference_information_extracted_multiple: [],
-            reference_strength_multiple: [],
+            reference_image_multiple: referenceImageBase64 ? [referenceImageBase64] : [],
+            reference_information_extracted_multiple: referenceImageBase64 ? [1] : [],
+            reference_strength_multiple: referenceImageBase64 ? [Math.min(1, Math.max(0, cfg.referenceStrength ?? 0.6))] : [],
             deliberate_euler_ancestral_bug: false,
             prefer_brownian: true,
             v4_prompt: { caption, use_coords: false, use_order: true },
@@ -197,6 +237,9 @@ export async function generateNovelAiCharacterImage(
     if (!api.apiKey.trim()) throw new Error('NovelAI API Key 尚未配置');
     const cfg = char.novelAiImageGeneration;
     if (!cfg?.enabled) throw new Error('当前角色尚未开启生图 2.0');
+    const referenceImageBase64 = cfg.referenceImageUrl?.trim()
+        ? await fetchReferenceImageBase64(cfg.referenceImageUrl.trim())
+        : '';
 
     const response = await fetch(novelAiGenerateEndpoint(api.baseUrl), {
         method: 'POST',
@@ -205,7 +248,7 @@ export async function generateNovelAiCharacterImage(
             Accept: 'application/zip, application/json, image/*',
             Authorization: `Bearer ${api.apiKey.trim()}`,
         },
-        body: JSON.stringify(buildNovelAiPayload(api, cfg, request)),
+        body: JSON.stringify(buildNovelAiPayload(api, cfg, request, undefined, referenceImageBase64)),
     });
     if (!response.ok) throw new Error(await readNovelAiError(response, `NovelAI 生图失败（HTTP ${response.status}）`));
 
@@ -221,17 +264,40 @@ export async function generateNovelAiCharacterImage(
     return new Blob([blob], { type: imageMimeFromName(entry.name) });
 }
 
+async function fetchReferenceImageBase64(url: string): Promise<string> {
+    if (!/^https?:\/\//i.test(url)) throw new Error('参考图必须是 http(s) 图片直链');
+    let response: Response;
+    try { response = await fetch(url); }
+    catch (error: any) {
+        throw new Error(error?.message === 'Load failed'
+            ? '参考图能显示，但图片站禁止浏览器读取（CORS）。请换一个允许外链读取的图床直链'
+            : (error?.message || '读取参考图失败'));
+    }
+    if (!response.ok) throw new Error(`读取参考图失败（HTTP ${response.status}）`);
+    const blob = await response.blob();
+    if (blob.type && !blob.type.startsWith('image/')) throw new Error('参考图 URL 返回的不是图片');
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    return btoa(binary);
+}
+
 async function readJsonImage(response: Response): Promise<Blob | string> {
     const data = await response.json().catch(() => null);
-    const url = data?.url || data?.image_url || data?.data?.[0]?.url || data?.data?.images?.[0];
+    const url = data?.url || data?.image_url
+        || (typeof data?.data === 'string' ? data.data : undefined)
+        || data?.data?.url || data?.data?.[0]?.url || data?.data?.images?.[0];
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
-    const b64 = data?.image || data?.b64_json || data?.data?.[0]?.b64_json;
+    const b64 = data?.image || data?.b64_json || data?.data?.b64_json || data?.data?.[0]?.b64_json;
     if (typeof b64 === 'string' && b64) {
         const cleaned = b64.replace(/^data:image\/[^;]+;base64,/, '');
         const bytes = Uint8Array.from(atob(cleaned), char => char.charCodeAt(0));
         return new Blob([bytes], { type: 'image/png' });
     }
-    throw new Error(data?.message || data?.error?.message || '接口返回 JSON，但没有找到图片');
+    throw new Error(data?.message || data?.error?.message
+        || (data?.status === 'failed' && typeof data?.data === 'string' ? data.data : '')
+        || '接口返回 JSON，但没有找到图片');
 }
 
 async function readNovelAiError(response: Response, fallback: string): Promise<string> {
