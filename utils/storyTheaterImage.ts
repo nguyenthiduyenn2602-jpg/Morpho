@@ -50,6 +50,38 @@ const cleanTags = (value: unknown): string => String(value || '')
     .trim().replace(/^,+|,+$/g, '').trim();
 const stripJsonFence = (raw: string): string => String(raw || '').trim().replace(/^```(?:json)?\s*|\s*```$/gi, '').trim();
 
+const extractJsonObject = (raw: string): string => {
+    const source = stripJsonFence(raw).replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = 0; index < source.length; index += 1) {
+        const character = source[index];
+        if (start < 0) {
+            if (character !== '{') continue;
+            start = index;
+            depth = 1;
+            continue;
+        }
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') inString = false;
+            continue;
+        }
+        if (character === '"') inString = true;
+        else if (character === '{') depth += 1;
+        else if (character === '}') {
+            depth -= 1;
+            if (depth === 0) return source.slice(start, index + 1);
+        }
+    }
+    return '';
+};
+
+const isPlaceholder = (value: unknown): boolean => /^(?:未明确|沿用当前|依照正文|根据本轮正文|本轮没有明确)/.test(String(value || '').trim());
+
 const defaultCenterCodes = (count: number): string[] => {
     if (count <= 1) return ['c3'];
     if (count === 2) return ['b3', 'd3'];
@@ -118,10 +150,12 @@ const buildStoryImageCharacterPlans = (
     }).filter((character): character is StoryImageCharacterPlan => Boolean(character));
 };
 
-export function parseStoryImageStoryboard(raw: string, participants: Array<{ key: string; name: string; anchor: string }>): { state: StoryImageState; frames: StoryImageFramePlan[] } {
+export function parseStoryImageStoryboard(raw: string, participants: Array<{ key: string; name: string; anchor: string }>, strict = false): { state: StoryImageState; frames: StoryImageFramePlan[] } {
     let parsed: any;
-    try { parsed = JSON.parse(stripJsonFence(raw)); } catch { parsed = null; }
+    const jsonObject = extractJsonObject(raw);
+    try { parsed = JSON.parse(jsonObject || stripJsonFence(raw)); } catch { parsed = null; }
     if (!parsed || typeof parsed !== 'object') {
+        if (strict) throw new Error('生图导演没有返回完整 JSON；已停止生图，未消耗 NAI 次数');
         const base = parseStoryImagePromptPlan(raw, participants);
         const characters = buildStoryImageCharacterPlans([], base.visible, participants);
         const motion: StoryImageFramePlan = { ...base, characters, kind: 'motion', title: '动作变化帧', description: '本轮动作变化最明显的一瞬间' };
@@ -160,7 +194,10 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         const highlight = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, interaction focus, clear body language, rule of thirds, coherent detailed background` }), participants);
         frames.push({ ...highlight, characters: base.characters, kind: 'highlight', title: '关系高光帧', description: '本轮最值得描绘的情绪与互动瞬间' });
     }
-    if (!frames.length) return parseStoryImageStoryboard(cleanTags(parsed?.sceneTags || parsed?.prompt), participants);
+    if (!frames.length) {
+        if (strict) throw new Error('生图导演没有整理出关键帧；已停止生图，未消耗 NAI 次数');
+        return parseStoryImageStoryboard(cleanTags(parsed?.sceneTags || parsed?.prompt), participants);
+    }
 
     const scene = parsed.scene && typeof parsed.scene === 'object' ? parsed.scene : {};
     const cast: StoryImageCastState[] = (Array.isArray(parsed.cast) ? parsed.cast : []).map((person: any) => {
@@ -184,6 +221,23 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         continuityChange: cleanText(parsed.continuityChange || parsed.change, '本轮没有明确的视觉状态变化'),
         frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
     };
+    if (strict) {
+        const sceneValues = [state.location, state.time, state.lighting, state.atmosphere, state.continuityChange];
+        const invalidScene = sceneValues.some(value => !value.trim() || isPlaceholder(value));
+        const invalidCast = state.cast.length === 0 || state.cast.some(person =>
+            [person.clothing, person.position, person.pose, person.expression].some(value => !value.trim() || isPlaceholder(value))
+        );
+        const invalidFrames = rawFrames.length < 2 || frames.length < 2 || frames.some(frame =>
+            frame.sceneTags.length < 24
+            || !frame.description.trim()
+            || isPlaceholder(frame.description)
+            || frame.characters.length === 0
+            || frame.characters.some(character => character.prompt.length < 12)
+        );
+        if (invalidScene || invalidCast || invalidFrames) {
+            throw new Error('生图导演返回的场景、人物状态或分镜不完整；已停止生图，未消耗 NAI 次数');
+        }
+    }
     return { state, frames };
 }
 
@@ -212,6 +266,7 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
                 'center uses the 5x5 grid a1-e5. Prefer b2-d4; c3 is center. Two separated people usually use b3/d3; overlapping interaction may use c3/c3 or c3/d3. Avoid a1/e5 unless the composition truly requires an edge crop.',
                 'The visible array contains only people actually visible in that frame and may contain any number of people. Character keys and name order must exactly follow PARTICIPANTS. Identity anchors are injected by code, so never contradict their hairstyle, hair color, eye color or fixed traits.',
                 'No prose outside JSON, no Markdown, dialogue, captions, UI, watermark or explanation.',
+                'Keep every Chinese field concise (prefer 12-60 Chinese characters) and every English tag field concrete. Completeness is more important than literary prose. Never write placeholders such as “沿用当前”“依照正文” or “未明确”; copy the actual state into every required field.',
             ].join('\n'),
         },
         { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nRECENT STORY\n${history || '(opening scene)'}` },
@@ -253,7 +308,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const response = await fetch(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiConfig.apiKey}` },
-        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.3, max_tokens: 1400 }),
+        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.15, max_tokens: 3200 }),
     });
     if (!response.ok) throw new Error(`配图分镜整理失败（API ${response.status}）`);
     const raw = extractContent(await safeResponseJson(response)).trim();
@@ -262,7 +317,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
         { key: 'user', name: options.userName, anchor: options.entry.imageGeneration.userAnchor || '' },
         ...options.actors.map(actor => ({ key: `character:${actor.id}`, name: actor.name, anchor: options.entry.imageGeneration?.characterAnchors?.[actor.id] || '' })),
     ];
-    const storyboard = parseStoryImageStoryboard(raw, participants);
+    const storyboard = parseStoryImageStoryboard(raw, participants, true);
     const count = options.entry.imageGeneration.imageCount === 1 ? 1 : 2;
     const plans = count === 1 ? [storyboard.frames[storyboard.frames.length - 1]] : storyboard.frames.slice(0, 2);
     const frames: StoryGeneratedImageFrame[] = [];

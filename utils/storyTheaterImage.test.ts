@@ -71,6 +71,32 @@ describe('storyTheaterImage', () => {
         expect(storyboard.frames[0].characters[1].center).toEqual({ x: 0.7, y: 0.5 });
     });
 
+    it('extracts a complete storyboard JSON object from surrounding model prose', () => {
+        const raw = `I will now return the requested data.\n\`\`\`json\n${JSON.stringify({
+            scene: { location: '十二楼办公室窗边', time: '傍晚六点', lighting: '落日从百叶窗右侧照入', atmosphere: '安静而紧张' },
+            cast: [{ key: 'character:a', name: '苏郁', clothing: '黑色衬衫与西裤', position: '窗边右侧', pose: '一手撑住窗台俯身', expression: '垂眼注视' }],
+            continuityChange: '苏郁离开办公桌，俯身靠近窗边的人',
+            frames: [
+                { title: '动作变化帧', description: '苏郁从办公桌后走到窗边，手掌刚落在窗台', visible: ['character:a'], sceneTags: '1boy, modern office, sunset, medium wide shot, full body, cinematic depth', characters: [{ key: 'character:a', prompt: 'black shirt, walking from desk, hand reaching window sill, focused gaze', center: 'c3' }] },
+                { title: '关系高光帧', description: '苏郁俯身停在窗前，侧光勾勒出肩背线条', visible: ['character:a'], sceneTags: '1boy, office window, sunset side light, three-quarter body, low angle, layered background', characters: [{ key: 'character:a', prompt: 'black shirt, leaning over window sill, lowered gaze, tense shoulders', center: 'c3' }] },
+            ],
+        })}\n\`\`\`\nDone.`;
+        const storyboard = parseStoryImageStoryboard(raw, participants, true);
+        expect(storyboard.state.location).toBe('十二楼办公室窗边');
+        expect(storyboard.frames[0].characters[0].prompt).toContain('black hair');
+    });
+
+    it('rejects lazy or truncated director output before image generation', () => {
+        expect(() => parseStoryImageStoryboard('{"scene":{"location":"沿用当前剧情场景"}', participants, true))
+            .toThrow('没有返回完整 JSON');
+        expect(() => parseStoryImageStoryboard(JSON.stringify({
+            scene: { location: '沿用当前剧情场景', time: '沿用当前时间', lighting: '沿用当前光线', atmosphere: '沿用当前氛围' },
+            cast: [{ key: 'user', name: '沈欢', clothing: '依照正文', position: '依照正文', pose: '依照正文', expression: '依照正文' }],
+            continuityChange: '根据本轮正文更新动作与人物关系',
+            frames: [],
+        }), participants, true)).toThrow('没有整理出关键帧');
+    });
+
     it('maps the worldbook five-by-five centers to NovelAI coordinates', () => {
         expect(parseStoryImageCenter('a1')).toEqual({ x: 0.1, y: 0.1 });
         expect(parseStoryImageCenter('c3')).toEqual({ x: 0.5, y: 0.5 });
