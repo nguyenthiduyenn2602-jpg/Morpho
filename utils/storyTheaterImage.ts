@@ -250,9 +250,24 @@ const buildStoryImageCharacterPlans = (
 const extractStoryImageBlocks = (raw: string): string[] => {
     const source = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
     const blocks: string[] = [];
-    const wrapped = /<image>\s*image###([\s\S]*?)###\s*<\/image>/gi;
+    // Models frequently preserve the worldbook fields but omit or slightly
+    // damage the final ###</image> delimiter. Split on the opening marker so a
+    // complete semicolon payload is still parseable without falling through to
+    // the obsolete JSON parser.
+    const opener = /<image>\s*image###/gi;
+    const starts: Array<{ start: number; contentStart: number }> = [];
     let match: RegExpExecArray | null;
-    while ((match = wrapped.exec(source)) && blocks.length < 2) blocks.push(match[1].trim());
+    while ((match = opener.exec(source)) && starts.length < 2) {
+        starts.push({ start: match.index, contentStart: opener.lastIndex });
+    }
+    starts.forEach((item, index) => {
+        const boundary = starts[index + 1]?.start ?? source.length;
+        let block = source.slice(item.contentStart, boundary);
+        const closing = block.search(/###\s*<\/image>/i);
+        if (closing >= 0) block = block.slice(0, closing);
+        else block = block.replace(/<\/image>[\s\S]*$/i, '').replace(/###\s*$/i, '');
+        if (block.trim()) blocks.push(block.trim());
+    });
     if (blocks.length) return blocks;
     const bare = /image###([\s\S]*?)###/gi;
     while ((match = bare.exec(source)) && blocks.length < 2) blocks.push(match[1].trim());
@@ -263,6 +278,26 @@ const readProtocolField = (block: string, label: string): string => {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = block.match(new RegExp(`(?:^|;)\\s*${escaped}\\s*:\\s*([^;]*)(?=;|$)`, 'i'));
     return cleanTags(match?.[1]);
+};
+
+const readProtocolCharacterField = (
+    block: string,
+    index: number,
+    suffix: 'Prompt' | 'UC',
+    participant?: StoryImageParticipant,
+): string => {
+    const canonical = readProtocolField(block, `Character ${index} ${suffix}`);
+    if (canonical) return canonical;
+    // Some directors replace the literal numbered field with `user Prompt`,
+    // `<character key> Prompt`, or `<display name> Prompt`. These are format
+    // variations, not missing story content.
+    const aliases = [participant?.key, participant?.name]
+        .filter((value): value is string => Boolean(value?.trim()));
+    for (const alias of aliases) {
+        const value = readProtocolField(block, `${alias} ${suffix}`);
+        if (value) return value;
+    }
+    return '';
 };
 
 const parseProtocolCharacterSlot = (value: string): { prompt: string; center: string } => {
@@ -283,7 +318,8 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
         const slots: Array<{ key: string; prompt: string; negative: string; center: string }> = [];
         const used = new Set<string>();
         for (let index = 1; index <= Math.min(4, participants.length); index += 1) {
-            const rawPrompt = readProtocolField(block, `Character ${index} Prompt`);
+            const expectedParticipant = participants[index - 1];
+            const rawPrompt = readProtocolCharacterField(block, index, 'Prompt', expectedParticipant);
             if (!rawPrompt) continue;
             const parsedSlot = parseProtocolCharacterSlot(rawPrompt);
             const lower = parsedSlot.prompt.toLowerCase();
@@ -298,7 +334,7 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
             slots.push({
                 key: matched.key,
                 prompt: cleanTags(withoutLocator),
-                negative: readProtocolField(block, `Character ${index} UC`),
+                negative: readProtocolCharacterField(block, index, 'UC', matched),
                 center: parsedSlot.center || defaultCenterCodes(participants.length)[index - 1] || 'c3',
             });
         }
@@ -346,7 +382,7 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
     const jsonObject = extractJsonObject(raw);
     try { parsed = JSON.parse(jsonObject || stripJsonFence(raw)); } catch { parsed = null; }
     if (!parsed || typeof parsed !== 'object') {
-        if (strict) throw new Error('生图导演没有返回完整 JSON；已停止生图，未消耗 NAI 次数');
+        if (strict) throw new Error('生图导演没有返回完整的世界书配图段落；已停止生图，未消耗 NAI 次数');
         const base = parseStoryImagePromptPlan(raw, participants);
         const characters = buildStoryImageCharacterPlans([], base.visible, participants);
         const motion: StoryImageFramePlan = { ...base, characters, kind: 'motion', title: '剧情配图一', description: '本轮正文中的第一幅画面' };
@@ -467,7 +503,7 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
                 'You are a dedicated NovelAI prompt compiler following the attached worldbook image format. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
                 'Extract two drawable frozen instants from the NEWEST ROUND. Do not classify them as movement/highlight frames and do not invent, intensify, continue or rearrange any action that the story did not state.',
                 'Preserve identity anchors exactly. They are authoritative and will be injected by code after your text is parsed.',
-                'Return exactly TWO single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown:',
+                'Return exactly TWO concise single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown. The literal field names must remain exactly `Scene Composition`, `Character 1 Prompt`, `Character 1 UC`, `Character 2 Prompt`... Never rename a field to `user Prompt`, a character key, or a character name:',
                 '<image>image###Scene Composition: [counts, short location, framing]; Character 1 Prompt: [exact key], [exact name], [specific clothing], [specific body pose], [exact hand/body placement], [specific expression], ([source/target/mutual]#[concrete action])|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
                 '<image>image###Scene Composition: [counts, short location, different framing]; Character 1 Prompt: [same fixed identity locator], [a second concrete frozen instant]|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
                 'WORLD BOOK PRIORITY: (1) if the newest round contains a described photo/video/live-stream, draw moments from that media; (2) otherwise draw two representative moments explicitly present in the current interaction; (3) for NSFW text, choose the most visually clear and sensually intense moments already written. Add nsfw only when explicit anatomy is visible.',
@@ -478,6 +514,7 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
                 'For interactions use only paired (source#same action) and (target#same action), or (mutual#same action). Participant IDs belong only at the beginning of Character Prompt and are forbidden inside interaction parentheses.',
                 'centers uses the 5x5 grid a1-e5. Infer positions from the story. Use b3/d3 for separated pairs and a3/c3/e3 for separated trios; overlap centers only when their bodies actually overlap in the selected action.',
                 'Never copy schema placeholders such as clothing, pose, expression, action or exclusions. Every Character Prompt must contain a concrete visible verb/body placement taken from the NEWEST ROUND.',
+                'Keep each character prompt compact (about 8-16 comma-separated tags) so both blocks finish within the response limit. Character UC is the short fixed string `bad anatomy, bad hands` unless one extra concrete exclusion is necessary.',
                 'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
             ].join('\n'),
         },
@@ -567,7 +604,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const response = await fetch(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiConfig.apiKey}` },
-        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.15, max_tokens: 2200 }),
+        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.1, max_tokens: 3200 }),
     });
     if (!response.ok) throw new Error(`配图分镜整理失败（API ${response.status}）`);
     const raw = extractContent(await safeResponseJson(response)).trim();

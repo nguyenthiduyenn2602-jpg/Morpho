@@ -104,6 +104,16 @@ describe('storyTheaterImage', () => {
         expect(buildStoryFramePackedPrompt(strict.frames[0])).toContain('(source#holding hands)');
     });
 
+    it('accepts worldbook blocks with participant-named fields and damaged closing delimiters', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body; user Prompt: user, 沈欢, lying on back, hands gripping sheets, (source#holding hands)|centers:a3; user UC: bad hands; character:a Prompt: character:a, 苏郁, kneeling beside her, holding her hand, (target#holding hands)|centers:c3; character:a UC: bad anatomy; character:b Prompt: character:b, 秦少川, sitting by her head, touching her cheek|centers:e3; character:b UC: bad anatomy;
+<image>image###Scene Composition: 1girl, 2boys, bedroom, upper body; user Prompt: user, 沈欢, lying on back, hand on shoulder, (mutual#eye contact)|centers:a3; user UC: bad hands; 苏郁 Prompt: character:a, 苏郁, leaning closer, hand in her hand, (mutual#eye contact)|centers:c3; 苏郁 UC: bad anatomy; 秦少川 Prompt: character:b, 秦少川, watching beside her, hand on cheek|centers:e3; 秦少川 UC: bad anatomy;`;
+        const storyboard = parseStoryImageStoryboard(raw, participants, true);
+        expect(storyboard.frames).toHaveLength(2);
+        expect(storyboard.frames[0].characters.map(character => character.key)).toEqual(['user', 'character:a', 'character:b']);
+        expect(storyboard.frames[0].characters[1].prompt).toContain('black hair, blue eyes');
+        expect(storyboard.frames[1].characters[2].prompt).toContain('silver hair, red eyes');
+    });
+
     it('rejects copied protocol placeholders before spending an NAI call', () => {
         const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>
 <image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>`;
@@ -174,7 +184,7 @@ describe('storyTheaterImage', () => {
 
     it('rejects lazy or truncated director output before image generation', () => {
         expect(() => parseStoryImageStoryboard('{"scene":{"location":"沿用当前剧情场景"}', participants, true))
-            .toThrow('没有返回完整 JSON');
+            .toThrow('没有返回完整的世界书配图段落');
         expect(() => parseStoryImageStoryboard(JSON.stringify({
             scene: { location: '沿用当前剧情场景', time: '沿用当前时间', lighting: '沿用当前光线', atmosphere: '沿用当前氛围' },
             cast: [{ key: 'user', name: '沈欢', clothing: '依照正文', position: '依照正文', pose: '依照正文', expression: '依照正文' }],
