@@ -143,7 +143,7 @@ export async function generateStoryTheaterImage(options: GenerateStoryTheaterIma
         userTags: '',
         styleTags: imageConfig.styleTags || '',
         qualityTags: DEFAULT_NAI_QUALITY_TAGS,
-        negativeTags: DEFAULT_NAI_NEGATIVE_TAGS,
+        negativeTags: imageConfig.negativeTags?.trim() || DEFAULT_NAI_NEGATIVE_TAGS,
     };
     const directive: ImageGenerationDirective = {
         prompt: plan.finalPrompt,

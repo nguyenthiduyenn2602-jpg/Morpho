@@ -12,6 +12,7 @@ interface Props {
 const fallback = (entry: StoryTheaterEntry): StoryTheaterImageConfig => ({
     enabled: entry.imageGeneration?.enabled === true,
     styleTags: entry.imageGeneration?.styleTags || '',
+    negativeTags: entry.imageGeneration?.negativeTags || '',
     width: entry.imageGeneration?.width || 1216,
     height: entry.imageGeneration?.height || 832,
     userAnchor: entry.imageGeneration?.userAnchor || '',
@@ -58,6 +59,7 @@ const StoryImageSettingsButton: React.FC<Props> = ({ entry, onChange }) => {
                     <div className='py-4'><div className='flex items-center justify-between gap-4'><div><div className='text-sm font-semibold'>每轮生成一张</div><p className='mt-1 text-[10px] leading-5 text-slate-500'>正文先显示，随后结合本轮与近期上下文画图。</p></div><Toggle value={draft.enabled} onChange={enabled => setDraft(current => ({ ...current, enabled }))} /></div></div>
                     {!globalReady && <div className='mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[10px] leading-5 text-amber-700'>全局生图 2.0 尚未完整配置。可以先填写本页，开启前需到私聊生图 2.0 设置 URL、Key 与模型。</div>}
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>本剧情画师串 / 风格</span><textarea value={draft.styleTags || ''} onChange={event => setDraft(current => ({ ...current, styleTags: event.target.value }))} placeholder='artist:name, cinematic lighting, detailed background' className='mt-1.5 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /></label>
+                    <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>本剧情负面提示词</span><textarea value={draft.negativeTags || ''} onChange={event => setDraft(current => ({ ...current, negativeTags: event.target.value }))} placeholder='留空使用内置默认负面词；填写后仅覆盖本条剧情' className='mt-1.5 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /><span className='mt-1.5 block text-[9px] leading-4 text-slate-400'>不会修改私聊生图 2.0 或其他剧情的负面词。</span></label>
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>配图画幅</span><select value={`${draft.width}x${draft.height}`} onChange={event => { const [width, height] = event.target.value.split('x').map(Number); setDraft(current => ({ ...current, width, height })); }} className='mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs outline-none'><option value='1216x832'>横图 1216×832（默认）</option><option value='1344x768'>宽横图 1344×768</option><option value='1024x1024'>方图 1024×1024</option><option value='832x1216'>竖图 832×1216</option><option value='768x1344'>长竖图 768×1344</option></select></label>
                     <p className='border-t border-slate-200 py-4 text-[10px] leading-5 text-slate-400'>人物锚点在“剧情设置 → 让谁参与”下方调整；多人场景会按本轮真正出镜的人物组合标签。</p>
                 </div>

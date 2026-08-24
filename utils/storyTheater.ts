@@ -125,6 +125,7 @@ export const createStoryTheaterDraft = (now: number = Date.now()): StoryTheaterE
     imageGeneration: {
         enabled: false,
         styleTags: '',
+        negativeTags: '',
         width: 1216,
         height: 832,
         userAnchor: '',
@@ -162,6 +163,7 @@ export const normalizeStoryTheater = (entry: StoryTheaterEntry): StoryTheaterEnt
         imageGeneration: {
             enabled: entry.imageGeneration?.enabled === true,
             styleTags: String(entry.imageGeneration?.styleTags || ''),
+            negativeTags: String(entry.imageGeneration?.negativeTags || ''),
             width: Math.max(64, Math.round(Number(entry.imageGeneration?.width || 1216) / 64) * 64),
             height: Math.max(64, Math.round(Number(entry.imageGeneration?.height || 832) / 64) * 64),
             userAnchor: String(entry.imageGeneration?.userAnchor || ''),

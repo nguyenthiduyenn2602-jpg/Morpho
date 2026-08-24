@@ -1933,6 +1933,8 @@ export interface StoryTheaterImageConfig {
     enabled: boolean;
     /** 本剧情独立画师串，不修改角色私聊生图设置。 */
     styleTags?: string;
+    /** 本剧情独立负面提示词；留空时沿用生图 2.0 内置默认值。 */
+    negativeTags?: string;
     /** 默认横图 1216×832，可在剧情顶部单独改画幅。 */
     width: number;
     height: number;
