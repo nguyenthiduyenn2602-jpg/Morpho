@@ -266,7 +266,7 @@ const StoryImageStateCard: React.FC<{ state?: StoryImageState }> = ({ state }) =
         </summary>
         <div className='border-t border-violet-200 px-4 py-3 text-[10px] leading-5'>
             <div><span className='font-bold text-slate-400'>简单场景：</span><span className='text-slate-700'>{state.location}</span></div>
-            <div className='mt-1'><span className='font-bold text-violet-500'>动作变化：</span><span className='text-slate-700'>{state.continuityChange}</span></div>
+            <div className='mt-1'><span className='font-bold text-violet-500'>本轮取景：</span><span className='text-slate-700'>{state.continuityChange}</span></div>
             {state.frames.length > 0 && <div className='mt-3 space-y-1 border-t border-violet-100 pt-2'>{state.frames.map((frame, index) => <div key={`${frame.kind}-${index}`}><strong className='text-violet-700'>{frame.title}</strong><span className='ml-2 text-slate-600'>{frame.description}</span></div>)}</div>}
         </div>
     </details>;

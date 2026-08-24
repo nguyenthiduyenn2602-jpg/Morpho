@@ -78,6 +78,11 @@ describe('storyTheaterImage', () => {
         });
         expect(messages[0].content).toContain('Tavern Scene Plugin blocks');
         expect(messages[0].content).toContain('Do NOT return JSON');
+        expect(messages[0].content).toContain('WORLD BOOK PRIORITY');
+        expect(messages[0].content).toContain('changing only camera distance or angle');
+        expect(messages[0].content).toContain('forbidden inside interaction parentheses');
+        expect(messages[0].content).not.toContain('largest movement or spatial change');
+        expect(messages[0].content).not.toContain('relationship high point');
         expect(messages[1].content).toContain('三个人走进办公室');
         expect(messages[1].content).toContain('NEWEST ROUND');
     });

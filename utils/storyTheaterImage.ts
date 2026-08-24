@@ -277,7 +277,7 @@ const parseProtocolCharacterSlot = (value: string): { prompt: string; center: st
 export function parseStoryImageProtocol(raw: string, participants: StoryImageParticipant[]): { state: StoryImageState; frames: StoryImageFramePlan[] } | null {
     const blocks = extractStoryImageBlocks(raw);
     if (!blocks.length) return null;
-    const titles = ['动作变化帧', '关系高光帧'];
+    const titles = ['剧情配图一', '剧情配图二'];
     const frames = blocks.map((block, frameIndex) => {
         const sceneComposition = readProtocolField(block, 'Scene Composition');
         const slots: Array<{ key: string; prompt: string; negative: string; center: string }> = [];
@@ -349,9 +349,9 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         if (strict) throw new Error('生图导演没有返回完整 JSON；已停止生图，未消耗 NAI 次数');
         const base = parseStoryImagePromptPlan(raw, participants);
         const characters = buildStoryImageCharacterPlans([], base.visible, participants);
-        const motion: StoryImageFramePlan = { ...base, characters, kind: 'motion', title: '动作变化帧', description: '本轮动作变化最明显的一瞬间' };
+        const motion: StoryImageFramePlan = { ...base, characters, kind: 'motion', title: '剧情配图一', description: '本轮正文中的第一幅画面' };
         const highlightBase = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, interaction focus, clear body language, rule of thirds, coherent detailed background` }), participants);
-        const highlight: StoryImageFramePlan = { ...highlightBase, characters, kind: 'highlight', title: '关系高光帧', description: '本轮最值得描绘的情绪与互动瞬间' };
+        const highlight: StoryImageFramePlan = { ...highlightBase, characters, kind: 'highlight', title: '剧情配图二', description: '本轮正文中的第二幅画面' };
         return {
             state: {
                 location: '沿用当前剧情场景', time: '沿用当前时间', lighting: '沿用当前光线', atmosphere: '沿用当前氛围',
@@ -365,7 +365,7 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
 
     const rawFrames = Array.isArray(parsed.frames) ? parsed.frames.slice(0, 2) : [];
     const frameKinds: Array<'motion' | 'highlight'> = ['motion', 'highlight'];
-    const defaultTitles = ['动作变化帧', '关系高光帧'];
+    const defaultTitles = ['剧情配图一', '剧情配图二'];
     const frames: StoryImageFramePlan[] = rawFrames.map((frame: any, index: number) => {
         const rawCharacters = Array.isArray(frame?.characters) ? frame.characters : [];
         const visible = Array.isArray(frame?.visible) && frame.visible.length > 0
@@ -393,13 +393,13 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
             characters: buildStoryImageCharacterPlans(characterInputs, plan.visible, participants),
             kind: frameKinds[index] || 'highlight',
             title: cleanText(frame?.title, defaultTitles[index] || '剧情关键帧'),
-            description: cleanText(frame?.description, index === 0 ? '本轮动作变化最明显的一瞬间' : '本轮最值得描绘的情绪与互动瞬间'),
+            description: cleanText(frame?.description, index === 0 ? '本轮正文中的第一幅画面' : '本轮正文中的第二幅画面'),
         };
     });
     if (frames.length < 2 && frames[0]) {
         const base = frames[0];
         const highlight = parseStoryImagePromptPlan(JSON.stringify({ visible: base.visible, sceneTags: `${base.sceneTags}, interaction focus, clear body language, rule of thirds, coherent detailed background` }), participants);
-        frames.push({ ...highlight, characters: base.characters, kind: 'highlight', title: '关系高光帧', description: '本轮最值得描绘的情绪与互动瞬间' });
+        frames.push({ ...highlight, characters: base.characters, kind: 'highlight', title: '剧情配图二', description: '本轮正文中的第二幅画面' });
     }
     if (!frames.length) {
         if (strict) throw new Error('生图导演没有整理出关键帧；已停止生图，未消耗 NAI 次数');
@@ -464,19 +464,19 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
         {
             role: 'system',
             content: [
-                'You are a dedicated NovelAI prompt compiler for a story. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
-                'Read the newest round and previous visual state. Choose two concrete frozen instants. The priorities are: (1) fixed participant identity, (2) one readable group action, (3) a short physical location and camera composition.',
+                'You are a dedicated NovelAI prompt compiler following the attached worldbook image format. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
+                'Extract two drawable frozen instants from the NEWEST ROUND. Do not classify them as movement/highlight frames and do not invent, intensify, continue or rearrange any action that the story did not state.',
                 'Preserve identity anchors exactly. They are authoritative and will be injected by code after your text is parsed.',
                 'Return exactly TWO single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown:',
                 '<image>image###Scene Composition: [counts, short location, framing]; Character 1 Prompt: [exact key], [exact name], [specific clothing], [specific body pose], [exact hand/body placement], [specific expression], ([source/target/mutual]#[concrete action])|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
                 '<image>image###Scene Composition: [counts, short location, different framing]; Character 1 Prompt: [same fixed identity locator], [a second concrete frozen instant]|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
-                'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest visually legible sensual beat; add nsfw to sceneComposition only when explicit anatomy is actually visible.',
-                'The NEWEST ROUND is the authority for what is physically happening. Do not replace its action with a generic pose merely because the scene is NSFW. NSFW is only a rating tag, never the action itself.',
-                'Block 1 captures the exact largest movement or spatial change stated in the NEWEST ROUND. Block 2 captures a different exact relationship/action beat from that same round. Describe one frozen instant per block, never a sequence. Pick the framing needed to make the action readable; do not default to portraits or headshots.',
-                'Scene Composition is deliberately short: exact subject counts + bed/sofa/bathroom/wall or similarly simple placement + one camera framing. Do not add decorative background, weather, cinematic lighting, props or scenery unless needed to understand the action.',
-                'Each Character N Prompt is one participant\'s role in the SAME group action: first copy that participant key and name exactly, then clothing, body pose, hand placement, expression, and paired (source#action)/(target#action) or (mutual#action) tags. Follow PARTICIPANTS order and include only visible people. Never output a Character slot for an absent person.',
+                'WORLD BOOK PRIORITY: (1) if the newest round contains a described photo/video/live-stream, draw moments from that media; (2) otherwise draw two representative moments explicitly present in the current interaction; (3) for NSFW text, choose the most visually clear and sensually intense moments already written. Add nsfw only when explicit anatomy is visible.',
+                'The NEWEST ROUND is the only authority for action. Each block depicts one instant, never a sequence. If the round contains two distinct drawable instants, output them in story order. If it contains only one, both blocks must keep exactly the same people, body positions, hand placements and interaction, changing only camera distance or angle.',
+                'Scene Composition contains subject counts, the physical setting, time/light only when stated or needed, and a camera angle/framing that reveals the selected action. Do not add decorative props or scenery that the story did not mention.',
+                'Each Character N Prompt starts with that participant key and name exactly, then identity-independent clothing, one body pose, one concrete interaction, one hand/body placement and one expression taken from the selected instant. Follow PARTICIPANTS order and include only visible people.',
                 'Do not write hair, eye color, age, skin or other identity traits in Character Prompt. Code injects the fixed identity anchor and discards generated identity traits, so character identity cannot be changed here.',
-                'centers uses the 5x5 grid a1-e5. Use b3/d3 for two separated people, a3/c3/e3 for three, and c3/c3 or c3/d3 for overlapping contact.',
+                'For interactions use only paired (source#same action) and (target#same action), or (mutual#same action). Participant IDs belong only at the beginning of Character Prompt and are forbidden inside interaction parentheses.',
+                'centers uses the 5x5 grid a1-e5. Infer positions from the story. Use b3/d3 for separated pairs and a3/c3/e3 for separated trios; overlap centers only when their bodies actually overlap in the selected action.',
                 'Never copy schema placeholders such as clothing, pose, expression, action or exclusions. Every Character Prompt must contain a concrete visible verb/body placement taken from the NEWEST ROUND.',
                 'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
             ].join('\n'),
@@ -584,7 +584,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
         throw error;
     }
     const count = options.entry.imageGeneration.imageCount === 1 ? 1 : 2;
-    const plans = count === 1 ? [storyboard.frames[storyboard.frames.length - 1]] : storyboard.frames.slice(0, 2);
+    const plans = count === 1 ? [storyboard.frames[0]] : storyboard.frames.slice(0, 2);
     const frames: StoryGeneratedImageFrame[] = [];
     for (const plan of plans) {
         if (!plan?.finalPrompt) continue;
