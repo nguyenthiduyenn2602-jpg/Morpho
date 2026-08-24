@@ -22,10 +22,18 @@ describe('novelAiImageGeneration', () => {
         expect(prompt).toBe('masterpiece, high quality, artist:test, cinematic lighting, 1boy, black hair, sitting, warm light');
     });
 
+    it('injects user anchors only when the selected frame actually includes the user', () => {
+        const config = { enabled: true, characterTags: '1boy, black hair', userTags: '1girl, blonde hair' };
+        const solo = buildNovelAiPrompt(config, { prompt: 'office, sitting', selfie: false, includeUser: false });
+        const together = buildNovelAiPrompt(config, { prompt: 'office, sitting together', selfie: false, includeUser: true });
+        expect(solo).not.toContain('blonde hair');
+        expect(together).toContain('1girl, blonde hair');
+    });
+
     it('parses and strips the hidden NAI control block', () => {
         const parsed = extractNovelAiDirective('先给你看。\n[[GENERATE_NAI_IMAGE]]\n{"prompt":"1boy, selfie","selfie":true}\n[[/GENERATE_NAI_IMAGE]]');
         expect(parsed.cleaned).toBe('先给你看。');
-        expect(parsed.directive).toEqual({ prompt: '1boy, selfie', selfie: true });
+        expect(parsed.directive).toEqual({ prompt: '1boy, selfie', selfie: true, includeUser: false });
     });
 
     it('builds the v4-compatible NovelAI payload', () => {

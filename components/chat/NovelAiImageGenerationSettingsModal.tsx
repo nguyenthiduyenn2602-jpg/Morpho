@@ -47,6 +47,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
     const [enabled, setEnabled] = useState(!!savedChar?.enabled);
     const [allowProactive, setAllowProactive] = useState(!!savedChar?.allowProactive);
     const [characterTags, setCharacterTags] = useState(savedChar?.characterTags || '');
+    const [userTags, setUserTags] = useState(savedChar?.userTags || '');
     const [styleTags, setStyleTags] = useState(savedChar?.styleTags || '');
     const [qualityTags, setQualityTags] = useState(savedChar?.qualityTags || DEFAULT_NAI_QUALITY_TAGS);
     const [negativeTags, setNegativeTags] = useState(savedChar?.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS);
@@ -58,6 +59,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
         setEnabled(!!char.novelAiImageGeneration?.enabled);
         setAllowProactive(!!char.novelAiImageGeneration?.allowProactive);
         setCharacterTags(char.novelAiImageGeneration?.characterTags || '');
+        setUserTags(char.novelAiImageGeneration?.userTags || '');
         setStyleTags(char.novelAiImageGeneration?.styleTags || '');
         setQualityTags(char.novelAiImageGeneration?.qualityTags || DEFAULT_NAI_QUALITY_TAGS);
         setNegativeTags(char.novelAiImageGeneration?.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS);
@@ -70,6 +72,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
         enabled,
         allowProactive,
         characterTags: characterTags.trim(),
+        userTags: userTags.trim(),
         styleTags: styleTags.trim(),
         qualityTags: qualityTags.trim(),
         negativeTags: negativeTags.trim(),
@@ -185,6 +188,7 @@ const NovelAiImageGenerationSettingsModal: React.FC<Props> = ({
                             <p className="mt-1 text-[11px] leading-relaxed text-slate-400">用英文逗号分隔。生成时按“质量 → 画师串 → 人物 → 当前场景”合并并自动去重。</p>
                         </div>
                         <TagArea label="人物固定标签" value={characterTags} onChange={setCharacterTags} placeholder="1boy, black hair, golden eyes, mature male" />
+                        <TagArea label="用户形象标签（同框时才注入）" value={userTags} onChange={setUserTags} placeholder="1girl, blonde hair, pink eyes, long hair" />
                         <TagArea label="画师串 / 风格" value={styleTags} onChange={setStyleTags} placeholder="artist:name, semi-realistic, cinematic lighting" />
                         <TagArea label="质量标签" value={qualityTags} onChange={setQualityTags} />
                         <TagArea label="负面标签" value={negativeTags} onChange={setNegativeTags} />

@@ -75,11 +75,18 @@ export function buildNovelAiDecisionPrompt(char: CharacterProfile, userProfile: 
     return `
 ## 本地私聊生图 2.0（NovelAI，严格规则）
 ${proactiveRule}
+先结合近期聊天和最新消息，选择一帧能够被画出来的具体瞬间：
+1. 最新消息明确描述照片、视频、直播或自拍时，优先还原那幅媒体画面。
+2. 否则选择当前互动中最有代表性、最有张力且最符合角色关系的一刻。
+3. 只描述同一瞬间，禁止把前后连续动作塞进一张图。
+4. 标签必须涵盖人物数量、环境/地点、时间、光线、镜头、服装、姿势、动作、表情和人物互动；没有依据的细节不要从远古记忆硬凑。
+
 需要发图时，先用 ${char.name} 当前的语气自然回复一至三个简短气泡，再在末尾附加控制块：
 ${NAI_IMAGE_GENERATION_OPEN}
-{"prompt":"只写本轮画面的英文 Danbooru/NAI 标签，用英文逗号分隔；包含场景、服装、动作、表情、构图和光线，不重复人物固定长相或画师串","selfie":true}
+{"prompt":"只写本轮画面的英文 Danbooru/NAI 标签，用英文逗号分隔；不重复固定形象或画师串","selfie":true,"includeUser":false}
 ${NAI_IMAGE_GENERATION_CLOSE}
 - selfie=true 仅表示自拍/角色自己拍摄；其他构图填 false。
+- includeUser=true 仅当 ${userProfile.name} 本人确实出现在画面里；只被提及、作为拍摄者或在镜头外时填 false。
 - 控制块不会展示给用户。不要解释 API、提示词或工具。
 - 不生图时正常聊天，绝不输出控制块。`;
 }
@@ -91,7 +98,11 @@ export function extractNovelAiDirective(raw: string): { directive: ImageGenerati
     try {
         const parsed = JSON.parse(match[1]);
         const prompt = typeof parsed?.prompt === 'string' ? parsed.prompt.trim() : '';
-        if (prompt) directive = { prompt: prompt.slice(0, 2400), selfie: parsed?.selfie !== false };
+        if (prompt) directive = {
+            prompt: prompt.slice(0, 2400),
+            selfie: parsed?.selfie !== false,
+            includeUser: parsed?.includeUser === true,
+        };
     } catch { /* malformed controls are stripped but never executed */ }
     return { directive, cleaned: raw.replace(NAI_DIRECTIVE_RE, '').trim() };
 }
@@ -115,6 +126,7 @@ export function buildNovelAiPrompt(
         cfg.qualityTags || DEFAULT_NAI_QUALITY_TAGS,
         cfg.styleTags || '',
         cfg.characterTags || '',
+        request.includeUser ? (cfg.userTags || '') : '',
         selfieTags,
         request.prompt,
     ];

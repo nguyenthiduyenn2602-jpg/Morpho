@@ -18,6 +18,8 @@ export const IMAGE_GENERATION_CLOSE = '[[/GENERATE_IMAGE]]';
 export interface ImageGenerationDirective {
     prompt: string;
     selfie: boolean;
+    /** 画面中是否出现用户本人；主要供 NovelAI 2.0 注入用户形象锚点。 */
+    includeUser?: boolean;
 }
 
 const DIRECTIVE_RE = /\[\[GENERATE_IMAGE\]\]\s*([\s\S]*?)\s*\[\[\/GENERATE_IMAGE\]\]/i;

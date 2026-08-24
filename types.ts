@@ -232,6 +232,8 @@ export interface CharacterNovelAiImageGenerationConfig {
   allowProactive?: boolean;
   /** 发型、发色、瞳色、体型等固定 Danbooru/NAI 标签。 */
   characterTags?: string;
+  /** 用户本人出现在双人/多人画面时追加的固定形象标签。 */
+  userTags?: string;
   /** 画师串、画风与渲染标签。 */
   styleTags?: string;
   /** 每张图固定追加的质量标签。 */
