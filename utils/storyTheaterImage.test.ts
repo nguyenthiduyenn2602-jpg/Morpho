@@ -113,6 +113,14 @@ describe('storyTheaterImage', () => {
         expect(buildStoryFramePackedPrompt(storyboard.frames[0])).toContain('hands gripping sheets');
     });
 
+    it('does not mistake a qualified expression tag for a schema placeholder', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 2boys, bed, wide shot, nsfw; Character 1 Prompt: user, 沈欢, nude, lying on back, hands gripping bedsheets, tearful expression, (character:a#holding hands)|centers:c3; Character 1 UC: clothing; Character 2 Prompt: character:a, 苏郁, nude, kneeling between her legs, holding her waist, intense expression, (user#holding hands)|centers:c3; Character 2 UC: clothing; Character 3 Prompt: character:b, 秦少川, nude, kneeling by her head, holding her face, dominant expression, (user#face holding)|centers:c3; Character 3 UC: clothing;###</image>
+<image>image###Scene Composition: 2 people, bed, upper body framing, nsfw; Character 1 Prompt: user, 沈欢, nude, lying on back, hands on shoulders, tearful expression, (character:b#face holding)|centers:c3; Character 1 UC: clothing; Character 2 Prompt: character:b, 秦少川, nude, kneeling by her head, holding her face, dominant expression, (user#face holding)|centers:c3; Character 2 UC: clothing;###</image>`;
+        const storyboard = parseStoryImageStoryboard(raw, participants, true);
+        expect(storyboard.frames[0].sharedAction).toContain('tearful expression');
+        expect(storyboard.frames[0].sharedAction).toContain('dominant expression');
+    });
+
     it('parses continuity state and keeps each frame limited to its visible identities', () => {
         const storyboard = parseStoryImageStoryboard(JSON.stringify({
             scene: { location: '办公室窗边', time: '傍晚', lighting: '暖色侧光', atmosphere: '安静而暧昧' },

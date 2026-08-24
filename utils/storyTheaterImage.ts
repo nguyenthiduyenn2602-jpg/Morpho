@@ -83,11 +83,21 @@ const extractJsonObject = (raw: string): string => {
 
 const isPlaceholder = (value: unknown): boolean => /^(?:未明确|沿用当前|依照正文|根据本轮正文|本轮没有明确)/.test(String(value || '').trim());
 
-const STORY_IMAGE_PLACEHOLDER_RE = /(?:本轮动作变化最明显|本轮最值得描绘|根据(?:本轮|最新)(?:正文|剧情)|依照正文|沿用当前|\b(?:clothing|pose|expression|action|exclusions?)\b)/i;
+const STORY_IMAGE_FALLBACK_RE = /(?:本轮动作变化最明显|本轮最值得描绘|根据(?:本轮|最新)(?:正文|剧情)|依照正文|沿用当前)/i;
+
+const hasStoryImagePlaceholder = (value: unknown): boolean => {
+    const text = cleanTags(value);
+    if (STORY_IMAGE_FALLBACK_RE.test(text)) return true;
+    return text.split(/[,;，；]/).some(rawTag => {
+        const tag = rawTag.trim().toLowerCase().replace(/^\[|\]$/g, '').trim();
+        return /^(?:(?:specific|exact|only concrete|a second concrete)\s+)?(?:clothing|pose|body pose|expression|action|concrete action|exclusions?)$/.test(tag)
+            || /\b(?:source\/target\/mutual|source|target|mutual)#(?:concrete\s+)?action\b/.test(tag);
+    });
+};
 
 const hasConcreteStoryImageAction = (value: unknown): boolean => {
     const text = cleanTags(value);
-    if (!text || text.length < 8 || STORY_IMAGE_PLACEHOLDER_RE.test(text)) return false;
+    if (!text || text.length < 8 || hasStoryImagePlaceholder(text)) return false;
     // NAI tags are an open vocabulary (for example "straddling" or custom
     // source#target actions). A fixed verb whitelist rejects perfectly valid
     // director output. Reject only copied schema/fallback prose here; semantic
@@ -141,17 +151,26 @@ const strengthenCharacterAnchor = (value: unknown): string => {
     return [subject, identity].filter(Boolean).join(', ');
 };
 
+const IDENTITY_TAG_RE = /\b(?:hair|eyes?|iris|pupil|skin|freckles?|scars?|moles?|tattoos?|horns?|ears?|tails?)\b/i;
+
+const isGeneratedIdentityTag = (tag: string): boolean => {
+    // Relationship/action tags may legitimately contain words such as eye or
+    // face. They are not appearance anchors and must survive the cleanup.
+    if (/#/.test(tag) || /\b(?:eye contact|closed eyes|half-closed eyes|tearful eyes|looking into eyes)\b/i.test(tag)) return false;
+    return IDENTITY_TAG_RE.test(tag);
+};
+
 const identityLeakTags = (value: string): string[] => value
     .split(',')
     .map(tag => tag.trim())
-    .filter(tag => /(?:hair|eyes?|iris|pupil|skin|freckles?|scar|mole|tattoo|horns?|ears?|tail)/i.test(tag));
+    .filter(tag => IDENTITY_TAG_RE.test(tag));
 
 const removeGeneratedIdentityTags = (value: unknown): string => cleanTags(value)
     .split(',')
     .map(tag => tag.trim())
     .filter(Boolean)
     .filter(tag => !parseCharacterSubject(tag))
-    .filter(tag => !/(?:hair|eyes?|iris|pupil|skin|freckles?|scar|mole|tattoo|horns?|ears?|tail)/i.test(tag))
+    .filter(tag => !isGeneratedIdentityTag(tag))
     .join(', ');
 
 export function parseStoryImageCenter(value: unknown, fallback = 'c3'): { x: number; y: number } {
@@ -319,7 +338,7 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         if (strict && protocol.frames.some(frame =>
             !hasConcreteStoryImageAction(frame.sharedAction)
             || frame.characters.length === 0
-            || frame.characters.some(character => STORY_IMAGE_PLACEHOLDER_RE.test(removeGeneratedIdentityTags(character.prompt)))
+            || frame.characters.some(character => hasStoryImagePlaceholder(removeGeneratedIdentityTags(character.prompt)))
         )) throw new Error('生图导演没有提取出本轮的具体动作；已停止生图，未消耗 NAI 次数');
         return protocol;
     }
