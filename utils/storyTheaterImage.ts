@@ -230,13 +230,16 @@ const storyNovelConfig = (entry: StoryTheaterEntry): CharacterNovelAiImageGenera
 export async function generateStoryTheaterFrameImage(apiConfig: APIConfig, entry: StoryTheaterEntry, frame: StoryImageFramePlan | string): Promise<Blob | string> {
     const novelApi = apiConfig.novelAiImageGeneration;
     if (!novelApi?.baseUrl?.trim() || !novelApi.apiKey?.trim() || !novelApi.model?.trim()) throw new Error('全局生图 2.0 的 URL、API Key 或模型尚未配置完整');
+    const structuredCharacters = typeof frame === 'string' || !Array.isArray(frame.characters)
+        ? []
+        : frame.characters;
     const directive: ImageGenerationDirective = typeof frame === 'string'
         ? { prompt: frame, selfie: false, includeUser: false }
         : {
-            prompt: frame.sceneTags,
+            prompt: structuredCharacters.length > 0 ? frame.sceneTags : frame.finalPrompt,
             selfie: false,
             includeUser: false,
-            characterPrompts: frame.characters.map(character => ({
+            characterPrompts: structuredCharacters.map(character => ({
                 prompt: character.prompt,
                 negative: character.negative,
                 center: character.center,
