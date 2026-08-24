@@ -258,17 +258,18 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
 
 const StoryImageStateCard: React.FC<{ state?: StoryImageState }> = ({ state }) => {
     if (!state) return null;
-    return <section className='mt-5 overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60'>
-        <div className='border-b border-violet-200 px-4 py-3'><div className='text-[9px] font-bold uppercase tracking-[.2em] text-violet-500'>CG continuity</div><div className='mt-1 text-xs font-bold text-violet-900'>本轮画面状态</div></div>
-        <div className='grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-3 text-[10px] leading-5'>
-            <div><span className='block font-bold text-slate-400'>场景</span><span className='text-slate-700'>{state.location}</span></div>
-            <div><span className='block font-bold text-slate-400'>时间与光线</span><span className='text-slate-700'>{state.time} · {state.lighting}</span></div>
-            <div className='col-span-2'><span className='block font-bold text-slate-400'>画面氛围</span><span className='text-slate-700'>{state.atmosphere}</span></div>
-            <div className='col-span-2'><span className='block font-bold text-violet-500'>相较上一轮最大的变化</span><span className='text-slate-700'>{state.continuityChange}</span></div>
+    const names = state.cast.map(person => person.name).filter(Boolean).join('、');
+    return <details className='group mt-5 overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60'>
+        <summary className='flex cursor-pointer list-none items-center gap-3 px-4 py-3'>
+            <span className='min-w-0 flex-1'><span className='block text-[9px] font-bold uppercase tracking-[.2em] text-violet-500'>NAI prompt</span><span className='mt-1 block truncate text-[10px] text-violet-900'>{state.location}{names ? ` · ${names}` : ''}</span></span>
+            <span className='text-[9px] font-bold text-violet-500'>画面提示</span><CaretDown size={14} className='text-violet-400 transition-transform group-open:rotate-180' />
+        </summary>
+        <div className='border-t border-violet-200 px-4 py-3 text-[10px] leading-5'>
+            <div><span className='font-bold text-slate-400'>简单场景：</span><span className='text-slate-700'>{state.location}</span></div>
+            <div className='mt-1'><span className='font-bold text-violet-500'>动作变化：</span><span className='text-slate-700'>{state.continuityChange}</span></div>
+            {state.frames.length > 0 && <div className='mt-3 space-y-1 border-t border-violet-100 pt-2'>{state.frames.map((frame, index) => <div key={`${frame.kind}-${index}`}><strong className='text-violet-700'>{frame.title}</strong><span className='ml-2 text-slate-600'>{frame.description}</span></div>)}</div>}
         </div>
-        {state.cast.length > 0 && <div className='border-t border-violet-200 px-4 py-3'><div className='mb-2 text-[9px] font-bold text-slate-400'>出场人物</div><div className='space-y-2'>{state.cast.map((person, index) => <div key={`${person.key}-${index}`} className='rounded-xl bg-white/80 px-3 py-2 text-[10px] leading-5'><strong className='text-slate-800'>{person.name}</strong><div className='text-slate-500'>服饰：{person.clothing}</div><div className='text-slate-500'>位置与动作：{person.position}；{person.pose}</div><div className='text-slate-500'>神态：{person.expression}</div></div>)}</div></div>}
-        {state.frames.length > 0 && <div className='border-t border-violet-200 px-4 py-3'><div className='mb-2 text-[9px] font-bold text-slate-400'>本轮关键帧</div><div className='space-y-2'>{state.frames.map((frame, index) => <div key={`${frame.kind}-${index}`} className='text-[10px] leading-5'><strong className='text-violet-700'>{frame.title}</strong><span className='ml-2 text-slate-600'>{frame.description}</span></div>)}</div></div>}
-    </section>;
+    </details>;
 };
 
 type StoredStoryImageFrame = Omit<StoryGeneratedImageFrame, 'image'> & { imageRef: string };

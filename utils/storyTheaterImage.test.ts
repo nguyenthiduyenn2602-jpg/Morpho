@@ -73,17 +73,19 @@ describe('storyTheaterImage', () => {
 
     it('extracts a complete storyboard JSON object from surrounding model prose', () => {
         const raw = `I will now return the requested data.\n\`\`\`json\n${JSON.stringify({
-            scene: { location: '十二楼办公室窗边', time: '傍晚六点', lighting: '落日从百叶窗右侧照入', atmosphere: '安静而紧张' },
-            cast: [{ key: 'character:a', name: '苏郁', clothing: '黑色衬衫与西裤', position: '窗边右侧', pose: '一手撑住窗台俯身', expression: '垂眼注视' }],
+            scene: { location: '十二楼办公室窗边' },
+            cast: [{ key: 'character:a', name: '苏郁', appearance: '黑色短发、蓝眼睛，黑色衬衫与西裤' }],
             continuityChange: '苏郁离开办公桌，俯身靠近窗边的人',
             frames: [
-                { title: '动作变化帧', description: '苏郁从办公桌后走到窗边，手掌刚落在窗台', visible: ['character:a'], sceneTags: '1boy, modern office, sunset, medium wide shot, full body, cinematic depth', characters: [{ key: 'character:a', prompt: 'black shirt, walking from desk, hand reaching window sill, focused gaze', center: 'c3' }] },
-                { title: '关系高光帧', description: '苏郁俯身停在窗前，侧光勾勒出肩背线条', visible: ['character:a'], sceneTags: '1boy, office window, sunset side light, three-quarter body, low angle, layered background', characters: [{ key: 'character:a', prompt: 'black shirt, leaning over window sill, lowered gaze, tense shoulders', center: 'c3' }] },
+                { title: '动作变化帧', description: '苏郁走到窗边，手掌刚落在窗台', visible: ['character:a'], sharedAction: 'walking from desk, hand reaching window sill, focused gaze', sceneComposition: '1boy, office window, full body', characters: [{ key: 'character:a', center: 'c3' }] },
+                { title: '关系高光帧', description: '苏郁俯身停在窗前', visible: ['character:a'], sharedAction: 'leaning over window sill, lowered gaze, tense shoulders', sceneComposition: '1boy, office window, three-quarter body', characters: [{ key: 'character:a', center: 'c3' }] },
             ],
         })}\n\`\`\`\nDone.`;
         const storyboard = parseStoryImageStoryboard(raw, participants, true);
         expect(storyboard.state.location).toBe('十二楼办公室窗边');
         expect(storyboard.frames[0].characters[0].prompt).toContain('black hair');
+        expect(storyboard.frames[0].characters[0].prompt).not.toContain('walking from desk');
+        expect(storyboard.frames[0].sceneTags).toContain('walking from desk');
     });
 
     it('rejects lazy or truncated director output before image generation', () => {
@@ -121,6 +123,6 @@ describe('storyTheaterImage', () => {
             },
         });
         expect(messages[1].content).toContain('办公室窗边');
-        expect(messages[0].content).toContain('preserve them exactly');
+        expect(messages[0].content).toContain('Preserve identity anchors exactly');
     });
 });

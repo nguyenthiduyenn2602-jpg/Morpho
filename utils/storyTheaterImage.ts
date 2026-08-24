@@ -16,6 +16,7 @@ export interface StoryImageFramePlan extends StoryImagePromptPlan {
     kind: 'motion' | 'highlight';
     title: string;
     description: string;
+    sharedAction?: string;
     characters: StoryImageCharacterPlan[];
 }
 export interface StoryImageState {
@@ -180,10 +181,25 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         const visible = Array.isArray(frame?.visible) && frame.visible.length > 0
             ? frame.visible.map(String)
             : rawCharacters.map((character: any) => String(character?.key || character?.name || '')).filter(Boolean);
-        const plan = parseStoryImagePromptPlan(JSON.stringify({ visible, sceneTags: frame?.sceneTags || frame?.tags }), participants);
+        const sharedAction = cleanTags(frame?.sharedAction);
+        const sceneComposition = cleanTags(frame?.sceneComposition);
+        const usesUnifiedAction = Boolean(sharedAction || sceneComposition);
+        const sceneTags = usesUnifiedAction
+            ? [sharedAction, sceneComposition].filter(Boolean).join(', ')
+            : cleanTags(frame?.sceneTags || frame?.tags);
+        const plan = parseStoryImagePromptPlan(JSON.stringify({ visible, sceneTags }), participants);
+        const characterInputs = usesUnifiedAction
+            ? rawCharacters.map((character: any) => ({
+                key: character?.key,
+                name: character?.name,
+                center: character?.center,
+                negative: character?.negative || character?.uc,
+            }))
+            : rawCharacters;
         return {
             ...plan,
-            characters: buildStoryImageCharacterPlans(rawCharacters, plan.visible, participants),
+            sharedAction,
+            characters: buildStoryImageCharacterPlans(characterInputs, plan.visible, participants),
             kind: frameKinds[index] || 'highlight',
             title: cleanText(frame?.title, defaultTitles[index] || '剧情关键帧'),
             description: cleanText(frame?.description, index === 0 ? '本轮动作变化最明显的一瞬间' : '本轮最值得描绘的情绪与互动瞬间'),
@@ -206,29 +222,28 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
         return {
             key,
             name: cleanText(person?.name, participant?.name || key),
-            clothing: cleanText(person?.clothing),
-            position: cleanText(person?.position),
-            pose: cleanText(person?.pose),
-            expression: cleanText(person?.expression),
+            clothing: cleanText(person?.appearance || person?.clothing, participant?.anchor || '人物锚点未填写'),
+            position: String(person?.position || '').trim(),
+            pose: String(person?.pose || '').trim(),
+            expression: String(person?.expression || '').trim(),
         };
     });
     const state: StoryImageState = {
         location: cleanText(scene.location || parsed.location, '沿用当前剧情场景'),
-        time: cleanText(scene.time || parsed.time, '沿用当前时间'),
-        lighting: cleanText(scene.lighting || parsed.lighting, '沿用当前光线'),
-        atmosphere: cleanText(scene.atmosphere || parsed.atmosphere, '沿用当前氛围'),
+        time: String(scene.time || parsed.time || '').trim(),
+        lighting: String(scene.lighting || parsed.lighting || '').trim(),
+        atmosphere: String(scene.atmosphere || parsed.atmosphere || '').trim(),
         cast,
         continuityChange: cleanText(parsed.continuityChange || parsed.change, '本轮没有明确的视觉状态变化'),
         frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
     };
     if (strict) {
-        const sceneValues = [state.location, state.time, state.lighting, state.atmosphere, state.continuityChange];
+        const sceneValues = [state.location, state.continuityChange];
         const invalidScene = sceneValues.some(value => !value.trim() || isPlaceholder(value));
-        const invalidCast = state.cast.length === 0 || state.cast.some(person =>
-            [person.clothing, person.position, person.pose, person.expression].some(value => !value.trim() || isPlaceholder(value))
-        );
+        const invalidCast = state.cast.length === 0 || state.cast.some(person => !person.clothing.trim() || isPlaceholder(person.clothing));
         const invalidFrames = rawFrames.length < 2 || frames.length < 2 || frames.some(frame =>
             frame.sceneTags.length < 24
+            || !frame.sharedAction
             || !frame.description.trim()
             || isPlaceholder(frame.description)
             || frame.characters.length === 0
@@ -254,19 +269,19 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
         {
             role: 'system',
             content: [
-                'You are the continuity director and NovelAI V4 multi-character storyboard artist for a story. All depicted characters are adults.',
-                'Read the newest round and the previous visual state. Unless the story explicitly changes location, time, clothing, hairstyle, hair color, eye color or lighting, preserve them exactly. Never invent a scene transition or replace a supplied identity anchor.',
+                'You are a dedicated NovelAI prompt compiler for a story. All depicted characters are adults. Your output goes directly to the image API; do not write a literary status report.',
+                'Read the newest round and previous visual state. Preserve identity anchors exactly. Choose two concrete frozen instants. The only priorities are: (1) who each person is and looks like, (2) what all visible people are doing together, (3) a very short physical location and camera composition.',
                 'Return ONLY valid compact JSON with this shape:',
-                '{"scene":{"location":"Chinese","time":"Chinese","lighting":"Chinese","atmosphere":"Chinese"},"cast":[{"key":"participant key","name":"Chinese","clothing":"Chinese detailed","position":"Chinese","pose":"Chinese","expression":"Chinese"}],"continuityChange":"Chinese: largest visual change","frames":[{"title":"动作变化帧","description":"Chinese detailed CG description of one frozen instant","visible":["participant key"],"sceneTags":"English global scene/composition tags","characters":[{"key":"participant key","prompt":"English clothing, pose, action, expression and source#/target# interaction tags","negative":"English per-character contradictory/exclusion tags","center":"b3"}]},{"title":"关系高光帧","description":"Chinese detailed CG description of a different frozen instant","visible":["participant key"],"sceneTags":"English global scene/composition tags","characters":[{"key":"participant key","prompt":"English clothing, pose, action, expression and source#/target# interaction tags","negative":"English per-character contradictory/exclusion tags","center":"d3"}]}]}',
-                'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest and most visually legible sensual beat; add nsfw to sceneTags only when explicit anatomy is actually visible.',
-                'Frame 1 captures the largest movement or spatial change. Use a wide, medium-wide or full/three-quarter body composition that clearly shows bodies, limbs, props and environment.',
-                'Frame 2 captures a different emotionally or dramatically valuable instant. Choose upper body, half body, lower body, full body, POV, from above or from below according to the action. Do NOT default to a face portrait or headshot: show at least the torso and every body part needed to understand the interaction.',
-                'sceneTags are the V4 base caption: include exact subject count, complete environment/location, time, lighting, atmosphere, camera distance, angle, depth, foreground/background separation and composition. Never omit the setting. Do not put identity anchors here.',
-                'characters are V4 character captions. Include every visible person exactly once. Their prompt must include current clothing state, body pose, hands, gaze, expression and concrete interaction. Use matching {source#action}/{target#action} tags when people touch or act on one another.',
+                '{"scene":{"location":"Chinese: only a physical placement such as 卧室床上/客厅沙发/浴室/墙边"},"cast":[{"key":"participant key","name":"Chinese","appearance":"copy the fixed identity anchor plus only clothing visible now"}],"continuityChange":"Chinese, one short sentence","frames":[{"title":"动作变化帧","description":"Chinese, one frozen instant","visible":["participant key"],"sharedAction":"ONE English tag sequence describing what every visible person is doing together","sceneComposition":"English subject count, short location, camera framing only","characters":[{"key":"participant key","center":"b3"}]},{"title":"关系高光帧","description":"Chinese, a different frozen instant","visible":["participant key"],"sharedAction":"ONE English tag sequence describing what every visible person is doing together","sceneComposition":"English subject count, short location, camera framing only","characters":[{"key":"participant key","center":"d3"}]}]}',
+                'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest visually legible sensual beat; add nsfw to sceneComposition only when explicit anatomy is actually visible.',
+                'Frame 1 captures the largest movement or spatial change. Frame 2 captures a different relationship high point. Pick only the body parts and framing needed to make the shared action readable; do not default to a portrait or headshot.',
+                'sharedAction is the highest-priority generated text. It must be one coherent group-level action, not separate mini-descriptions per person. State who initiates, who receives and where hands/bodies are. Use paired (source#action)/(target#action) tags for contact. Describe one instant, never a sequence of moments.',
+                'sceneComposition is deliberately low priority and short: exact subject count + bed/sofa/bathroom/wall or similarly simple placement + one camera framing. Usually 3-8 comma-separated tags. Do not add decorative background, time, weather, atmosphere, cinematic lighting, depth, props or scenery unless the action cannot be understood without it.',
+                'characters contains only identity keys and centers. Do NOT generate separate pose, action, expression, clothing or prose for each character here. Code injects each fixed identity anchor as a native V4 character caption so appearances stay separate while everyone shares one action.',
                 'center uses the 5x5 grid a1-e5. Prefer b2-d4; c3 is center. Two separated people usually use b3/d3; overlapping interaction may use c3/c3 or c3/d3. Avoid a1/e5 unless the composition truly requires an edge crop.',
                 'The visible array contains only people actually visible in that frame and may contain any number of people. Character keys and name order must exactly follow PARTICIPANTS. Identity anchors are injected by code, so never contradict their hairstyle, hair color, eye color or fixed traits.',
                 'No prose outside JSON, no Markdown, dialogue, captions, UI, watermark or explanation.',
-                'Keep every Chinese field concise (prefer 12-60 Chinese characters) and every English tag field concrete. Completeness is more important than literary prose. Never write placeholders such as “沿用当前”“依照正文” or “未明确”; copy the actual state into every required field.',
+                'Keep Chinese fields under 40 Chinese characters. Never write placeholders such as “沿用当前”“依照正文” or “未明确”.',
             ].join('\n'),
         },
         { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nRECENT STORY\n${history || '(opening scene)'}` },
@@ -308,7 +323,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const response = await fetch(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiConfig.apiKey}` },
-        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.15, max_tokens: 3200 }),
+        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.15, max_tokens: 2200 }),
     });
     if (!response.ok) throw new Error(`配图分镜整理失败（API ${response.status}）`);
     const raw = extractContent(await safeResponseJson(response)).trim();
