@@ -105,6 +105,14 @@ describe('storyTheaterImage', () => {
         expect(() => parseStoryImageStoryboard(raw, participants, true)).toThrow('没有提取出本轮的具体动作');
     });
 
+    it('accepts valid NAI action tags outside a hard-coded verb dictionary', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 1boy, bedroom, bed, full body; Character 1 Prompt: user, 沈欢, white shirt, straddling partner, hands gripping sheets|centers:b3; Character 1 UC: bad hands; Character 2 Prompt: character:a, 苏郁, black shirt, supporting partner at waist, arched posture|centers:d3; Character 2 UC: bad anatomy;###</image>
+<image>image###Scene Composition: 1girl, 1boy, bedroom, bed, three-quarter body; Character 1 Prompt: user, 沈欢, white shirt, cheek against shoulder, fingers curled around collar|centers:b3; Character 1 UC: bad hands; Character 2 Prompt: character:a, 苏郁, black shirt, arm around waist, head tilted toward partner|centers:d3; Character 2 UC: bad anatomy;###</image>`;
+        const storyboard = parseStoryImageStoryboard(raw, participants, true);
+        expect(storyboard.frames[0].sharedAction).toContain('straddling partner');
+        expect(buildStoryFramePackedPrompt(storyboard.frames[0])).toContain('hands gripping sheets');
+    });
+
     it('parses continuity state and keeps each frame limited to its visible identities', () => {
         const storyboard = parseStoryImageStoryboard(JSON.stringify({
             scene: { location: '办公室窗边', time: '傍晚', lighting: '暖色侧光', atmosphere: '安静而暧昧' },

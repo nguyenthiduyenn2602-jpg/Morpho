@@ -87,8 +87,13 @@ const STORY_IMAGE_PLACEHOLDER_RE = /(?:本轮动作变化最明显|本轮最值�
 
 const hasConcreteStoryImageAction = (value: unknown): boolean => {
     const text = cleanTags(value);
-    if (!text || text.length < 12 || STORY_IMAGE_PLACEHOLDER_RE.test(text)) return false;
-    return /(?:\([^)]*#[^)]+\)|holding|touching|grabbing|leaning|kneeling|sitting|standing|lying|walking|looking|watching|eye contact|kissing|hugging|pressing|pulling|pushing|reaching|hand|arm|leg|body|face|mouth|床|沙发|浴室|墙边|坐|站|躺|跪|俯身|靠近|拥抱|亲吻|握|抓|抬|压|拉|推|伸手)/i.test(text);
+    if (!text || text.length < 8 || STORY_IMAGE_PLACEHOLDER_RE.test(text)) return false;
+    // NAI tags are an open vocabulary (for example "straddling" or custom
+    // source#target actions). A fixed verb whitelist rejects perfectly valid
+    // director output. Reject only copied schema/fallback prose here; semantic
+    // relevance is enforced by the director prompt and remains visible in logs.
+    return text.split(/[,;，；]/).map(tag => tag.trim()).filter(Boolean).length >= 2
+        || /\([^)]*#[^)]+\)/.test(text);
 };
 
 const defaultCenterCodes = (count: number): string[] => {
@@ -552,7 +557,13 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
         { key: 'user', name: options.userName, anchor: options.entry.imageGeneration.userAnchor || '' },
         ...options.actors.map(actor => ({ key: `character:${actor.id}`, name: actor.name, anchor: options.entry.imageGeneration?.characterAnchors?.[actor.id] || '' })),
     ];
-    const storyboard = parseStoryImageStoryboard(raw, participants, true);
+    let storyboard: { state: StoryImageState; frames: StoryImageFramePlan[] };
+    try {
+        storyboard = parseStoryImageStoryboard(raw, participants, true);
+    } catch (error) {
+        console.error('[StoryTheater] image director output rejected', raw.slice(0, 1600));
+        throw error;
+    }
     const count = options.entry.imageGeneration.imageCount === 1 ? 1 : 2;
     const plans = count === 1 ? [storyboard.frames[storyboard.frames.length - 1]] : storyboard.frames.slice(0, 2);
     const frames: StoryGeneratedImageFrame[] = [];
