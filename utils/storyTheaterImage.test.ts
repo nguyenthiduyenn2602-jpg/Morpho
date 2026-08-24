@@ -58,6 +58,8 @@ describe('storyTheaterImage', () => {
         expect(packed).toContain('left character: girl, 1.35::blonde hair, pink eyes::');
         expect(packed).toContain('center character: boy, 1.35::black hair, blue eyes::');
         expect(packed).toContain('right character: boy, 1.35::silver hair, red eyes::');
+        expect(packed).toContain('looking right, {target#embrace}');
+        expect(packed).toContain('looking left, {source#embrace}');
         expect(packed.match(/blonde hair/g)).toHaveLength(1);
     });
 
@@ -77,6 +79,7 @@ describe('storyTheaterImage', () => {
         expect(messages[0].content).toContain('Tavern Scene Plugin blocks');
         expect(messages[0].content).toContain('Do NOT return JSON');
         expect(messages[1].content).toContain('三个人走进办公室');
+        expect(messages[1].content).toContain('NEWEST ROUND');
     });
 
     it('parses two worldbook image blocks and keeps fixed anchors authoritative', () => {
@@ -90,6 +93,16 @@ describe('storyTheaterImage', () => {
         expect(parsed?.frames[0].characters[1].prompt).not.toContain('brown hair');
         expect(parsed?.frames[0].characters[2].prompt).toContain('1.35::silver hair, red eyes::');
         expect(parsed?.frames[0].characters.map(character => character.center.x)).toEqual([0.1, 0.5, 0.9]);
+        const strict = parseStoryImageStoryboard(raw, participants, true);
+        expect(strict.state.continuityChange).toContain('kneeling');
+        expect(strict.frames[0].description).toContain('holding hands');
+        expect(buildStoryFramePackedPrompt(strict.frames[0])).toContain('(source#holding hands)');
+    });
+
+    it('rejects copied protocol placeholders before spending an NAI call', () => {
+        const raw = `<image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>
+<image>image###Scene Composition: 1girl, 2boys, bedroom, full body, nsfw; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:a, 苏郁, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>`;
+        expect(() => parseStoryImageStoryboard(raw, participants, true)).toThrow('没有提取出本轮的具体动作');
     });
 
     it('parses continuity state and keeps each frame limited to its visible identities', () => {

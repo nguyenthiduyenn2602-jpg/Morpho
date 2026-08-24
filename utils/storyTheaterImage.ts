@@ -83,6 +83,14 @@ const extractJsonObject = (raw: string): string => {
 
 const isPlaceholder = (value: unknown): boolean => /^(?:未明确|沿用当前|依照正文|根据本轮正文|本轮没有明确)/.test(String(value || '').trim());
 
+const STORY_IMAGE_PLACEHOLDER_RE = /(?:本轮动作变化最明显|本轮最值得描绘|根据(?:本轮|最新)(?:正文|剧情)|依照正文|沿用当前|\b(?:clothing|pose|expression|action|exclusions?)\b)/i;
+
+const hasConcreteStoryImageAction = (value: unknown): boolean => {
+    const text = cleanTags(value);
+    if (!text || text.length < 12 || STORY_IMAGE_PLACEHOLDER_RE.test(text)) return false;
+    return /(?:\([^)]*#[^)]+\)|holding|touching|grabbing|leaning|kneeling|sitting|standing|lying|walking|looking|watching|eye contact|kissing|hugging|pressing|pulling|pushing|reaching|hand|arm|leg|body|face|mouth|床|沙发|浴室|墙边|坐|站|躺|跪|俯身|靠近|拥抱|亲吻|握|抓|抬|压|拉|推|伸手)/i.test(text);
+};
+
 const defaultCenterCodes = (count: number): string[] => {
     if (count <= 1) return ['c3'];
     if (count === 2) return ['b3', 'd3'];
@@ -246,7 +254,6 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
     const blocks = extractStoryImageBlocks(raw);
     if (!blocks.length) return null;
     const titles = ['动作变化帧', '关系高光帧'];
-    const descriptions = ['本轮动作变化最明显的一瞬间', '本轮最值得描绘的互动瞬间'];
     const frames = blocks.map((block, frameIndex) => {
         const sceneComposition = readProtocolField(block, 'Scene Composition');
         const slots: Array<{ key: string; prompt: string; negative: string; center: string }> = [];
@@ -273,11 +280,16 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
         }
         const visible = slots.map(slot => slot.key);
         const plan = parseStoryImagePromptPlan(JSON.stringify({ visible, sceneTags: sceneComposition }), participants);
+        const actionSummary = slots
+            .map(slot => removeGeneratedIdentityTags(slot.prompt))
+            .filter(Boolean)
+            .join('；');
         return {
             ...plan,
             kind: (frameIndex === 0 ? 'motion' : 'highlight') as 'motion' | 'highlight',
             title: titles[frameIndex] || '剧情关键帧',
-            description: descriptions[frameIndex] || '本轮剧情关键帧',
+            description: actionSummary || '本轮剧情关键帧',
+            sharedAction: actionSummary,
             characters: buildStoryImageCharacterPlans(slots, plan.visible, participants),
         };
     }).filter(frame => frame.sceneTags && frame.characters.length > 0);
@@ -289,7 +301,7 @@ export function parseStoryImageProtocol(raw: string, participants: StoryImagePar
         cast: participants.filter(person => visibleKeys.includes(person.key)).map(person => ({
             key: person.key, name: person.name, clothing: person.anchor || '人物锚点未填写', position: '', pose: '', expression: '',
         })),
-        continuityChange: frames[0].description,
+        continuityChange: frames[0].sharedAction || frames[0].description,
         frames: frames.map(frame => ({ kind: frame.kind, title: frame.title, description: frame.description, visible: frame.visible })),
     };
     return { state, frames };
@@ -299,6 +311,11 @@ export function parseStoryImageStoryboard(raw: string, participants: Array<{ key
     const protocol = parseStoryImageProtocol(raw, participants);
     if (protocol) {
         if (strict && protocol.frames.length < 2) throw new Error('生图导演只返回了一张配图段落；已停止生图，未消耗 NAI 次数');
+        if (strict && protocol.frames.some(frame =>
+            !hasConcreteStoryImageAction(frame.sharedAction)
+            || frame.characters.length === 0
+            || frame.characters.some(character => STORY_IMAGE_PLACEHOLDER_RE.test(removeGeneratedIdentityTags(character.prompt)))
+        )) throw new Error('生图导演没有提取出本轮的具体动作；已停止生图，未消耗 NAI 次数');
         return protocol;
     }
     let parsed: any;
@@ -415,7 +432,9 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
         ...options.actors.map(actor => ({ key: `character:${actor.id}`, name: actor.name, anchor: image?.characterAnchors?.[actor.id] || '' })),
     ];
     const roster = participants.map(person => `- ${person.key} | ${person.name} | identity anchor: ${person.anchor || '(not provided)'}`).join('\n');
-    const history = options.history.slice(-8).map(item => `[${item.role === 'user' ? options.userName : 'story'}]\n${item.content}`).join('\n\n');
+    const historyItems = options.history.slice(-8);
+    const newestRound = historyItems.slice(-2).map(item => `[${item.role === 'user' ? options.userName : 'story'}]\n${item.content}`).join('\n\n');
+    const earlierHistory = historyItems.slice(0, -2).map(item => `[${item.role === 'user' ? options.userName : 'story'}]\n${item.content}`).join('\n\n');
     const previousState = options.previousState ? JSON.stringify(options.previousState) : '(none; establish the first visual state from the story)';
     return [
         {
@@ -425,18 +444,20 @@ export function buildStoryImagePlanningMessages(options: Omit<GenerateStoryTheat
                 'Read the newest round and previous visual state. Choose two concrete frozen instants. The priorities are: (1) fixed participant identity, (2) one readable group action, (3) a short physical location and camera composition.',
                 'Preserve identity anchors exactly. They are authoritative and will be injected by code after your text is parsed.',
                 'Return exactly TWO single-line Tavern Scene Plugin blocks and nothing else. Do NOT return JSON or Markdown:',
-                '<image>image###Scene Composition: 1girl, 2boys, bedroom, full body; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:id, name, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>',
-                '<image>image###Scene Composition: 1girl, 2boys, bedroom, three-quarter body; Character 1 Prompt: user, 沈欢, clothing, pose, expression, (source#action)|centers:a3; Character 1 UC: exclusions; Character 2 Prompt: character:id, name, clothing, pose, expression, (target#action)|centers:c3; Character 2 UC: exclusions;###</image>',
+                '<image>image###Scene Composition: [counts, short location, framing]; Character 1 Prompt: [exact key], [exact name], [specific clothing], [specific body pose], [exact hand/body placement], [specific expression], ([source/target/mutual]#[concrete action])|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
+                '<image>image###Scene Composition: [counts, short location, different framing]; Character 1 Prompt: [same fixed identity locator], [a second concrete frozen instant]|centers:[grid]; Character 1 UC: [only concrete exclusions]; Character 2 Prompt: ...; Character 2 UC: ...;###</image>',
                 'IMAGE PRIORITY: if the newest round explicitly contains a photo/video/live-stream image, depict that media frame first. Otherwise choose the strongest relationship/action beat. In an explicit adult scene, choose the clearest visually legible sensual beat; add nsfw to sceneComposition only when explicit anatomy is actually visible.',
-                'Block 1 captures the largest movement or spatial change. Block 2 captures a different relationship high point. Describe one instant per block, never a sequence. Pick the framing needed to make the action readable; do not default to portraits or headshots.',
+                'The NEWEST ROUND is the authority for what is physically happening. Do not replace its action with a generic pose merely because the scene is NSFW. NSFW is only a rating tag, never the action itself.',
+                'Block 1 captures the exact largest movement or spatial change stated in the NEWEST ROUND. Block 2 captures a different exact relationship/action beat from that same round. Describe one frozen instant per block, never a sequence. Pick the framing needed to make the action readable; do not default to portraits or headshots.',
                 'Scene Composition is deliberately short: exact subject counts + bed/sofa/bathroom/wall or similarly simple placement + one camera framing. Do not add decorative background, weather, cinematic lighting, props or scenery unless needed to understand the action.',
                 'Each Character N Prompt is one participant\'s role in the SAME group action: first copy that participant key and name exactly, then clothing, body pose, hand placement, expression, and paired (source#action)/(target#action) or (mutual#action) tags. Follow PARTICIPANTS order and include only visible people. Never output a Character slot for an absent person.',
                 'Do not write hair, eye color, age, skin or other identity traits in Character Prompt. Code injects the fixed identity anchor and discards generated identity traits, so character identity cannot be changed here.',
                 'centers uses the 5x5 grid a1-e5. Use b3/d3 for two separated people, a3/c3/e3 for three, and c3/c3 or c3/d3 for overlapping contact.',
+                'Never copy schema placeholders such as clothing, pose, expression, action or exclusions. Every Character Prompt must contain a concrete visible verb/body placement taken from the NEWEST ROUND.',
                 'Every field ends with a semicolon. Do not omit Scene Composition, Character Prompt, Character UC, centers, image###, ### or </image>. No prose, explanations, dialogue, captions, UI or watermark outside the two blocks.',
             ].join('\n'),
         },
-        { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nRECENT STORY\n${history || '(opening scene)'}` },
+        { role: 'user', content: `PARTICIPANTS\n${roster}\n\nPREVIOUS VISUAL STATE\n${previousState}\n\nEARLIER CONTEXT (continuity only)\n${earlierHistory || '(none)'}\n\nNEWEST ROUND (extract the exact action from here)\n${newestRound || '(opening scene)'}` },
     ];
 }
 
@@ -476,15 +497,11 @@ const packedCharacterPosition = (character: StoryImageCharacterPlan, index: numb
     return index === 0 ? 'left' : index === total - 1 ? 'right' : 'center';
 };
 
-const characterIdentityOnly = (prompt: string): string => {
-    const match = prompt.match(/^\s*(girl|boy|woman|man|milf|dilf|other)\s*,\s*(1\.35::[\s\S]*?::)(?:\s*,|$)/i);
-    return match ? `${match[1]}, ${match[2]}` : prompt;
-};
-
 /**
- * Put every visible person's identity in one ordinary base prompt. Native V4 character
- * captions are still sent as a spatial aid, but the image no longer depends on a relay
- * preserving those nested fields in order to see hair/eye colors at all.
+ * Put every visible person's identity AND concrete action in the ordinary base prompt.
+ * Native V4 character captions remain the spatial source of truth, but some compatible
+ * relays partially discard nested captions. Packing both pieces here keeps the newest
+ * story action visible even through those relays.
  */
 export function buildStoryFramePackedPrompt(frame: StoryImageFramePlan): string {
     const main = buildStoryFrameMainPrompt(frame);
@@ -492,7 +509,7 @@ export function buildStoryFramePackedPrompt(frame: StoryImageFramePlan): string 
     if (!characters.length) return main;
     const identityLine = characters.map((character, index) => {
         const position = packedCharacterPosition(character, index, characters.length);
-        return `${position} character: ${characterIdentityOnly(character.prompt)}`;
+        return `${position} character: ${character.prompt}`;
     }).join('; ');
     return `${main}, ${characters.length} distinct characters, fixed identity lineup from left to right, ${identityLine}`;
 }
