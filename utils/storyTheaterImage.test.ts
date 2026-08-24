@@ -25,7 +25,7 @@ describe('storyTheaterImage', () => {
         expect(plan.finalPrompt).toBe('1boy, black hair, blue eyes, 1boy, close-up, rainy night');
     });
 
-    it('duplicates weighted identity anchors into the base prompt before action and scene', () => {
+    it('keeps exact subject counts in the base prompt and identities in separate character prompts', () => {
         const storyboard = parseStoryImageStoryboard(JSON.stringify({
             scene: { location: '卧室床边' },
             cast: participants.map(person => ({ key: person.key, name: person.name, appearance: person.anchor })),
@@ -35,22 +35,25 @@ describe('storyTheaterImage', () => {
                     title: '动作变化帧', description: '三个人在床边停下', visible: participants.map(person => person.key),
                     sharedAction: 'three people standing close together beside bed',
                     sceneComposition: 'bedroom, full body, balanced composition',
-                    characters: participants.map((person, index) => ({ key: person.key, center: ['b3', 'c3', 'd3'][index] })),
+                    characters: participants.map((person, index) => ({ key: person.key, action: ['looking right, {target#embrace}', 'looking left, {source#embrace}', 'watching the other two'][index], center: ['a3', 'c3', 'e3'][index] })),
                 },
                 {
                     title: '关系高光帧', description: '三个人彼此对视', visible: participants.map(person => person.key),
                     sharedAction: 'three people looking at each other',
                     sceneComposition: 'bedroom, three-quarter body',
-                    characters: participants.map((person, index) => ({ key: person.key, center: ['b3', 'c3', 'd3'][index] })),
+                    characters: participants.map((person, index) => ({ key: person.key, action: 'looking at another', center: ['a3', 'c3', 'e3'][index] })),
                 },
             ],
         }), participants, true);
         const prompt = buildStoryFrameMainPrompt(storyboard.frames[0]);
-        expect(prompt).toContain('{1girl, blonde hair, pink eyes}');
-        expect(prompt).toContain('{1boy, black hair, blue eyes}');
-        expect(prompt).toContain('{1boy, silver hair, red eyes}');
-        expect(prompt.indexOf('blonde hair')).toBeLessThan(prompt.indexOf('three people standing'));
-        expect(prompt.indexOf('three people standing')).toBeLessThan(prompt.indexOf('bedroom'));
+        expect(prompt).toContain('1girl, 2boys');
+        expect(prompt).not.toContain('blonde hair');
+        expect(storyboard.frames[0].characters[0].prompt).toContain('girl, blonde hair, pink eyes, looking right');
+        expect(storyboard.frames[0].characters[0].prompt).not.toContain('1girl');
+        expect(storyboard.frames[0].characters[1].prompt).toContain('boy, black hair, blue eyes, looking left');
+        expect(storyboard.frames[0].characters[1].negative).toContain('blonde hair');
+        expect(storyboard.frames[0].characters[1].negative).toContain('silver hair');
+        expect(storyboard.frames[0].characters.map(character => character.center.x)).toEqual([0.1, 0.5, 0.9]);
     });
 
     it('asks the planner to support any number of visible people', () => {
@@ -105,8 +108,8 @@ describe('storyTheaterImage', () => {
             cast: [{ key: 'character:a', name: '苏郁', appearance: '黑色短发、蓝眼睛，黑色衬衫与西裤' }],
             continuityChange: '苏郁离开办公桌，俯身靠近窗边的人',
             frames: [
-                { title: '动作变化帧', description: '苏郁走到窗边，手掌刚落在窗台', visible: ['character:a'], sharedAction: 'walking from desk, hand reaching window sill, focused gaze', sceneComposition: '1boy, office window, full body', characters: [{ key: 'character:a', center: 'c3' }] },
-                { title: '关系高光帧', description: '苏郁俯身停在窗前', visible: ['character:a'], sharedAction: 'leaning over window sill, lowered gaze, tense shoulders', sceneComposition: '1boy, office window, three-quarter body', characters: [{ key: 'character:a', center: 'c3' }] },
+                { title: '动作变化帧', description: '苏郁走到窗边，手掌刚落在窗台', visible: ['character:a'], sharedAction: 'walking from desk, hand reaching window sill, focused gaze', sceneComposition: '1boy, office window, full body', characters: [{ key: 'character:a', action: 'walking, hand on window sill, focused gaze', center: 'c3' }] },
+                { title: '关系高光帧', description: '苏郁俯身停在窗前', visible: ['character:a'], sharedAction: 'leaning over window sill, lowered gaze, tense shoulders', sceneComposition: '1boy, office window, three-quarter body', characters: [{ key: 'character:a', action: 'leaning, lowered gaze, tense shoulders', center: 'c3' }] },
             ],
         })}\n\`\`\`\nDone.`;
         const storyboard = parseStoryImageStoryboard(raw, participants, true);
