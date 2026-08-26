@@ -1,5 +1,5 @@
 import type { APIConfig, CharacterExportData, CharacterProfile, UserProfile } from '../types';
-import { extractContent, safeResponseJson } from './safeApi';
+import { extractContent, safeFetchJson } from './safeApi';
 import { stripSensitiveCardFields } from './characterCard';
 
 export type MihuiGender = 'male' | 'female' | 'any' | 'custom';
@@ -150,7 +150,8 @@ const callGlobalApi = async (
     maxTokens = 1800,
 ): Promise<string> => {
     if (!api.baseUrl || !api.model) throw new Error('请先在设置中配置全局 API 和模型');
-    const response = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const endpoint = `${api.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const data = await safeFetchJson(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -163,9 +164,7 @@ const callGlobalApi = async (
             max_tokens: maxTokens,
             stream: false,
         }),
-    });
-    if (!response.ok) throw new Error(`全局 API 调用失败（HTTP ${response.status}）`);
-    const data = await safeResponseJson(response);
+    }, 0, 60000, { appId: 'mihui', appName: '密会', purpose: '匹配或聊天' });
     const content = extractContent(data).trim();
     if (!content) throw new Error('模型没有返回内容');
     return content;
