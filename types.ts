@@ -7,6 +7,7 @@ export enum AppID {
   Chat = 'chat',
   GroupChat = 'group_chat', 
   Moments = 'moments', // 朋友圈 — 本地生活流、角色互动与私聊联动
+  Mihui = 'mihui', // 密会 — 本地同城交友模拟器
   Date = 'date',
   Gallery = 'gallery',
   Browser = 'browser',
