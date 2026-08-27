@@ -53,6 +53,18 @@ export interface MihuiSession {
     graduatedAt?: number;
     /** 复用原生见面模式的内部角色 id；同一密会对象始终续接同一份见面存档。 */
     linkedCharacterId?: string;
+    /** 快速匹配彩蛋：后台绑定真实角色，揭晓前 UI 只使用 persona 化名资料。 */
+    familiar?: {
+        characterId: string;
+        realName: string;
+        avatar?: string;
+        description: string;
+        systemPrompt: string;
+        worldview?: string;
+        revealedAt?: number;
+        revealLine?: string;
+        syncedAt?: number;
+    };
 }
 
 export interface MihuiState {
@@ -208,6 +220,70 @@ export async function generateMihuiPersona(
     return normalizePersona(extractJsonObject(raw), prefs);
 }
 
+/**
+ * 快速匹配的 1/3 熟人彩蛋。random 可注入，便于锁住概率与降权规则的测试。
+ * 密会为见面临时创建的角色不应再次被当成“已有熟人”抽中。
+ */
+export function pickMihuiFamiliar(
+    characters: CharacterProfile[],
+    sessions: MihuiSession[],
+    random: () => number = Math.random,
+): CharacterProfile | undefined {
+    if (random() >= 1 / 3) return undefined;
+    const generatedMeetingIds = new Set(sessions
+        .filter(session => session.linkedCharacterId && session.familiar?.characterId !== session.linkedCharacterId)
+        .map(session => session.linkedCharacterId as string));
+    const eligible = characters.filter(character => character.name?.trim()
+        && character.name !== 'New Character'
+        && !generatedMeetingIds.has(character.id));
+    if (!eligible.length) return undefined;
+
+    const hitCounts = new Map<string, number>();
+    sessions.slice(0, 8).forEach(session => {
+        const id = session.familiar?.characterId;
+        if (id) hitCounts.set(id, (hitCounts.get(id) || 0) + 1);
+    });
+    const latestId = sessions.find(session => session.familiar)?.familiar?.characterId;
+    const weighted = eligible.map(character => ({
+        character,
+        weight: (latestId === character.id ? 0.12 : 1) / (1 + (hitCounts.get(character.id) || 0) * 2),
+    }));
+    const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let cursor = random() * total;
+    for (const item of weighted) {
+        cursor -= item.weight;
+        if (cursor <= 0) return item.character;
+    }
+    return weighted[weighted.length - 1]?.character;
+}
+
+export async function generateMihuiFamiliarPersona(
+    api: APIConfig,
+    user: UserProfile,
+    character: CharacterProfile,
+    prefs: MihuiPreferences,
+): Promise<MihuiPersona> {
+    const raw = await callGlobalApi(api, [
+        {
+            role: 'system',
+            content: `你是虚构同城交友软件「密会」的伪装导演。下面给你的是真实成年角色卡。请保留这个人的核心性格、说话习惯、边界与对用户的既有感情，但替 ta 制作一套不容易被立刻认出的临时交友资料：必须改用新的自然中文化名；职业、城市与背景可做合理模糊或伪装；头像不会展示；开场白要像 ta 故意换了身份来试探用户，允许有极轻微熟悉感，但绝不能直接说出真名、原职业、共同经历或暴露“我是熟人”。只输出合法 JSON，不要 markdown。字段必须为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。所有人物均为成年人。`,
+        },
+        {
+            role: 'user',
+            content: `用户：${user.name || '用户'}\n用户资料：${user.bio || '未填写'}\n真实角色名（只供后台理解，严禁输出）：${character.name}\n真实角色简介：${character.description || '无'}\n真实角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n用户当前快速匹配偏好：${genderLine(prefs)}，${prefs.ageMin}-${prefs.ageMax}岁。`,
+        },
+    ], 0.9, 1600);
+    const persona = normalizePersona(extractJsonObject(raw), prefs);
+    // 模型偶尔会偷懒沿用真名；本地再清一遍所有可见字段，避免开场白或背景直接穿帮。
+    const trueName = character.name.trim();
+    const redact = (value: string) => trueName ? value.split(trueName).join('某人') : value;
+    (Object.keys(persona) as Array<keyof MihuiPersona>).forEach(key => {
+        if (typeof persona[key] === 'string') (persona as any)[key] = redact(persona[key] as string);
+    });
+    if (!persona.name.trim() || persona.name.includes('某人')) persona.name = '林默';
+    return persona;
+}
+
 export interface MihuiReplyResult {
     reply: string;
     signal: 'warm' | 'neutral' | 'cool';
@@ -217,6 +293,7 @@ export async function generateMihuiReply(
     api: APIConfig,
     user: UserProfile,
     session: MihuiSession,
+    sourceCharacter?: CharacterProfile,
 ): Promise<MihuiReplyResult> {
     const history = session.messages.slice(-24).map(message => {
         if (message.type === 'image' && message.role === 'user') {
@@ -238,10 +315,16 @@ export async function generateMihuiReply(
         return { role: message.role, content: message.content };
     }) as Array<{ role: 'user' | 'assistant'; content: any }>;
     const persona = session.persona;
+    const familiar = session.familiar;
+    const hiddenFamiliarPrompt = familiar && !familiar.revealedAt
+        ? `\n[隐藏身份规则] 你实际上是用户神经链接里的熟人「${familiar.realName}」，当前故意使用化名「${persona.name}」。你的真实设定如下：\n${sourceCharacter?.systemPrompt || familiar.systemPrompt}\n${sourceCharacter?.description || familiar.description}\n${sourceCharacter?.worldview || familiar.worldview || ''}\n必须以真实角色的性格和记忆回应，但在系统通知身份揭晓前，绝不能直接说出真名、头像、原职业或明确共同经历；只允许非常轻微的熟悉感。`
+        : familiar?.revealedAt
+            ? `\n[身份已揭晓] 你就是「${familiar.realName}」，不再使用化名隐瞒。继续承接密会里发生的一切。`
+            : '';
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。回复通常 1-3 句。所有人物均为成年人。\n只输出 JSON：{"reply":"你的回复","signal":"warm|neutral|cool"}。signal 只表示这一轮互动给你的主观感受，不直接给分。`,
+            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}${hiddenFamiliarPrompt}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。回复通常 1-3 句。所有人物均为成年人。\n只输出 JSON：{"reply":"你的回复","signal":"warm|neutral|cool"}。signal 只表示这一轮互动给你的主观感受，不直接给分。`,
         },
         ...history,
     ], 0.9, 1000);
@@ -252,6 +335,14 @@ export async function generateMihuiReply(
     } catch {
         return { reply: boundedText(raw, '嗯？你继续说。', 600), signal: 'neutral' };
     }
+}
+
+export function buildMihuiRevealLine(character: CharacterProfile): string {
+    const personality = `${character.description || ''} ${character.systemPrompt || ''}`;
+    if (/毒舌|恶劣|戏谑|腹黑|傲慢|挑衅/.test(personality)) return `聊了这么久还没认出来？胆子不小。是我，${character.name}。`;
+    if (/温柔|体贴|耐心|克制|治愈/.test(personality)) return `别紧张，是我，${character.name}。只是想换个方式，再认识你一次。`;
+    if (/寡言|冷淡|沉稳|理性|严肃|冷静/.test(personality)) return `到这里就不瞒你了。是我，${character.name}。`;
+    return `看来该重新自我介绍了——是我，${character.name}。`;
 }
 
 export function affinityDelta(signal: MihuiReplyResult['signal'], userText: string): number {

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
     affinityDelta,
     affinityStage,
+    buildMihuiRevealLine,
     buildMihuiCharacterCard,
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
     extractJsonObject,
     mihuiMessageSummary,
     normalizePersona,
+    pickMihuiFamiliar,
     removeMihuiMessage,
     replaceMihuiMessage,
 } from './mihui';
@@ -61,5 +63,30 @@ describe('mihui core', () => {
     it('summarizes media without leaking image base64 into memories', () => {
         expect(mihuiMessageSummary({ id: 'p1', role: 'user', type: 'image', content: 'data:image/jpeg;base64,very-long', timestamp: 1 })).toBe('[分享照片]');
         expect(mihuiMessageSummary({ id: 'l1', role: 'user', type: 'location', content: '国贸', location: { name: '国贸三期' }, timestamp: 1 })).toBe('[分享位置：国贸三期]');
+    });
+
+    it('only lets quick match hit a familiar on the one-third branch', () => {
+        const characters = [
+            { id: 'a', name: '苏郁', avatar: '', description: '毒舌', systemPrompt: '腹黑', memories: [] },
+            { id: 'b', name: '秦少川', avatar: '', description: '冷静', systemPrompt: '寡言', memories: [] },
+        ] as any;
+        expect(pickMihuiFamiliar(characters, [], () => 0.7)).toBeUndefined();
+        const draws = [0.1, 0];
+        expect(pickMihuiFamiliar(characters, [], () => draws.shift() ?? 0)?.id).toBe('a');
+    });
+
+    it('reduces the chance of immediately matching the same familiar again', () => {
+        const characters = [
+            { id: 'a', name: '苏郁', avatar: '', description: '', systemPrompt: '', memories: [] },
+            { id: 'b', name: '秦少川', avatar: '', description: '', systemPrompt: '', memories: [] },
+        ] as any;
+        const sessions = [{ id: 's1', familiar: { characterId: 'a' } }] as any;
+        const draws = [0.1, 0.5];
+        expect(pickMihuiFamiliar(characters, sessions, () => draws.shift() ?? 0)?.id).toBe('b');
+    });
+
+    it('creates a local personality-flavoured reveal line without another API call', () => {
+        expect(buildMihuiRevealLine({ name: '苏郁', description: '毒舌又腹黑', systemPrompt: '', memories: [] } as any)).toContain('胆子不小');
+        expect(buildMihuiRevealLine({ name: '秦少川', description: '冷静寡言', systemPrompt: '', memories: [] } as any)).toContain('不瞒你了');
     });
 });

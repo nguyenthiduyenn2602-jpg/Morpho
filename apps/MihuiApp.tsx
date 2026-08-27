@@ -21,12 +21,15 @@ import {
 import { useOS } from '../context/OSContext';
 import { AppID, type CharacterExportData } from '../types';
 import { processImage } from '../utils/file';
+import { DB } from '../utils/db';
 import {
     affinityDelta,
     affinityStage,
+    buildMihuiRevealLine,
     buildMihuiCharacterCard,
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
+    generateMihuiFamiliarPersona,
     generateMihuiPersona,
     generateMihuiReply,
     loadMihuiState,
@@ -36,6 +39,7 @@ import {
     MihuiPreferences,
     MihuiSession,
     MihuiState,
+    pickMihuiFamiliar,
     removeMihuiMessage,
     replaceMihuiMessage,
     saveMihuiState,
@@ -72,7 +76,7 @@ const downloadCard = (card: CharacterExportData) => {
 };
 
 const MihuiApp: React.FC = () => {
-    const { closeApp, apiConfig, userProfile, characters, addCharacter, updateCharacter, openDateWithChar, addToast } = useOS();
+    const { closeApp, openApp, apiConfig, userProfile, characters, addCharacter, updateCharacter, setActiveCharacterId, openDateWithChar, addToast } = useOS();
     const [state, setState] = useState<MihuiState>(() => loadMihuiState());
     const [screen, setScreen] = useState<Screen>(() => state.activeSessionId ? 'chat' : 'home');
     const [draftPrefs, setDraftPrefs] = useState<MihuiPreferences>(() => ({ ...state.preferences }));
@@ -96,6 +100,25 @@ const MihuiApp: React.FC = () => {
         [state.sessions, state.activeSessionId],
     );
 
+    const familiarCharacter = (session: MihuiSession) => session.familiar
+        ? characters.find(character => character.id === session.familiar?.characterId)
+        : undefined;
+    const isRevealed = (session: MihuiSession) => Boolean(session.familiar?.revealedAt);
+    const displayName = (session: MihuiSession) => isRevealed(session)
+        ? (familiarCharacter(session)?.name || session.familiar?.realName || session.persona.name)
+        : session.persona.name;
+    const displayAvatar = (session: MihuiSession, messageTimestamp?: number) => {
+        const revealedAt = session.familiar?.revealedAt;
+        if (!revealedAt || (messageTimestamp != null && messageTimestamp < revealedAt)) return '';
+        return familiarCharacter(session)?.avatar || session.familiar?.avatar || '';
+    };
+    const renderSessionAvatar = (session: MihuiSession, size: string, messageTimestamp?: number) => {
+        const avatar = displayAvatar(session, messageTimestamp);
+        return avatar
+            ? <img src={avatar} alt={displayName(session)} className={`${size} shrink-0 rounded-full border border-white object-cover shadow-sm`} />
+            : <PlaceholderAvatar size={size} />;
+    };
+
     useEffect(() => saveMihuiState(state), [state]);
     useEffect(() => {
         if (screen !== 'chat') return;
@@ -118,7 +141,10 @@ const MihuiApp: React.FC = () => {
         setMatching(true);
         try {
             const prefs = quick ? { ...DEFAULT_MIHUI_PREFERENCES, ...state.preferences } : draftPrefs;
-            const persona = await generateMihuiPersona(apiConfig, userProfile, prefs, quick);
+            const familiar = quick ? pickMihuiFamiliar(characters, state.sessions) : undefined;
+            const persona = familiar
+                ? await generateMihuiFamiliarPersona(apiConfig, userProfile, familiar, prefs)
+                : await generateMihuiPersona(apiConfig, userProfile, prefs, quick);
             const now = Date.now();
             const session: MihuiSession = {
                 id: sessionId(),
@@ -127,6 +153,16 @@ const MihuiApp: React.FC = () => {
                 createdAt: now,
                 updatedAt: now,
                 messages: [{ id: messageId(), role: 'assistant', content: persona.greeting, timestamp: now }],
+                ...(familiar ? {
+                    familiar: {
+                        characterId: familiar.id,
+                        realName: familiar.name,
+                        avatar: familiar.avatar,
+                        description: familiar.description,
+                        systemPrompt: familiar.systemPrompt,
+                        worldview: familiar.worldview,
+                    },
+                } : {}),
             };
             setState(prev => ({
                 version: 1,
@@ -157,13 +193,65 @@ const MihuiApp: React.FC = () => {
         }));
     };
 
+    const revealFamiliar = async (target: MihuiSession): Promise<string | undefined> => {
+        const familiar = target.familiar;
+        if (!familiar) return undefined;
+        const character = characters.find(item => item.id === familiar.characterId);
+        if (!character) throw new Error('这位熟人的原角色卡已经不存在了');
+        if (familiar.revealedAt && familiar.syncedAt) return character.id;
+
+        const now = Date.now();
+        const line = familiar.revealLine || buildMihuiRevealLine(character);
+        const transcript = target.messages.slice(-24)
+            .map(message => `${message.role === 'user' ? (userProfile.name || '用户') : target.persona.name}：${mihuiMessageSummary(message)}`)
+            .join('\n');
+        const memoryId = `mihui-reveal-${target.id}`;
+
+        if (!familiar.syncedAt) {
+            await updateCharacter(character.id, previous => ({
+                memories: previous.memories.some(memory => memory.id === memoryId)
+                    ? previous.memories
+                    : [...previous.memories, {
+                        id: memoryId,
+                        date: new Date(now).toISOString(),
+                        summary: `你曾在「密会」中使用化名「${target.persona.name}」与${userProfile.name || '用户'}相遇，身份后来揭晓。密会记录：\n${transcript}`,
+                        mood: '原来是你——密会身份揭晓',
+                    }],
+            }));
+            await DB.saveMessage({
+                charId: character.id,
+                role: 'assistant',
+                type: 'text',
+                content: line,
+                timestamp: now,
+                metadata: { source: 'mihui-reveal', mihuiSessionId: target.id, alias: target.persona.name },
+            });
+        }
+
+        updateActive(session => {
+            const alreadyHasLine = session.messages.some(message => message.content === line);
+            return {
+                ...session,
+                linkedCharacterId: character.id,
+                familiar: { ...session.familiar!, realName: character.name, avatar: character.avatar, revealedAt: session.familiar?.revealedAt || now, revealLine: line, syncedAt: now },
+                messages: alreadyHasLine ? session.messages : [...session.messages, { id: messageId(), role: 'assistant', type: 'text', content: line, timestamp: now }],
+                updatedAt: now,
+            };
+        });
+        addToast(`原来是 ${character.name}`, 'success');
+        return character.id;
+    };
+
     const sendUserMessage = async (userMessage: MihuiMessage, affinityText: string) => {
         if (!activeSession || sending || regenerating) return;
         const requestSession = { ...activeSession, messages: [...activeSession.messages, userMessage] };
         setSending(true);
         updateActive(session => ({ ...session, messages: [...session.messages, userMessage], updatedAt: Date.now() }));
         try {
-            const result = await generateMihuiReply(apiConfig, userProfile, requestSession);
+            const sourceCharacter = requestSession.familiar
+                ? characters.find(character => character.id === requestSession.familiar?.characterId)
+                : undefined;
+            const result = await generateMihuiReply(apiConfig, userProfile, requestSession, sourceCharacter);
             const assistantMessage: MihuiMessage = { id: messageId(), role: 'assistant', content: result.reply, timestamp: Date.now() };
             const nextAffinity = clampAffinity(activeSession.affinity + affinityDelta(result.signal, affinityText));
             const becameFull = activeSession.affinity < 100 && nextAffinity >= 100;
@@ -171,7 +259,12 @@ const MihuiApp: React.FC = () => {
                 const affinity = clampAffinity(session.affinity + affinityDelta(result.signal, affinityText));
                 return { ...session, affinity, messages: [...session.messages, assistantMessage], updatedAt: Date.now() };
             });
-            if (becameFull) setShowGraduation(true);
+            if (becameFull && requestSession.familiar && !requestSession.familiar.revealedAt) {
+                await revealFamiliar({ ...requestSession, affinity: nextAffinity, messages: [...requestSession.messages, assistantMessage] });
+                setShowGraduation(true);
+            } else if (becameFull) {
+                setShowGraduation(true);
+            }
         } catch (error: any) {
             addToast(error?.message || '消息发送失败', 'error');
         } finally {
@@ -237,7 +330,10 @@ const MihuiApp: React.FC = () => {
         if (!activeSession || openingMeetup) return;
         setOpeningMeetup(true);
         try {
-            const characterId = await buildLinkedCharacter();
+            const characterId = activeSession.familiar
+                ? (await revealFamiliar(activeSession))
+                : await buildLinkedCharacter();
+            if (!characterId) throw new Error('没有找到可以见面的角色');
             openDateWithChar(characterId, AppID.Mihui);
         } catch (error: any) {
             addToast(error?.message || '见面模式打开失败', 'error');
@@ -262,7 +358,10 @@ const MihuiApp: React.FC = () => {
         setSelectedMessage(null);
         setRegenerating(true);
         try {
-            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history });
+            const sourceCharacter = activeSession.familiar
+                ? characters.find(character => character.id === activeSession.familiar?.characterId)
+                : undefined;
+            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history }, sourceCharacter);
             const replacement: MihuiMessage = { ...target, content: result.reply, timestamp: Date.now() };
             updateActive(session => replaceMihuiMessage(session, target.id, replacement));
             addToast('已换一种回复，好感度保持不变', 'success');
@@ -308,7 +407,7 @@ const MihuiApp: React.FC = () => {
     };
 
     const removeSession = () => {
-        if (!activeSession || !window.confirm(`结束与「${activeSession.persona.name}」的匹配并删除本地聊天吗？`)) return;
+        if (!activeSession || !window.confirm(`结束与「${displayName(activeSession)}」的匹配并删除本地聊天吗？`)) return;
         setState(prev => ({ ...prev, activeSessionId: undefined, sessions: prev.sessions.filter(s => s.id !== activeSession.id) }));
         setShowProfile(false);
         setScreen('home');
@@ -356,13 +455,14 @@ const MihuiApp: React.FC = () => {
                 )}
                 {state.sessions.map(session => {
                     const last = session.messages[session.messages.length - 1];
+                    const revealed = isRevealed(session);
                     return (
                         <button key={session.id} onClick={() => openSession(session.id)} className="w-full rounded-[1.5rem] border border-[#eadce1] bg-white p-4 text-left shadow-[0_12px_30px_-22px_rgba(74,45,56,.45)] flex items-center gap-3 active:scale-[.99] transition">
-                            <PlaceholderAvatar size="w-14 h-14" />
+                            {renderSessionAvatar(session, 'w-14 h-14')}
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
-                                    <span className="font-black text-slate-800">{session.persona.name}</span>
-                                    <span className="text-[10px] text-slate-400">{session.persona.age} · {session.persona.occupation}</span>
+                                    <span className="font-black text-slate-800">{displayName(session)}</span>
+                                    <span className="text-[10px] text-slate-400">{revealed ? `曾用化名 ${session.persona.name}` : `${session.persona.age} · ${session.persona.occupation}`}</span>
                                 </div>
                                 <p className="mt-1 truncate text-xs text-slate-500">{last ? mihuiMessageSummary(last) : '等待开场'}</p>
                             </div>
@@ -434,23 +534,35 @@ const MihuiApp: React.FC = () => {
     const renderProfileSheet = () => {
         if (!activeSession || !showProfile) return null;
         const p = activeSession.persona;
+        const hiddenFamiliar = activeSession.familiar && !activeSession.familiar.revealedAt;
+        const revealedFamiliar = activeSession.familiar?.revealedAt;
         return (
             <div className="absolute inset-0 z-40 bg-black/35 backdrop-blur-sm flex items-end" onClick={() => setShowProfile(false)}>
                 <div className="w-full max-h-[82%] overflow-y-auto rounded-t-[2.25rem] bg-[#f6f0f2] p-6 pb-10 shadow-2xl" onClick={e => e.stopPropagation()}>
                     <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
-                            <PlaceholderAvatar size="w-20 h-20" />
-                            <div><h3 className="text-2xl font-black text-slate-800">{p.name}</h3><p className="mt-1 text-xs text-slate-400">{p.age}岁 · {p.gender} · {p.city}</p></div>
+                            {renderSessionAvatar(activeSession, 'w-20 h-20')}
+                            <div><h3 className="text-2xl font-black text-slate-800">{displayName(activeSession)}</h3><p className="mt-1 text-xs text-slate-400">{revealedFamiliar ? `曾用化名 ${p.name}` : `${p.age}岁 · ${p.gender} · ${p.city}`}</p></div>
                         </div>
                         <button onClick={() => setShowProfile(false)} className="w-10 h-10 rounded-full bg-white grid place-items-center text-slate-500"><X size={20} /></button>
                     </div>
-                    <div className="mt-6 grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">职业</p><p className="mt-1 font-bold text-slate-700">{p.occupation}</p></div>
-                        <div className="rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">关系倾向</p><p className="mt-1 font-bold text-slate-700">{p.relationshipIntent}</p></div>
-                    </div>
-                    {[[ '外貌印象', p.appearance ], [ '性格', p.personality ], [ '相处方式', p.socialStyle ], [ '个人背景', p.background ]].map(([label, value]) => (
-                        <div key={label} className="mt-3 rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">{label}</p><p className="mt-1 text-sm leading-6 text-slate-600">{value}</p></div>
-                    ))}
+                    {hiddenFamiliar ? (
+                        <div className="mt-6 rounded-2xl border border-[#eadce1] bg-white p-6 text-center">
+                            <Question size={28} className="mx-auto text-[#bd8d9d]" />
+                            <p className="mt-3 font-black text-slate-700">对方暂未公开更多资料</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-400">先聊聊看，也许会发现一点熟悉的痕迹。</p>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="mt-6 grid grid-cols-2 gap-3 text-sm">
+                                <div className="rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">职业</p><p className="mt-1 font-bold text-slate-700">{p.occupation}</p></div>
+                                <div className="rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">关系倾向</p><p className="mt-1 font-bold text-slate-700">{p.relationshipIntent}</p></div>
+                            </div>
+                            {[[ '外貌印象', p.appearance ], [ '性格', p.personality ], [ '相处方式', p.socialStyle ], [ '个人背景', p.background ]].map(([label, value]) => (
+                                <div key={label} className="mt-3 rounded-2xl bg-white p-4"><p className="text-[10px] font-bold text-[#a96d80]">{label}</p><p className="mt-1 text-sm leading-6 text-slate-600">{value}</p></div>
+                            ))}
+                        </>
+                    )}
                     <button onClick={removeSession} className="mt-6 w-full rounded-2xl border border-rose-100 bg-rose-50 py-3 text-sm font-bold text-rose-500">结束这次匹配</button>
                 </div>
             </div>
@@ -459,6 +571,21 @@ const MihuiApp: React.FC = () => {
 
     const renderGraduation = () => {
         if (!activeSession || !showGraduation) return null;
+        if (activeSession.familiar?.revealedAt) {
+            const characterId = activeSession.familiar.characterId;
+            return (
+                <div className="absolute inset-0 z-50 bg-black/55 backdrop-blur-md grid place-items-center p-6">
+                    <div className="w-full rounded-[2rem] bg-white p-6 text-center shadow-2xl">
+                        <div className="flex justify-center">{renderSessionAvatar(activeSession, 'w-20 h-20')}</div>
+                        <p className="mt-4 text-[10px] font-black tracking-[.3em] text-[#a96d80]">IDENTITY REVEALED</p>
+                        <h3 className="mt-1 text-2xl font-black text-slate-800">原来是 {displayName(activeSession)}</h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-500">{activeSession.familiar.revealLine || `在密会里使用「${activeSession.persona.name}」这个化名的人，原来一直是 ta。`}</p>
+                        <button onClick={() => { setActiveCharacterId(characterId); openApp(AppID.Chat); setShowGraduation(false); }} className="mt-6 w-full rounded-2xl bg-[#292126] py-3.5 text-sm font-black text-[#f4e5ea] flex items-center justify-center gap-2"><ChatsCircle size={18} />去单聊看看</button>
+                        <button onClick={() => setShowGraduation(false)} className="mt-3 text-xs font-bold text-slate-400">先留在密会</button>
+                    </div>
+                </div>
+            );
+        }
         const card = buildMihuiCharacterCard(activeSession);
         return (
             <div className="absolute inset-0 z-50 bg-black/55 backdrop-blur-md grid place-items-center p-6">
@@ -525,8 +652,8 @@ const MihuiApp: React.FC = () => {
             <>
                 <div className="px-4 pb-3 border-b border-[#e7d4db] bg-white/80 backdrop-blur-xl shrink-0">
                     <button onClick={() => setShowProfile(true)} className="w-full flex items-center gap-3 text-left">
-                        <PlaceholderAvatar size="w-12 h-12" />
-                        <div className="min-w-0 flex-1"><p className="font-black text-slate-800">{p.name}</p><p className="mt-0.5 text-[10px] text-slate-400">{p.age} · {p.occupation} · {p.city}</p></div>
+                        {renderSessionAvatar(activeSession, 'w-12 h-12')}
+                        <div className="min-w-0 flex-1"><p className="font-black text-slate-800">{displayName(activeSession)}</p><p className="mt-0.5 text-[10px] text-slate-400">{isRevealed(activeSession) ? `曾用化名 ${p.name}` : `${p.age} · ${p.occupation} · ${p.city}`}</p></div>
                         <CaretRight size={17} className="text-slate-300" />
                     </button>
                     <div className="mt-3 flex items-center gap-2">
@@ -540,7 +667,7 @@ const MihuiApp: React.FC = () => {
                     <div className="text-center text-[10px] text-slate-300">你们通过密会认识了 · 所有人物均为成年人</div>
                     {activeSession.messages.map((message, index) => (
                         <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
-                            {message.role === 'assistant' && <PlaceholderAvatar size="w-8 h-8" />}
+                            {message.role === 'assistant' && renderSessionAvatar(activeSession, 'w-8 h-8', message.timestamp)}
                             <button
                                 onClick={() => setSelectedMessage(message)}
                                 onContextMenu={event => { event.preventDefault(); setSelectedMessage(message); }}
@@ -563,7 +690,7 @@ const MihuiApp: React.FC = () => {
                             )}
                         </div>
                     ))}
-                    {(sending || regenerating) && <div className="flex items-end gap-2"><PlaceholderAvatar size="w-8 h-8" /><div className="rounded-[1.35rem] rounded-bl-md bg-white border border-[#eadce1] px-4 py-3 flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:120ms]" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:240ms]" /></div></div>}
+                    {(sending || regenerating) && <div className="flex items-end gap-2">{renderSessionAvatar(activeSession, 'w-8 h-8')}<div className="rounded-[1.35rem] rounded-bl-md bg-white border border-[#eadce1] px-4 py-3 flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:120ms]" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:240ms]" /></div></div>}
                 </div>
 
                 <div className="shrink-0 border-t border-[#e7d4db] bg-white px-3 pt-2 pb-[calc(var(--safe-bottom)+.65rem)]">
@@ -572,7 +699,7 @@ const MihuiApp: React.FC = () => {
                         <button onClick={() => photoInputRef.current?.click()} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><ImageSquare size={14} />照片</button>
                         <button onClick={() => setShowLocation(true)} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><MapPin size={14} />位置</button>
                         <button onClick={openMeetup} disabled={openingMeetup || sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><Sparkle size={14} />{openingMeetup ? '正在打开…' : '见面'}</button>
-                        {activeSession.affinity >= 100 && <button onClick={() => setShowGraduation(true)} className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 flex items-center gap-1"><UserPlus size={14} />角色卡</button>}
+                        {activeSession.affinity >= 100 && <button onClick={() => setShowGraduation(true)} className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 flex items-center gap-1">{activeSession.familiar?.revealedAt ? <Heart size={14} weight="fill" /> : <UserPlus size={14} />}{activeSession.familiar?.revealedAt ? '原来是你' : '角色卡'}</button>}
                     </div>
                     <div className="flex items-end gap-2">
                         <textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="说点什么……" disabled={regenerating} className="max-h-28 min-h-11 flex-1 resize-none rounded-2xl bg-[#f4eef0] px-4 py-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#d9b8c3] disabled:opacity-60" />
@@ -592,7 +719,7 @@ const MihuiApp: React.FC = () => {
             <header className="shrink-0 px-4 pb-2 bg-white/70 backdrop-blur-xl" style={{ paddingTop: 'var(--safe-top)' }}>
                 <div className="h-12 flex items-center gap-3">
                     <button onClick={back} className="w-10 h-10 rounded-full grid place-items-center text-slate-600 hover:bg-black/5 active:scale-90 transition" aria-label="返回"><ArrowLeft size={24} /></button>
-                    <div className="min-w-0 flex-1"><p className="text-[10px] font-bold tracking-[.3em] text-[#a96d80]">MIHUI</p><p className="font-black text-slate-800">{screen === 'match' ? '偏好设置' : screen === 'chat' && activeSession ? activeSession.persona.name : '密会'}</p></div>
+                    <div className="min-w-0 flex-1"><p className="text-[10px] font-bold tracking-[.3em] text-[#a96d80]">MIHUI</p><p className="font-black text-slate-800">{screen === 'match' ? '偏好设置' : screen === 'chat' && activeSession ? displayName(activeSession) : '密会'}</p></div>
                     {screen === 'home' && <button onClick={() => { setMatchError(''); setScreen('match'); }} className="w-10 h-10 rounded-full bg-[#f1e3e8] text-[#8c5366] grid place-items-center"><Shuffle size={20} /></button>}
                 </div>
             </header>
