@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
+    ArrowClockwise,
     Briefcase,
     CaretRight,
     ChatsCircle,
@@ -12,6 +13,7 @@ import {
     Question,
     Shuffle,
     Sparkle,
+    Trash,
     UserPlus,
     Users,
     X,
@@ -32,6 +34,8 @@ import {
     MihuiPreferences,
     MihuiSession,
     MihuiState,
+    removeMihuiMessage,
+    replaceMihuiMessage,
     saveMihuiState,
 } from '../utils/mihui';
 
@@ -73,7 +77,9 @@ const MihuiApp: React.FC = () => {
     const [matching, setMatching] = useState(false);
     const [matchError, setMatchError] = useState('');
     const [sending, setSending] = useState(false);
+    const [regenerating, setRegenerating] = useState(false);
     const [draft, setDraft] = useState('');
+    const [selectedMessage, setSelectedMessage] = useState<MihuiMessage | null>(null);
     const [showProfile, setShowProfile] = useState(false);
     const [showGraduation, setShowGraduation] = useState(false);
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -146,7 +152,7 @@ const MihuiApp: React.FC = () => {
 
     const send = async () => {
         const content = draft.trim();
-        if (!content || !activeSession || sending) return;
+        if (!content || !activeSession || sending || regenerating) return;
         const userMessage: MihuiMessage = { id: messageId(), role: 'user', content, timestamp: Date.now() };
         const requestSession = { ...activeSession, messages: [...activeSession.messages, userMessage] };
         setDraft('');
@@ -167,6 +173,42 @@ const MihuiApp: React.FC = () => {
         } finally {
             setSending(false);
         }
+    };
+
+    const regenerateLastReply = async () => {
+        if (!activeSession || sending || regenerating) return;
+        const messages = activeSession.messages;
+        const targetIndex = messages.length - 1;
+        const target = messages[targetIndex];
+        if (!target || target.role !== 'assistant') {
+            addToast('只能重新生成最后一条 AI 回复', 'info');
+            return;
+        }
+        const history = messages.slice(0, targetIndex);
+        if (!history.some(message => message.role === 'user')) {
+            addToast('匹配开场白暂不支持重新生成', 'info');
+            return;
+        }
+        setSelectedMessage(null);
+        setRegenerating(true);
+        try {
+            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history });
+            const replacement: MihuiMessage = { ...target, content: result.reply, timestamp: Date.now() };
+            updateActive(session => replaceMihuiMessage(session, target.id, replacement));
+            addToast('已换一种回复，好感度保持不变', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '重新生成失败', 'error');
+        } finally {
+            setRegenerating(false);
+        }
+    };
+
+    const deleteSelectedMessage = () => {
+        if (!selectedMessage) return;
+        const deletedId = selectedMessage.id;
+        updateActive(session => removeMihuiMessage(session, deletedId));
+        setSelectedMessage(null);
+        addToast('消息已删除，好感度保持不变', 'success');
     };
 
     const addToNeuralLink = async () => {
@@ -361,6 +403,33 @@ const MihuiApp: React.FC = () => {
         );
     };
 
+    const renderMessageOptions = () => {
+        if (!activeSession || !selectedMessage) return null;
+        const lastMessage = activeSession.messages[activeSession.messages.length - 1];
+        const canRegenerate = selectedMessage.role === 'assistant' && lastMessage?.id === selectedMessage.id
+            && activeSession.messages.some(message => message.role === 'user');
+        return (
+            <div className="absolute inset-0 z-[65] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setSelectedMessage(null)}>
+                <div className="w-full rounded-t-[2rem] bg-[#f6f0f2] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[#d2bdc5]" />
+                    <p className="line-clamp-3 rounded-2xl bg-white px-4 py-3 text-xs leading-5 text-[#6e5b63]">{selectedMessage.content}</p>
+                    {canRegenerate && (
+                        <button onClick={regenerateLastReply} disabled={regenerating} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#292126] py-3.5 text-sm font-black text-[#f4e5ea] disabled:opacity-50">
+                            <ArrowClockwise size={18} className={regenerating ? 'animate-spin' : ''} />重新生成这次回复
+                        </button>
+                    )}
+                    {selectedMessage.role === 'assistant' && !canRegenerate && (
+                        <p className="mt-3 text-center text-[11px] text-[#9e8991]">为保证后续上下文连贯，仅最后一条 AI 回复可以重新生成</p>
+                    )}
+                    <button onClick={deleteSelectedMessage} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#e5cbd4] bg-white py-3.5 text-sm font-black text-[#a14f69]">
+                        <Trash size={18} />删除这条消息
+                    </button>
+                    <button onClick={() => setSelectedMessage(null)} className="mt-2 w-full py-3 text-sm font-bold text-[#89757d]">取消</button>
+                </div>
+            </div>
+        );
+    };
+
     const renderChat = () => {
         if (!activeSession) return renderHome();
         const p = activeSession.persona;
@@ -382,13 +451,23 @@ const MihuiApp: React.FC = () => {
 
                 <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-5 space-y-3 bg-[radial-gradient(circle_at_top,#f2e5e9_0,transparent_44%)]">
                     <div className="text-center text-[10px] text-slate-300">你们通过密会认识了 · 所有人物均为成年人</div>
-                    {activeSession.messages.map(message => (
+                    {activeSession.messages.map((message, index) => (
                         <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
                             {message.role === 'assistant' && <PlaceholderAvatar size="w-8 h-8" />}
-                            <div className={`max-w-[78%] rounded-[1.35rem] px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-[#33272d] text-[#f7e9ee] rounded-br-md' : 'bg-white text-slate-700 border border-[#eadce1] rounded-bl-md'}`}>{message.content}</div>
+                            <button
+                                onClick={() => setSelectedMessage(message)}
+                                onContextMenu={event => { event.preventDefault(); setSelectedMessage(message); }}
+                                className={`max-w-[78%] rounded-[1.35rem] px-4 py-3 text-left text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-[#33272d] text-[#f7e9ee] rounded-br-md' : 'bg-white text-slate-700 border border-[#eadce1] rounded-bl-md'}`}
+                                aria-label="打开消息操作"
+                            >{message.content}</button>
+                            {message.role === 'assistant' && index === activeSession.messages.length - 1 && activeSession.messages.some(item => item.role === 'user') && (
+                                <button onClick={regenerateLastReply} disabled={sending || regenerating} className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#eadce1] text-[#805565] disabled:opacity-40" aria-label="重新生成最后一条回复">
+                                    <ArrowClockwise size={14} className={regenerating ? 'animate-spin' : ''} />
+                                </button>
+                            )}
                         </div>
                     ))}
-                    {sending && <div className="flex items-end gap-2"><PlaceholderAvatar size="w-8 h-8" /><div className="rounded-[1.35rem] rounded-bl-md bg-white border border-[#eadce1] px-4 py-3 flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:120ms]" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:240ms]" /></div></div>}
+                    {(sending || regenerating) && <div className="flex items-end gap-2"><PlaceholderAvatar size="w-8 h-8" /><div className="rounded-[1.35rem] rounded-bl-md bg-white border border-[#eadce1] px-4 py-3 flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:120ms]" /><span className="w-1.5 h-1.5 rounded-full bg-[#bd8d9d] animate-bounce [animation-delay:240ms]" /></div></div>}
                 </div>
 
                 <div className="shrink-0 border-t border-[#e7d4db] bg-white px-3 pt-2 pb-[calc(var(--safe-bottom)+.65rem)]">
@@ -397,12 +476,13 @@ const MihuiApp: React.FC = () => {
                         {activeSession.affinity >= 100 && <button onClick={() => setShowGraduation(true)} className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 flex items-center gap-1"><UserPlus size={14} />角色卡</button>}
                     </div>
                     <div className="flex items-end gap-2">
-                        <textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="说点什么……" className="max-h-28 min-h-11 flex-1 resize-none rounded-2xl bg-[#f4eef0] px-4 py-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#d9b8c3]" />
-                        <button onClick={send} disabled={!draft.trim() || sending} className="w-11 h-11 rounded-2xl bg-[#292126] text-[#f4e5ea] grid place-items-center disabled:bg-slate-200 active:scale-90 transition"><PaperPlaneTilt size={20} weight="fill" /></button>
+                        <textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="说点什么……" disabled={regenerating} className="max-h-28 min-h-11 flex-1 resize-none rounded-2xl bg-[#f4eef0] px-4 py-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#d9b8c3] disabled:opacity-60" />
+                        <button onClick={send} disabled={!draft.trim() || sending || regenerating} className="w-11 h-11 rounded-2xl bg-[#292126] text-[#f4e5ea] grid place-items-center disabled:bg-slate-200 active:scale-90 transition"><PaperPlaneTilt size={20} weight="fill" /></button>
                     </div>
                 </div>
                 {renderProfileSheet()}
                 {renderGraduation()}
+                {renderMessageOptions()}
             </>
         );
     };

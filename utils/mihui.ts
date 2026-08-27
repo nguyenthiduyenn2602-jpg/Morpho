@@ -247,6 +247,22 @@ export function affinityStage(value: number): MihuiStage {
     return '初识';
 }
 
+export function replaceMihuiMessage(session: MihuiSession, messageId: string, replacement: MihuiMessage): MihuiSession {
+    return {
+        ...session,
+        messages: session.messages.map(message => message.id === messageId ? replacement : message),
+        updatedAt: Date.now(),
+    };
+}
+
+export function removeMihuiMessage(session: MihuiSession, messageId: string): MihuiSession {
+    return {
+        ...session,
+        messages: session.messages.filter(message => message.id !== messageId),
+        updatedAt: Date.now(),
+    };
+}
+
 export function buildMihuiCharacterCard(session: MihuiSession): CharacterExportData {
     const p = session.persona;
     const recent = session.messages.slice(-18).map(m => `${m.role === 'user' ? '用户' : p.name}：${m.content}`).join('\n');

@@ -7,6 +7,8 @@ import {
     DEFAULT_MIHUI_PREFERENCES,
     extractJsonObject,
     normalizePersona,
+    removeMihuiMessage,
+    replaceMihuiMessage,
 } from './mihui';
 
 describe('mihui core', () => {
@@ -36,5 +38,22 @@ describe('mihui core', () => {
         expect(card.type).toBe('sully_character_card');
         expect(card.name).toBe('林岑');
         expect((card as any).id).toBeUndefined();
+    });
+
+    it('keeps affinity unchanged when deleting or regenerating messages', () => {
+        const session = {
+            id: 's1', affinity: 73, createdAt: 1, updatedAt: 2,
+            persona: { name: '林岑', age: 29, gender: '男性', occupation: '编辑', city: '北京', appearance: '黑发', personality: '安静', socialStyle: '慢热', relationshipIntent: '认真了解', background: '住在东城', greeting: '你好' },
+            messages: [
+                { id: 'u1', role: 'user' as const, content: '今晚有空吗', timestamp: 1 },
+                { id: 'a1', role: 'assistant' as const, content: '有。', timestamp: 2 },
+            ],
+        };
+        const replaced = replaceMihuiMessage(session, 'a1', { ...session.messages[1], content: '刚忙完，你呢？' });
+        expect(replaced.affinity).toBe(73);
+        expect(replaced.messages[1].content).toBe('刚忙完，你呢？');
+        const removed = removeMihuiMessage(replaced, 'u1');
+        expect(removed.affinity).toBe(73);
+        expect(removed.messages.map(message => message.id)).toEqual(['a1']);
     });
 });
