@@ -20,6 +20,17 @@ describe('mihui core', () => {
         expect(extractJsonObject('```json\n{"name":"小林"}\n```').name).toBe('小林');
     });
 
+    it('repairs a persona json truncated inside its last string field', () => {
+        const parsed = extractJsonObject('{"name":"阿青","age":28,"occupation":"摄影师","background":"周末喜欢去郊区拍');
+        expect(parsed.name).toBe('阿青');
+        expect(parsed.occupation).toBe('摄影师');
+        expect(parsed.background).toBe('周末喜欢去郊区拍');
+    });
+
+    it('unwraps common persona response envelopes', () => {
+        expect(extractJsonObject('{"persona":{"name":"小林","age":31}}').name).toBe('小林');
+    });
+
     it('keeps generated people adult and inside preference range', () => {
         const p = normalizePersona({ name: 'A', age: 12 }, { ...DEFAULT_MIHUI_PREFERENCES, ageMin: 24, ageMax: 32 });
         expect(p.age).toBe(24);

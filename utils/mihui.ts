@@ -1,5 +1,5 @@
 import type { APIConfig, CharacterExportData, CharacterProfile, UserProfile } from '../types';
-import { extractContent, safeFetchJson } from './safeApi';
+import { extractContent, extractJson, safeFetchJson } from './safeApi';
 import { stripSensitiveCardFields } from './characterCard';
 
 export type MihuiGender = 'male' | 'female' | 'any' | 'custom';
@@ -125,12 +125,29 @@ const boundedText = (value: unknown, fallback = '', max = 800): string => {
 
 export function extractJsonObject(raw: string): any {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-    try { return JSON.parse(cleaned); } catch { /* scan below */ }
+    const unwrap = (value: any): any => {
+        if (Array.isArray(value)) return value[0] ?? {};
+        if (!value || typeof value !== 'object') return value;
+        for (const key of ['persona', 'profile', 'character', 'data', 'result']) {
+            const nested = value[key];
+            if (nested && typeof nested === 'object' && !Array.isArray(nested)) return nested;
+        }
+        return value;
+    };
+
+    const parsed = extractJson(cleaned);
+    if (parsed && typeof parsed === 'object') return unwrap(parsed);
+
     const start = cleaned.indexOf('{');
     if (start < 0) throw new Error('模型没有返回人物档案 JSON');
-    let depth = 0, quoted = false, escaped = false;
-    for (let i = start; i < cleaned.length; i += 1) {
-        const ch = cleaned[i];
+
+    // 部分中转/模型会在最后一个字段中途触发长度截断。人物档案的所有字段在
+    // normalizePersona 中都有安全默认值，因此保留已经完整返回的字段，比让整次匹配失败更合理。
+    let candidate = cleaned.slice(start).replace(/```[\s\S]*$/i, '').trim();
+    const stack: Array<'{' | '['> = [];
+    let quoted = false, escaped = false;
+    for (let i = 0; i < candidate.length; i += 1) {
+        const ch = candidate[i];
         if (quoted) {
             if (escaped) escaped = false;
             else if (ch === '\\') escaped = true;
@@ -138,12 +155,24 @@ export function extractJsonObject(raw: string): any {
             continue;
         }
         if (ch === '"') quoted = true;
-        else if (ch === '{') depth += 1;
+        else if (ch === '{' || ch === '[') stack.push(ch);
         else if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) return JSON.parse(cleaned.slice(start, i + 1));
+            if (stack[stack.length - 1] === '{') stack.pop();
+        } else if (ch === ']') {
+            if (stack[stack.length - 1] === '[') stack.pop();
         }
     }
+
+    if (quoted) {
+        // 截断点恰好落在转义符之后时，先去掉悬空反斜杠再闭合字符串。
+        if (escaped && candidate.endsWith('\\')) candidate = candidate.slice(0, -1);
+        candidate += '"';
+    }
+    candidate = candidate.replace(/,\s*$/, '').replace(/:\s*$/, ': ""');
+    for (let i = stack.length - 1; i >= 0; i -= 1) candidate += stack[i] === '{' ? '}' : ']';
+
+    const repaired = extractJson(candidate);
+    if (repaired && typeof repaired === 'object') return unwrap(repaired);
     throw new Error('模型返回的人物档案不完整');
 }
 
@@ -210,7 +239,7 @@ export async function generateMihuiPersona(
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你是虚构同城交友软件「密会」的匹配导演。生成一个有生活感、有边界、有缺点的虚构成年人物，禁止未成年人。人物不是服务用户的工具，不要完美迎合，也不要写成夸张霸总。只输出一个合法 JSON，不要 markdown。字段必须为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。greeting 是这个人物匹配成功后主动发来的第一句话，要自然、短、能接话，不能像客服或人物介绍。`,
+            content: `你是虚构同城交友软件「密会」的匹配导演。生成一个有生活感、有边界、有缺点的虚构成年人物，禁止未成年人。人物不是服务用户的工具，不要完美迎合，也不要写成夸张霸总。只输出一个合法、完整的 JSON 对象，不要 markdown，不要解释，不要在 JSON 前后添加文字。字段必须且只能为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。除 age 外均为字符串；每个字段用一至两句短句，总输出控制在 1000 个汉字以内，务必闭合最后的花括号。greeting 是这个人物匹配成功后主动发来的第一句话，要自然、短、能接话，不能像客服或人物介绍。`,
         },
         {
             role: 'user',
