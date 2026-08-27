@@ -36,6 +36,11 @@ export interface MihuiMessage {
     role: 'user' | 'assistant';
     content: string;
     timestamp: number;
+    type?: 'text' | 'image' | 'location';
+    location?: {
+        name: string;
+        address?: string;
+    };
 }
 
 export interface MihuiSession {
@@ -46,6 +51,8 @@ export interface MihuiSession {
     createdAt: number;
     updatedAt: number;
     graduatedAt?: number;
+    /** 复用原生见面模式的内部角色 id；同一密会对象始终续接同一份见面存档。 */
+    linkedCharacterId?: string;
 }
 
 export interface MihuiState {
@@ -92,7 +99,11 @@ export function loadMihuiState(): MihuiState {
 }
 
 export function saveMihuiState(state: MihuiState): void {
-    localStorage.setItem(MIHUI_STORAGE_KEY, JSON.stringify(state));
+    try {
+        localStorage.setItem(MIHUI_STORAGE_KEY, JSON.stringify(state));
+    } catch (error) {
+        console.error('[Mihui] 保存本地会话失败（可能是照片占用空间过大）', error);
+    }
 }
 
 const boundedText = (value: unknown, fallback = '', max = 800): string => {
@@ -145,7 +156,7 @@ export function normalizePersona(raw: any, prefs: MihuiPreferences): MihuiPerson
 
 const callGlobalApi = async (
     api: APIConfig,
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: any }>,
     temperature = 0.85,
     maxTokens = 1800,
 ): Promise<string> => {
@@ -207,10 +218,25 @@ export async function generateMihuiReply(
     user: UserProfile,
     session: MihuiSession,
 ): Promise<MihuiReplyResult> {
-    const history = session.messages.slice(-24).map(message => ({
-        role: message.role,
-        content: message.content,
-    })) as Array<{ role: 'user' | 'assistant'; content: string }>;
+    const history = session.messages.slice(-24).map(message => {
+        if (message.type === 'image' && message.role === 'user') {
+            return {
+                role: message.role,
+                content: [
+                    { type: 'text', text: '用户发来了一张照片。请认真观察照片内容并自然回应，不要声称自己看不到。' },
+                    { type: 'image_url', image_url: { url: message.content } },
+                ],
+            };
+        }
+        if (message.type === 'location') {
+            const location = message.location;
+            return {
+                role: message.role,
+                content: `[位置卡片] ${location?.name || message.content}${location?.address ? `；${location.address}` : ''}`,
+            };
+        }
+        return { role: message.role, content: message.content };
+    }) as Array<{ role: 'user' | 'assistant'; content: any }>;
     const persona = session.persona;
     const raw = await callGlobalApi(api, [
         {
@@ -263,9 +289,15 @@ export function removeMihuiMessage(session: MihuiSession, messageId: string): Mi
     };
 }
 
+export function mihuiMessageSummary(message: MihuiMessage): string {
+    if (message.type === 'image') return '[分享照片]';
+    if (message.type === 'location') return `[分享位置：${message.location?.name || message.content}]`;
+    return message.content;
+}
+
 export function buildMihuiCharacterCard(session: MihuiSession): CharacterExportData {
     const p = session.persona;
-    const recent = session.messages.slice(-18).map(m => `${m.role === 'user' ? '用户' : p.name}：${m.content}`).join('\n');
+    const recent = session.messages.slice(-18).map(m => `${m.role === 'user' ? '用户' : p.name}：${mihuiMessageSummary(m)}`).join('\n');
     const profile: CharacterProfile = {
         id: `mihui-${session.id}`,
         name: p.name,

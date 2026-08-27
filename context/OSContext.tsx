@@ -378,7 +378,9 @@ interface OSContextType {
 
   // 从聊天「见面」按钮跳进见面：携带目标角色，DateApp 挂载时自动进入该角色的见面流程
   dateAutoStartCharId: string | null;
-  openDateWithChar: (charId: string) => void;
+  dateReturnApp: AppID;
+  dateReturnCharacterId: string | null;
+  openDateWithChar: (charId: string, returnApp?: AppID) => void;
   consumeDateAutoStart: () => void;
 }
 
@@ -874,6 +876,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
+  const [dateReturnApp, setDateReturnApp] = useState<AppID>(AppID.Chat);
+  const [dateReturnCharacterId, setDateReturnCharacterId] = useState<string | null>(null);
 
   const sendProactiveNativeNotification = useCallback(async (charId: string, charName: string, body: string) => {
       if (!Capacitor.isNativePlatform()) return;
@@ -4164,7 +4168,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   // 从聊天直接进入某角色的见面：切换当前角色 + 标记自动进入 + 打开见面 App
-  const openDateWithChar = (charId: string) => {
+  const openDateWithChar = (charId: string, returnApp: AppID = AppID.Chat) => {
+    setDateReturnApp(returnApp);
+    setDateReturnCharacterId(activeCharacterId || null);
     setActiveCharacterId(charId);
     setDateAutoStartCharId(charId);
     setActiveApp(AppID.Date);
@@ -4297,6 +4303,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     resumeCall,
     clearSuspendedCall,
     dateAutoStartCharId,
+    dateReturnApp,
+    dateReturnCharacterId,
     openDateWithChar,
     consumeDateAutoStart
   };

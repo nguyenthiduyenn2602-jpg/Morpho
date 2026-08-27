@@ -19,7 +19,8 @@ import {
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
-import type { CharacterExportData } from '../types';
+import { AppID, type CharacterExportData } from '../types';
+import { processImage } from '../utils/file';
 import {
     affinityDelta,
     affinityStage,
@@ -29,6 +30,7 @@ import {
     generateMihuiPersona,
     generateMihuiReply,
     loadMihuiState,
+    mihuiMessageSummary,
     MihuiGender,
     MihuiMessage,
     MihuiPreferences,
@@ -70,7 +72,7 @@ const downloadCard = (card: CharacterExportData) => {
 };
 
 const MihuiApp: React.FC = () => {
-    const { closeApp, apiConfig, userProfile, addCharacter, updateCharacter, addToast } = useOS();
+    const { closeApp, apiConfig, userProfile, characters, addCharacter, updateCharacter, openDateWithChar, addToast } = useOS();
     const [state, setState] = useState<MihuiState>(() => loadMihuiState());
     const [screen, setScreen] = useState<Screen>(() => state.activeSessionId ? 'chat' : 'home');
     const [draftPrefs, setDraftPrefs] = useState<MihuiPreferences>(() => ({ ...state.preferences }));
@@ -82,7 +84,12 @@ const MihuiApp: React.FC = () => {
     const [selectedMessage, setSelectedMessage] = useState<MihuiMessage | null>(null);
     const [showProfile, setShowProfile] = useState(false);
     const [showGraduation, setShowGraduation] = useState(false);
+    const [showLocation, setShowLocation] = useState(false);
+    const [locationName, setLocationName] = useState('');
+    const [locationAddress, setLocationAddress] = useState('');
+    const [openingMeetup, setOpeningMeetup] = useState(false);
     const scrollerRef = useRef<HTMLDivElement>(null);
+    const photoInputRef = useRef<HTMLInputElement>(null);
 
     const activeSession = useMemo(
         () => state.sessions.find(session => session.id === state.activeSessionId),
@@ -150,21 +157,18 @@ const MihuiApp: React.FC = () => {
         }));
     };
 
-    const send = async () => {
-        const content = draft.trim();
-        if (!content || !activeSession || sending || regenerating) return;
-        const userMessage: MihuiMessage = { id: messageId(), role: 'user', content, timestamp: Date.now() };
+    const sendUserMessage = async (userMessage: MihuiMessage, affinityText: string) => {
+        if (!activeSession || sending || regenerating) return;
         const requestSession = { ...activeSession, messages: [...activeSession.messages, userMessage] };
-        setDraft('');
         setSending(true);
         updateActive(session => ({ ...session, messages: [...session.messages, userMessage], updatedAt: Date.now() }));
         try {
             const result = await generateMihuiReply(apiConfig, userProfile, requestSession);
             const assistantMessage: MihuiMessage = { id: messageId(), role: 'assistant', content: result.reply, timestamp: Date.now() };
-            const nextAffinity = clampAffinity(activeSession.affinity + affinityDelta(result.signal, content));
+            const nextAffinity = clampAffinity(activeSession.affinity + affinityDelta(result.signal, affinityText));
             const becameFull = activeSession.affinity < 100 && nextAffinity >= 100;
             updateActive(session => {
-                const affinity = clampAffinity(session.affinity + affinityDelta(result.signal, content));
+                const affinity = clampAffinity(session.affinity + affinityDelta(result.signal, affinityText));
                 return { ...session, affinity, messages: [...session.messages, assistantMessage], updatedAt: Date.now() };
             });
             if (becameFull) setShowGraduation(true);
@@ -172,6 +176,72 @@ const MihuiApp: React.FC = () => {
             addToast(error?.message || '消息发送失败', 'error');
         } finally {
             setSending(false);
+        }
+    };
+
+    const send = async () => {
+        const content = draft.trim();
+        if (!content || !activeSession || sending || regenerating) return;
+        setDraft('');
+        await sendUserMessage({ id: messageId(), role: 'user', type: 'text', content, timestamp: Date.now() }, content);
+    };
+
+    const sendPhoto = async (file?: File) => {
+        if (!file || !activeSession || sending || regenerating) return;
+        try {
+            const dataUrl = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+            await sendUserMessage({ id: messageId(), role: 'user', type: 'image', content: dataUrl, timestamp: Date.now() }, '用户分享了一张照片');
+        } catch (error: any) {
+            addToast(error?.message || '照片处理失败', 'error');
+        } finally {
+            if (photoInputRef.current) photoInputRef.current.value = '';
+        }
+    };
+
+    const sendLocation = async () => {
+        const name = locationName.trim();
+        const address = locationAddress.trim();
+        if (!name || !activeSession || sending || regenerating) return;
+        setShowLocation(false);
+        setLocationName('');
+        setLocationAddress('');
+        await sendUserMessage({
+            id: messageId(), role: 'user', type: 'location', content: name, timestamp: Date.now(),
+            location: { name, ...(address ? { address } : {}) },
+        }, `分享位置：${name}${address ? `，${address}` : ''}`);
+    };
+
+    const buildLinkedCharacter = async (): Promise<string> => {
+        if (!activeSession) throw new Error('当前匹配已经失效');
+        const existing = activeSession.linkedCharacterId && characters.find(item => item.id === activeSession.linkedCharacterId);
+        if (existing) return existing.id;
+        const card = buildMihuiCharacterCard(activeSession);
+        const created = await addCharacter();
+        await updateCharacter(created.id, {
+            name: card.name,
+            description: card.description,
+            systemPrompt: card.systemPrompt,
+            worldview: card.worldview,
+            memories: activeSession.messages.length ? [{
+                id: `mihui-meet-memory-${Date.now()}`,
+                date: new Date().toISOString(),
+                summary: activeSession.messages.slice(-18).map(message => `${message.role === 'user' ? '用户' : card.name}：${message.type === 'image' ? '[分享照片]' : message.type === 'location' ? `[分享位置：${message.location?.name || message.content}]` : message.content}`).join('\n'),
+                mood: '从密会相识后的共同回忆',
+            }] : [],
+        });
+        updateActive(session => ({ ...session, linkedCharacterId: created.id, updatedAt: Date.now() }));
+        return created.id;
+    };
+
+    const openMeetup = async () => {
+        if (!activeSession || openingMeetup) return;
+        setOpeningMeetup(true);
+        try {
+            const characterId = await buildLinkedCharacter();
+            openDateWithChar(characterId, AppID.Mihui);
+        } catch (error: any) {
+            addToast(error?.message || '见面模式打开失败', 'error');
+            setOpeningMeetup(false);
         }
     };
 
@@ -215,7 +285,8 @@ const MihuiApp: React.FC = () => {
         if (!activeSession) return;
         const card = buildMihuiCharacterCard(activeSession);
         try {
-            const created = await addCharacter();
+            const existing = activeSession.linkedCharacterId && characters.find(item => item.id === activeSession.linkedCharacterId);
+            const created = existing || await addCharacter();
             await updateCharacter(created.id, {
                 name: card.name,
                 description: card.description,
@@ -224,11 +295,11 @@ const MihuiApp: React.FC = () => {
                 memories: activeSession.messages.length ? [{
                     id: `mihui-memory-${Date.now()}`,
                     date: new Date().toISOString(),
-                    summary: activeSession.messages.slice(-18).map(message => `${message.role === 'user' ? '用户' : card.name}：${message.content}`).join('\n'),
+                    summary: activeSession.messages.slice(-18).map(message => `${message.role === 'user' ? '用户' : card.name}：${mihuiMessageSummary(message)}`).join('\n'),
                     mood: '从密会相识后的共同回忆',
                 }] : [],
             });
-            updateActive(session => ({ ...session, graduatedAt: Date.now() }));
+            updateActive(session => ({ ...session, linkedCharacterId: created.id, graduatedAt: Date.now() }));
             setShowGraduation(false);
             addToast(`${card.name} 已加入神经链接`, 'success');
         } catch (error: any) {
@@ -293,7 +364,7 @@ const MihuiApp: React.FC = () => {
                                     <span className="font-black text-slate-800">{session.persona.name}</span>
                                     <span className="text-[10px] text-slate-400">{session.persona.age} · {session.persona.occupation}</span>
                                 </div>
-                                <p className="mt-1 truncate text-xs text-slate-500">{last?.content || '等待开场'}</p>
+                                <p className="mt-1 truncate text-xs text-slate-500">{last ? mihuiMessageSummary(last) : '等待开场'}</p>
                             </div>
                             <div className="text-right shrink-0">
                                 <p className="text-[10px] font-bold text-[#8c5366]">{affinityStage(session.affinity)}</p>
@@ -412,7 +483,7 @@ const MihuiApp: React.FC = () => {
             <div className="absolute inset-0 z-[65] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setSelectedMessage(null)}>
                 <div className="w-full rounded-t-[2rem] bg-[#f6f0f2] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
                     <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[#d2bdc5]" />
-                    <p className="line-clamp-3 rounded-2xl bg-white px-4 py-3 text-xs leading-5 text-[#6e5b63]">{selectedMessage.content}</p>
+                    <p className="line-clamp-3 rounded-2xl bg-white px-4 py-3 text-xs leading-5 text-[#6e5b63]">{mihuiMessageSummary(selectedMessage)}</p>
                     {canRegenerate && (
                         <button onClick={regenerateLastReply} disabled={regenerating} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#292126] py-3.5 text-sm font-black text-[#f4e5ea] disabled:opacity-50">
                             <ArrowClockwise size={18} className={regenerating ? 'animate-spin' : ''} />重新生成这次回复
@@ -425,6 +496,22 @@ const MihuiApp: React.FC = () => {
                         <Trash size={18} />删除这条消息
                     </button>
                     <button onClick={() => setSelectedMessage(null)} className="mt-2 w-full py-3 text-sm font-bold text-[#89757d]">取消</button>
+                </div>
+            </div>
+        );
+    };
+
+    const renderLocationSheet = () => {
+        if (!showLocation) return null;
+        return (
+            <div className="absolute inset-0 z-[60] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setShowLocation(false)}>
+                <div className="w-full rounded-t-[2rem] bg-[#f6f0f2] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[#d2bdc5]" />
+                    <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#eadce1] text-[#805565]"><MapPin size={22} weight="fill" /></div><div><p className="font-black text-slate-800">发送位置</p><p className="text-[11px] text-slate-400">只生成本地卡片，不读取真实定位</p></div></div>
+                    <input value={locationName} onChange={event => setLocationName(event.target.value)} className={`${fieldClass} mt-5`} placeholder="位置名称，例如：三里屯太古里" autoFocus />
+                    <input value={locationAddress} onChange={event => setLocationAddress(event.target.value)} className={`${fieldClass} mt-3`} placeholder="详细地址或备注（可选）" />
+                    <button onClick={sendLocation} disabled={!locationName.trim()} className="mt-4 w-full rounded-2xl bg-[#292126] py-3.5 text-sm font-black text-[#f4e5ea] disabled:opacity-40">发送位置卡片</button>
+                    <button onClick={() => setShowLocation(false)} className="mt-2 w-full py-3 text-sm font-bold text-[#89757d]">取消</button>
                 </div>
             </div>
         );
@@ -459,7 +546,16 @@ const MihuiApp: React.FC = () => {
                                 onContextMenu={event => { event.preventDefault(); setSelectedMessage(message); }}
                                 className={`max-w-[78%] rounded-[1.35rem] px-4 py-3 text-left text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-[#33272d] text-[#f7e9ee] rounded-br-md' : 'bg-white text-slate-700 border border-[#eadce1] rounded-bl-md'}`}
                                 aria-label="打开消息操作"
-                            >{message.content}</button>
+                            >
+                                {message.type === 'image' ? (
+                                    <img src={message.content} alt="聊天照片" className="max-h-80 w-full rounded-xl object-cover" />
+                                ) : message.type === 'location' ? (
+                                    <span className="block min-w-52 rounded-xl bg-gradient-to-br from-[#f7edf0] to-white p-1 text-[#4f3d45]">
+                                        <span className="flex items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#8c5366] text-white"><MapPin size={22} weight="fill" /></span><span className="min-w-0"><strong className="block truncate text-sm">{message.location?.name || message.content}</strong>{message.location?.address && <small className="mt-0.5 block truncate text-[10px] text-[#9d858e]">{message.location.address}</small>}</span></span>
+                                        <span className="mt-3 block border-t border-[#eadce1] pt-2 text-[10px] text-[#a28b94]">位置 · 点击可管理消息</span>
+                                    </span>
+                                ) : message.content}
+                            </button>
                             {message.role === 'assistant' && index === activeSession.messages.length - 1 && activeSession.messages.some(item => item.role === 'user') && (
                                 <button onClick={regenerateLastReply} disabled={sending || regenerating} className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#eadce1] text-[#805565] disabled:opacity-40" aria-label="重新生成最后一条回复">
                                     <ArrowClockwise size={14} className={regenerating ? 'animate-spin' : ''} />
@@ -471,8 +567,11 @@ const MihuiApp: React.FC = () => {
                 </div>
 
                 <div className="shrink-0 border-t border-[#e7d4db] bg-white px-3 pt-2 pb-[calc(var(--safe-bottom)+.65rem)]">
+                    <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={event => sendPhoto(event.target.files?.[0])} />
                     <div className="flex items-center gap-1.5 pb-2 overflow-x-auto">
-                        {[[ImageSquare, '照片'], [MapPin, '位置'], [Sparkle, '见面']].map(([Icon, label]: any) => <button key={label} onClick={() => addToast(`${label}入口已预留，下一阶段接入`, 'info')} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1"><Icon size={14} />{label}</button>)}
+                        <button onClick={() => photoInputRef.current?.click()} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><ImageSquare size={14} />照片</button>
+                        <button onClick={() => setShowLocation(true)} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><MapPin size={14} />位置</button>
+                        <button onClick={openMeetup} disabled={openingMeetup || sending || regenerating} className="shrink-0 rounded-full bg-[#f1e3e8] px-3 py-1.5 text-[11px] font-bold text-[#6f4553] flex items-center gap-1 disabled:opacity-40"><Sparkle size={14} />{openingMeetup ? '正在打开…' : '见面'}</button>
                         {activeSession.affinity >= 100 && <button onClick={() => setShowGraduation(true)} className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 flex items-center gap-1"><UserPlus size={14} />角色卡</button>}
                     </div>
                     <div className="flex items-end gap-2">
@@ -483,6 +582,7 @@ const MihuiApp: React.FC = () => {
                 {renderProfileSheet()}
                 {renderGraduation()}
                 {renderMessageOptions()}
+                {renderLocationSheet()}
             </>
         );
     };

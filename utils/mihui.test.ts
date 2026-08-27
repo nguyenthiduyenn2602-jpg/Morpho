@@ -6,6 +6,7 @@ import {
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
     extractJsonObject,
+    mihuiMessageSummary,
     normalizePersona,
     removeMihuiMessage,
     replaceMihuiMessage,
@@ -55,5 +56,10 @@ describe('mihui core', () => {
         const removed = removeMihuiMessage(replaced, 'u1');
         expect(removed.affinity).toBe(73);
         expect(removed.messages.map(message => message.id)).toEqual(['a1']);
+    });
+
+    it('summarizes media without leaking image base64 into memories', () => {
+        expect(mihuiMessageSummary({ id: 'p1', role: 'user', type: 'image', content: 'data:image/jpeg;base64,very-long', timestamp: 1 })).toBe('[分享照片]');
+        expect(mihuiMessageSummary({ id: 'l1', role: 'user', type: 'location', content: '国贸', location: { name: '国贸三期' }, timestamp: 1 })).toBe('[分享位置：国贸三期]');
     });
 });

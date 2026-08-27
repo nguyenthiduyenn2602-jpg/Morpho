@@ -18,7 +18,7 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import StoryTheater from '../components/date/story/StoryTheater';
 
 const DateApp: React.FC = () => {
-    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, consumeDateAutoStart, characterGroups } = useOS();
+    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, dateReturnApp, dateReturnCharacterId, consumeDateAutoStart, characterGroups } = useOS();
 
     // 是否由聊天「见面」按钮进入：为真时，退出见面流程回到聊天而非见面选择页/桌面。
     // 用本地 state（而非 context）承载：DateApp 切走即卸载，标记随之消失，不会泄漏到
@@ -187,7 +187,8 @@ const DateApp: React.FC = () => {
     // 退出见面流程：来自聊天则回聊天，否则回见面选择页/桌面（由调用方决定）
     const returnToChat = () => {
         setCameFromChat(false);
-        openApp(AppID.Chat);
+        if (dateReturnCharacterId) setActiveCharacterId(dateReturnCharacterId);
+        openApp(dateReturnApp || AppID.Chat);
     };
 
     const handleResumeSession = () => {
