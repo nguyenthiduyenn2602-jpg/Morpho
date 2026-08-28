@@ -11,6 +11,9 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
 import { processImage } from '../utils/file';
 import { stickerNameFromUrl } from '../utils/messageFormat';
+import { XhsMcpClient, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
+import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
+import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { resolveChatTheme } from '../utils/groupChat/theme';
 import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox, parseHandoff, clampBubbleLines } from '../utils/groupChat/parse';
@@ -31,6 +34,7 @@ import ChatInputArea from '../components/chat/ChatInputArea';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import HtmlCard from '../components/chat/HtmlCard';
+import { WebpageShareCard, XhsShareCard } from '../components/chat/LinkShareCard';
 import { WhiteboxSound, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio } from '../utils/whiteboxSound';
 import { buildHtmlPrompt } from '../utils/htmlPrompt';
 import {
@@ -275,6 +279,16 @@ const GroupMessageItem = React.memo(({
                 }
                 return <HtmlCard html={html} />;
             }
+            case 'xhs_card': {
+                const note = msg.metadata?.xhsNote;
+                if (!note) return null;
+                return <XhsShareCard note={note} isUser={isUser} />;
+            }
+            case 'webpage_card': {
+                const webpage = msg.metadata?.webpage;
+                if (!webpage) return null;
+                return <WebpageShareCard webpage={webpage} />;
+            }
             default:
                 // 核心样式字段对齐私聊 MessageItem 的应用方式（decoration/voiceBar 群聊不做）
                 return (
@@ -391,7 +405,7 @@ type MemberModelLookupState = {
 // --- Main Component ---
 
 const GroupChat: React.FC = () => {
-    const { closeApp, groups, createGroup, updateGroup, deleteGroup, characters, apiConfig, addToast, userProfile, virtualTime, characterGroups, theme: osTheme, customThemes } = useOS();
+    const { closeApp, groups, createGroup, updateGroup, deleteGroup, characters, apiConfig, realtimeConfig, addToast, userProfile, virtualTime, characterGroups, theme: osTheme, customThemes } = useOS();
     const [view, setView] = useState<'list' | 'chat'>('list');
     const [activeGroup, setActiveGroup] = useState<GroupProfile | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
@@ -982,7 +996,119 @@ const GroupChat: React.FC = () => {
             setReplyTarget(null);
         }
 
-        await DB.saveMessage(newMessage);
+        const savedUserMsgId = await DB.saveMessage(newMessage);
+
+        // 与单聊共用同一种卡片数据结构：识别链接后补抓标题、正文和封面，
+        // 建卡成功就删掉原始分享文案，只保留一张可读、可点击的卡片。
+        if (type === 'text') {
+            let xhsCardCreated = false;
+            let webpageCardCreated = false;
+            const xhsFullNoteId = extractXhsNoteId(content);
+            const xhsShortUrl = detectXhsShortUrl(content);
+
+            if (xhsFullNoteId || xhsShortUrl) {
+                let noteId = xhsFullNoteId || '';
+                let xsecToken = content.match(/xsec_token=([^&\s]+)/)?.[1];
+                let shortLinkError = '';
+
+                if (!noteId && xhsShortUrl) {
+                    try {
+                        const finalUrl = await expandShortUrl(xhsShortUrl);
+                        noteId = extractXhsNoteId(finalUrl) || '';
+                        xsecToken = xsecToken || finalUrl.match(/xsec_token=([^&\s]+)/)?.[1];
+                    } catch (error) {
+                        console.warn('[GroupChat] xhslink 短链展开失败:', error);
+                        shortLinkError = error instanceof Error ? error.message : '短链展开失败';
+                    }
+                }
+
+                const titleFromText = extractXhsShareTitle(content);
+                if (noteId) {
+                    let note: any = {
+                        noteId,
+                        title: titleFromText || '',
+                        desc: '',
+                        author: '',
+                        authorId: '',
+                        likes: 0,
+                        xsecToken,
+                    };
+                    const mcpUrl = realtimeConfig?.xhsMcpConfig?.serverUrl;
+                    if (mcpUrl && realtimeConfig?.xhsMcpConfig?.enabled) {
+                        try {
+                            const noteUrl = `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${xsecToken}&xsec_source=pc_share` : ''}`;
+                            const result = await XhsMcpClient.getNoteDetail(mcpUrl, noteUrl, xsecToken, { loadAllComments: true });
+                            if (result.success && result.data) {
+                                const fetched = normalizeXhsLiteDetail(result.data);
+                                note = {
+                                    ...note,
+                                    ...fetched,
+                                    noteId: fetched.noteId || note.noteId,
+                                    title: titleFromText || fetched.title || note.title,
+                                    xsecToken: fetched.xsecToken || xsecToken,
+                                };
+                            } else if (!result.success) {
+                                addToast(`小红书正文读取失败，已发送基础卡片。${result.error ? `（${result.error}）` : ''}`, 'info');
+                            }
+                        } catch (error) {
+                            console.warn('[GroupChat] 小红书正文读取失败，已用分享文案兜底:', error);
+                            addToast('小红书正文读取失败，已发送基础卡片。', 'info');
+                        }
+                    }
+
+                    await DB.saveMessage({
+                        charId: 'user',
+                        groupId: activeGroup.id,
+                        role: 'user',
+                        type: 'xhs_card',
+                        content: note.title || '小红书笔记',
+                        metadata: { xhsNote: note },
+                        ...(newMessage.replyTo ? { replyTo: newMessage.replyTo } : {}),
+                    });
+                    xhsCardCreated = true;
+                } else {
+                    addToast(`小红书链接解析失败，原消息已保留。${shortLinkError ? `（${shortLinkError}）` : ''}`, 'error');
+                }
+            }
+
+            const sharedUrl = detectFirstUrl(content);
+            if (sharedUrl && !isXhsUrl(sharedUrl) && !(xhsFullNoteId || xhsShortUrl)) {
+                let webpage: ExtractedWebpage | null = null;
+                if (isVideoShareUrl(sharedUrl)) {
+                    try {
+                        addToast('正在解析视频链接…', 'info');
+                        webpage = await parseVideoShareUrl(sharedUrl);
+                    } catch (error) {
+                        console.warn('[GroupChat] 视频解析失败，降级为网页抓取:', error);
+                    }
+                }
+                if (!webpage) {
+                    try {
+                        addToast('正在读取网页内容…', 'info');
+                        webpage = await extractWebpageContent(sharedUrl);
+                    } catch (error: any) {
+                        console.warn('[GroupChat] 网页抓取失败:', error);
+                        addToast(`网页抓取失败：${error?.message || '可能被站点拦截了，换个链接或稍后再试。'}`, 'error');
+                    }
+                }
+                if (webpage) {
+                    await DB.saveMessage({
+                        charId: 'user',
+                        groupId: activeGroup.id,
+                        role: 'user',
+                        type: 'webpage_card',
+                        content: webpage.title,
+                        metadata: { webpage },
+                        ...(newMessage.replyTo ? { replyTo: newMessage.replyTo } : {}),
+                    });
+                    webpageCardCreated = true;
+                }
+            }
+
+            if ((xhsCardCreated || webpageCardCreated) && savedUserMsgId) {
+                await DB.deleteMessage(savedUserMsgId);
+            }
+        }
         await refreshMessages(activeGroup.id);
         
         // Close panels

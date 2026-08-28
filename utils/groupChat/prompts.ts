@@ -3,6 +3,7 @@
 import { Message, CharacterProfile, EmojiCategory } from '../../types';
 import { stickerNameFromUrl } from '../messageFormat';
 import { packetHistoryLine } from './redpacket';
+import { messageLogText } from './format';
 
 interface EmojiItem { name: string; url: string; categoryId?: string }
 
@@ -117,6 +118,8 @@ export function buildGroupHistoryBlock(
             // 回执行自带完整句子（[系统: X 领取了 Y 的红包]），不加名字前缀
             if (m.metadata?.packetReceipt) { lines.push(packetHistoryLine(m, nameOf, now)); return; }
             content = packetHistoryLine(m, nameOf, now);
+        } else if (m.type === 'xhs_card' || m.type === 'webpage_card') {
+            content = messageLogText(m);
         } else if (/^(data:|https?:\/\/)/i.test(rawText.trim())) {
             content = '[媒体]';
         } else {

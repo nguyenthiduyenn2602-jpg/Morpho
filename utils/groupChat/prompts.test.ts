@@ -54,6 +54,48 @@ describe('buildGroupHistoryBlock 时间跳变分隔行', () => {
     });
 });
 
+describe('buildGroupHistoryBlock 链接卡片', () => {
+    it('把小红书正文与评论区交给群聊模型，而不是只给标题', () => {
+        const card = {
+            id: 1,
+            role: 'user',
+            type: 'xhs_card',
+            content: '测试标题',
+            timestamp: Date.now(),
+            charId: 'user',
+            metadata: {
+                xhsNote: {
+                    title: '测试标题',
+                    desc: '这是笔记正文',
+                    author: '小红薯',
+                    comments: [{ author: '路人甲', content: '这是一条评论' }],
+                },
+            },
+        } as Message;
+        const { text } = buildGroupHistoryBlock([card], [], [], '小欢');
+        expect(text).toContain('小红书笔记');
+        expect(text).toContain('这是笔记正文');
+        expect(text).toContain('这是一条评论');
+    });
+
+    it('把普通网页正文交给群聊模型并限制超长正文', () => {
+        const card = {
+            id: 2,
+            role: 'user',
+            type: 'webpage_card',
+            content: '网页标题',
+            timestamp: Date.now(),
+            charId: 'user',
+            metadata: { webpage: { title: '网页标题', url: 'https://example.com', content: '甲'.repeat(1600) } },
+        } as Message;
+        const { text } = buildGroupHistoryBlock([card], [], [], '小欢');
+        expect(text).toContain('网页标题');
+        expect(text).toContain('网页正文');
+        expect(text).toContain('正文过长已截断');
+        expect(text).not.toContain('甲'.repeat(1501));
+    });
+});
+
 describe('buildRoundRobinInstruction 双轮圆桌', () => {
     const history = { text: '用户: 讨论一下方案', attachedImages: [], attachedImagesNote: '' };
 
