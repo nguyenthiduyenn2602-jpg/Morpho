@@ -101,7 +101,11 @@ export const MUSIC_DEFAULT_CFG: MusicCfg = {
 //      中心换成自部署 worker 后，音乐自动跟着切过去。
 // 只有用户在播放器里手填的、跟默认不一样的地址才原样保留。读到需要改写时落盘一次。
 const normalizeHost = (u: string): string => u.trim().replace(/\/+$/, '').toLowerCase();
-const FOLLOW_CENTRAL_HOSTS = [/sully-n\.qegj567\.workers\.dev/i, /sullymeow\.ccwu213\.cc/i];
+const FOLLOW_CENTRAL_HOSTS = [
+  /sully-n\.qegj567\.workers\.dev/i,
+  /sullymeow\.ccwu213\.cc/i,
+  /sullymeow\.ccwu\.cc/i,
+];
 const migrateWorkerUrl = (url: string | undefined): string => {
   const central = musicDefaultWorker();
   if (!url) return central;
