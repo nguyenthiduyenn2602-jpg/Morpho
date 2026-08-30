@@ -1,0 +1,293 @@
+import type { APIConfig, CharacterProfile, GalleryImage, GroupProfile, Message, RealtimeConfig, UserProfile } from '../types';
+import { DB } from './db';
+import { putImageBlob } from './blobRef';
+import { loadMomentPosts } from './moments';
+import { generateNovelAiImage } from './novelAiImageGeneration';
+import { RealtimeContextManager } from './realtimeContext';
+import { extractJson, safeResponseJson } from './safeApi';
+
+export type CharacterHandbookStyle = 'normal' | 'highlight' | 'wave' | 'strike' | 'censored' | 'emphasis' | 'handwritten' | 'messy';
+
+export interface CharacterHandbookRun {
+    text: string;
+    style?: CharacterHandbookStyle;
+}
+
+export interface CharacterHandbookParagraph {
+    runs: CharacterHandbookRun[];
+}
+
+export interface CharacterHandbookEntry {
+    id: string;
+    charId: string;
+    date: string;
+    createdAt: number;
+    mood: string;
+    weather: { emoji: string; description: string; temp: number | null; city?: string };
+    paragraphs: CharacterHandbookParagraph[];
+    stillLifePrompt: string;
+    stillImage?: string;
+    chibiImage?: string;
+    sourceIds: string[];
+    imageStatus?: 'none' | 'generating' | 'ready' | 'partial' | 'failed';
+    schemaVersion: 1;
+}
+
+const ASSET_PREFIX = 'character-handbook-v1:';
+const ALLOWED_STYLES = new Set<CharacterHandbookStyle>(['normal', 'highlight', 'wave', 'strike', 'censored', 'emphasis', 'handwritten', 'messy']);
+
+export const localDiaryDate = (timestamp = Date.now()): string => {
+    const date = new Date(timestamp);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+const entryAssetId = (charId: string, date: string) => `${ASSET_PREFIX}${charId}:${date}`;
+
+export async function loadCharacterHandbooks(charId: string): Promise<CharacterHandbookEntry[]> {
+    const assets = await DB.getAllAssets();
+    const prefix = `${ASSET_PREFIX}${charId}:`;
+    return assets
+        .filter(asset => asset.id.startsWith(prefix))
+        .map(asset => {
+            try { return JSON.parse(asset.data) as CharacterHandbookEntry; }
+            catch { return null; }
+        })
+        .filter((entry): entry is CharacterHandbookEntry => Boolean(entry?.date && entry.charId === charId))
+        .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function saveCharacterHandbook(entry: CharacterHandbookEntry): Promise<void> {
+    await DB.saveAsset(entryAssetId(entry.charId, entry.date), JSON.stringify(entry));
+}
+
+const weatherEmoji = (icon = '', description = ''): string => {
+    if (icon.startsWith('11') || /雷/.test(description)) return '⛈️';
+    if (icon.startsWith('13') || /雪|冰/.test(description)) return '❄️';
+    if (icon.startsWith('09') || icon.startsWith('10') || /雨/.test(description)) return '🌧️';
+    if (icon.startsWith('50') || /雾/.test(description)) return '🌫️';
+    if (icon.startsWith('04') || /阴/.test(description)) return '☁️';
+    if (icon.startsWith('02') || icon.startsWith('03') || /云/.test(description)) return '⛅';
+    return '☀️';
+};
+
+const formatTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+const cleanContent = (content: unknown, max = 320): string => String(content || '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+async function collectTodayFacts(
+    char: CharacterProfile,
+    characters: CharacterProfile[],
+    groups: GroupProfile[],
+    userProfile: UserProfile,
+): Promise<{ lines: string[]; ids: string[] }> {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const lines: string[] = [];
+    const ids: string[] = [];
+    const nameOf = (id?: string) => characters.find(character => character.id === id)?.name || (id === char.id ? char.name : '群成员');
+
+    const privateMessages = (await DB.getMessagesByCharId(char.id, true))
+        .filter(message => message.timestamp >= start && message.timestamp <= Date.now() && message.role !== 'system')
+        .slice(-50);
+    privateMessages.forEach(message => {
+        const content = cleanContent(message.content);
+        if (!content) return;
+        lines.push(`[私聊 dm:${message.id} ${formatTime(message.timestamp)} ${message.role === 'user' ? userProfile.name : char.name}] ${content}`);
+        ids.push(`dm:${message.id}`);
+    });
+
+    const memberGroups = groups.filter(group => group.members.includes(char.id));
+    for (const group of memberGroups) {
+        const messages = (await DB.getGroupMessages(group.id))
+            .filter(message => message.timestamp >= start && message.timestamp <= Date.now() && message.role !== 'system')
+            .slice(-35);
+        messages.forEach(message => {
+            const content = cleanContent(message.content);
+            if (!content) return;
+            const speaker = message.role === 'user' ? userProfile.name : nameOf(message.charId);
+            lines.push(`[群聊 group:${group.id}:${message.id} ${group.name} ${formatTime(message.timestamp)} ${speaker}] ${content}`);
+            ids.push(`group:${group.id}:${message.id}`);
+        });
+    }
+
+    const posts = (await loadMomentPosts()).filter(post => post.timestamp >= start && post.timestamp <= Date.now()).slice(0, 20);
+    posts.forEach(post => {
+        const relevant = post.authorCharId === char.id
+            || post.authorType === 'user'
+            || post.comments?.some(comment => comment.authorCharId === char.id || comment.authorType === 'user');
+        if (!relevant) return;
+        const content = cleanContent(post.content);
+        if (content) {
+            lines.push(`[朋友圈 moment:${post.id} ${formatTime(post.timestamp)} ${post.authorName}] ${content}`);
+            ids.push(`moment:${post.id}`);
+        }
+        (post.comments || []).filter(comment => comment.authorCharId === char.id || comment.authorType === 'user').slice(-8).forEach((comment, index) => {
+            const commentText = cleanContent(comment.content, 180);
+            if (commentText) lines.push(`[朋友圈评论 moment:${post.id}:comment:${comment.id || index} ${comment.authorName}] ${commentText}`);
+        });
+    });
+
+    return { lines: lines.slice(-110), ids: Array.from(new Set(ids)) };
+}
+
+function parseDiary(raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[]; stillLifePrompt: string } {
+    const parsed = extractJson(raw) as any;
+    if (!parsed || !Array.isArray(parsed.paragraphs)) throw new Error('全局 API 没有返回有效的手账 JSON');
+    const styleCounts = new Map<CharacterHandbookStyle, number>();
+    const paragraphs = parsed.paragraphs.slice(0, 5).map((paragraph: any) => ({
+        runs: (Array.isArray(paragraph?.runs) ? paragraph.runs : [])
+            .map((run: any) => {
+                const text = cleanContent(run?.text, 180);
+                let style = ALLOWED_STYLES.has(run?.style) ? run.style as CharacterHandbookStyle : 'normal';
+                const used = styleCounts.get(style) || 0;
+                if (style !== 'normal' && used >= 2) style = 'normal';
+                if (style === 'censored' && (Array.from(text).length < 2 || Array.from(text).length > 5)) style = 'normal';
+                styleCounts.set(style, (styleCounts.get(style) || 0) + 1);
+                return { text, style };
+            })
+            .filter((run: CharacterHandbookRun) => run.text),
+    })).filter((paragraph: CharacterHandbookParagraph) => paragraph.runs.length);
+    if (!paragraphs.length) throw new Error('手账正文为空');
+    return {
+        mood: cleanContent(parsed.mood, 20) || '平静',
+        paragraphs,
+        stillLifePrompt: cleanContent(parsed.stillLifePrompt, 500) || 'a quiet tabletop still life inspired by today, no people',
+    };
+}
+
+export async function generateCharacterHandbookText(input: {
+    char: CharacterProfile;
+    characters: CharacterProfile[];
+    groups: GroupProfile[];
+    userProfile: UserProfile;
+    apiConfig: APIConfig;
+    realtimeConfig: RealtimeConfig;
+}): Promise<CharacterHandbookEntry> {
+    const { char, characters, groups, userProfile, apiConfig, realtimeConfig } = input;
+    if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) throw new Error('请先在设置中配置全局 API、模型和密钥');
+    const date = localDiaryDate();
+    const [facts, weatherData] = await Promise.all([
+        collectTodayFacts(char, characters, groups, userProfile),
+        RealtimeContextManager.fetchWeather(realtimeConfig).catch(() => null),
+    ]);
+    const weather: CharacterHandbookEntry['weather'] = weatherData
+        ? { emoji: weatherEmoji(weatherData.icon, weatherData.description), description: weatherData.description, temp: weatherData.temp, city: weatherData.city }
+        : { emoji: '🌤️', description: '天气未同步', temp: null };
+    const prompt = `你正在以角色「${char.name}」的第一人称写今天的私人手账。默认文风是自然、松弛的日常随笔，不是总结报告，也不是矫情散文；语气、用词和观察角度必须符合角色性格。
+
+角色设定：
+${cleanContent(char.description, 1800)}
+${cleanContent(char.systemPrompt, 3500)}
+
+今天日期：${date}
+天气由客户端固定显示为：${weather.emoji} ${weather.description}${weather.temp == null ? '' : ` / ${weather.temp}℃`}
+
+严格事实规则：下面的素材是唯一允许写成“发生过”的事情。不能补写未出现的见面、礼物、动作、对话或未来事件；素材少就写短一些，可以写基于事实的感受，但不能创造新事实。
+
+今日素材：
+${facts.lines.length ? facts.lines.join('\n') : '（今天没有可用聊天、群聊或朋友圈素材。只可简短写“今天没发生太多事情”一类感受，不能编造。）'}
+
+输出一篇 180～260 个中文字符、3～5 个自然段的日常随笔；素材不足时允许短于 180 字。正文必须自然连贯，不要逐条复述素材。
+用 runs 标记少量格式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
+stillLifePrompt 用英文描述一张与正文真实内容有关的静物方图：只画物品或环境细节，不出现人物，不出现文字、水印或界面。
+
+只输出 JSON：
+{"mood":"不超过10字的心情","stillLifePrompt":"English still-life prompt","paragraphs":[{"runs":[{"text":"正文片段","style":"normal|highlight|wave|strike|censored|emphasis|handwritten|messy"}]}]}`;
+
+    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+        body: JSON.stringify({
+            model: apiConfig.model,
+            stream: false,
+            temperature: apiConfig.temperature ?? 0.82,
+            max_tokens: 2400,
+            messages: [{ role: 'user', content: prompt }],
+        }),
+    });
+    if (!response.ok) throw new Error(`生成手账失败（HTTP ${response.status}）`);
+    const data = await safeResponseJson(response);
+    const result = parseDiary(String(data?.choices?.[0]?.message?.content || ''));
+    const entry: CharacterHandbookEntry = {
+        id: `${char.id}:${date}`,
+        charId: char.id,
+        date,
+        createdAt: Date.now(),
+        mood: result.mood,
+        weather,
+        paragraphs: result.paragraphs,
+        stillLifePrompt: result.stillLifePrompt,
+        sourceIds: facts.ids,
+        imageStatus: char.novelAiImageGeneration?.enabled && apiConfig.novelAiImageGeneration ? 'generating' : 'none',
+        schemaVersion: 1,
+    };
+    await saveCharacterHandbook(entry);
+    return entry;
+}
+
+async function storeHandbookImage(
+    image: Blob | string,
+    entry: CharacterHandbookEntry,
+    char: CharacterProfile,
+    kind: 'still' | 'chibi',
+): Promise<string> {
+    const ref = typeof image === 'string' ? image : await putImageBlob(image);
+    const label = kind === 'still' ? '静物方图' : 'Q版人物竖图';
+    const gallery: GalleryImage = {
+        id: `handbook-${entry.charId}-${entry.date}-${kind}`,
+        charId: entry.charId,
+        url: ref,
+        timestamp: Date.now(),
+        savedDate: entry.date,
+        chatContext: [`[手账本 · ${entry.date} · ${label}]`, `心情：${entry.mood}`],
+    };
+    await DB.saveGalleryImage(gallery);
+    return ref;
+}
+
+export async function generateAndSaveHandbookImages(
+    entry: CharacterHandbookEntry,
+    char: CharacterProfile,
+    apiConfig: APIConfig,
+    onUpdate?: (entry: CharacterHandbookEntry) => void,
+): Promise<CharacterHandbookEntry> {
+    const api = apiConfig.novelAiImageGeneration;
+    const cfg = char.novelAiImageGeneration;
+    if (!api || !cfg?.enabled) {
+        const withoutImages = { ...entry, imageStatus: 'none' as const };
+        await saveCharacterHandbook(withoutImages);
+        onUpdate?.(withoutImages);
+        return withoutImages;
+    }
+    let current = { ...entry, imageStatus: 'generating' as const };
+    const update = async (patch: Partial<CharacterHandbookEntry>) => {
+        current = { ...current, ...patch };
+        await saveCharacterHandbook(current);
+        onUpdate?.(current);
+    };
+    let failures = 0;
+    try {
+        const still = await generateNovelAiImage(
+            { ...api, width: 1024, height: 1024 },
+            { ...cfg, characterTags: '', userTags: '', referenceImageUrl: undefined },
+            { prompt: `${entry.stillLifePrompt}, square composition, stylish modern journal illustration, still life only, no people, no text, no watermark`, selfie: false },
+        );
+        await update({ stillImage: await storeHandbookImage(still, entry, char, 'still') });
+    } catch (error) {
+        failures += 1;
+        console.warn('[Handbook] still-life generation failed:', error);
+    }
+    try {
+        const chibi = await generateNovelAiImage(
+            { ...api, width: 768, height: 1024 },
+            cfg,
+            { prompt: `one full-body chibi version of ${char.name}, mood: ${entry.mood}, expressive relaxed pose, fashionable cute sticker illustration, pure white background, centered composition, 3:4 portrait, no text, no watermark`, selfie: false },
+        );
+        await update({ chibiImage: await storeHandbookImage(chibi, entry, char, 'chibi') });
+    } catch (error) {
+        failures += 1;
+        console.warn('[Handbook] chibi generation failed:', error);
+    }
+    const imageStatus: CharacterHandbookEntry['imageStatus'] = failures === 0 ? 'ready' : failures === 1 ? 'partial' : 'failed';
+    await update({ imageStatus });
+    return current;
+}
