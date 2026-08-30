@@ -243,6 +243,8 @@ export interface CharacterNovelAiImageGenerationConfig {
   styleTags?: string;
   /** 每张图固定追加的质量标签。 */
   qualityTags?: string;
+  /** 仅供需要完全自定义画风的调用关闭默认质量标签。 */
+  disableQualityTags?: boolean;
   negativeTags?: string;
 }
 

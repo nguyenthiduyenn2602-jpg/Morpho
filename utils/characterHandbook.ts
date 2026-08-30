@@ -4,7 +4,6 @@ import { putImageBlob } from './blobRef';
 import { loadMomentPosts } from './moments';
 import {
     DEFAULT_NAI_NEGATIVE_TAGS,
-    DEFAULT_NAI_QUALITY_TAGS,
     DEFAULT_NAI_SAMPLER,
     generateNovelAiImage,
 } from './novelAiImageGeneration';
@@ -44,7 +43,6 @@ export interface HandbookChibiPreset {
     builtIn?: boolean;
     styleTags: string;
     negativeTags: string;
-    qualityTags: string;
     steps: number;
     scale: number;
     sampler: string;
@@ -67,7 +65,6 @@ export const DEFAULT_HANDBOOK_CHIBI_PRESET: HandbookChibiPreset = {
 chibi, super deformed, large head, small body, cute proportions,
 chibi background, background, soft colors, kawaii atmosphere`,
     negativeTags: `text, logo, 2::signature, watermark::, too many watermarks, artist:gaoo (frpjx283), artist:matsunaga kouyou, artist:nameo (judgemasterkou), artist:bb (baalbuddy), 1990s (style), bad anatomy, distorted anatomy, disfigured, bad hands, missing finger, 1.5::too many fingers::, mutated hands, extra fingers, interlocked fingers, badly drawn hands and fingers, anatomically incorrect hands, extra digits, fewer digits, mutation, extra arms, extra legs, long neck, bad feet, very displeasing, undetailed eyes, multiple views, negative space, blank page, variant set, large variant set, oekaki, halftone, screentone, artistic error, film grain, scan artifacts, jpeg artifacts, chromatic aberration, dithering, disorganized colors, lowres, worst quality, bad quality, cheesy, sloppiness, unfinished, incomplete, colored inner hair, lineart, monochrome, black and white, sketch, line drawing, ink drawing, comic style, manga style`,
-    qualityTags: DEFAULT_NAI_QUALITY_TAGS,
     steps: 24,
     scale: 6.5,
     sampler: DEFAULT_NAI_SAMPLER,
@@ -80,7 +77,6 @@ const normalizeChibiPreset = (preset: HandbookChibiPreset): HandbookChibiPreset 
     builtIn: false,
     styleTags: String(preset.styleTags || '').trim(),
     negativeTags: String(preset.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS).trim(),
-    qualityTags: String(preset.qualityTags || DEFAULT_NAI_QUALITY_TAGS).trim(),
     steps: Math.min(50, Math.max(1, Number(preset.steps) || 24)),
     scale: Math.min(20, Math.max(1, Number(preset.scale) || 6.5)),
     sampler: String(preset.sampler || DEFAULT_NAI_SAMPLER),
@@ -170,20 +166,22 @@ const weatherEmoji = (icon = '', description = ''): string => {
 const formatTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 const cleanContent = (content: unknown, max = 320): string => String(content || '').replace(/\s+/g, ' ').trim().slice(0, max);
 
-async function collectTodayFacts(
+async function collectDiaryFacts(
     char: CharacterProfile,
     characters: CharacterProfile[],
     groups: GroupProfile[],
     userProfile: UserProfile,
+    diaryDate = localDiaryDate(),
 ): Promise<{ lines: string[]; ids: string[] }> {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const [year, month, day] = diaryDate.split('-').map(Number);
+    const start = new Date(year, month - 1, day).getTime();
+    const end = Math.min(start + 24 * 60 * 60 * 1000, Date.now());
     const lines: string[] = [];
     const ids: string[] = [];
     const nameOf = (id?: string) => characters.find(character => character.id === id)?.name || (id === char.id ? char.name : '群成员');
 
     const privateMessages = (await DB.getMessagesByCharId(char.id, true))
-        .filter(message => message.timestamp >= start && message.timestamp <= Date.now() && message.role !== 'system')
+        .filter(message => message.timestamp >= start && message.timestamp <= end && message.role !== 'system')
         .slice(-50);
     privateMessages.forEach(message => {
         const content = cleanContent(message.content);
@@ -195,7 +193,7 @@ async function collectTodayFacts(
     const memberGroups = groups.filter(group => group.members.includes(char.id));
     for (const group of memberGroups) {
         const messages = (await DB.getGroupMessages(group.id))
-            .filter(message => message.timestamp >= start && message.timestamp <= Date.now() && message.role !== 'system')
+            .filter(message => message.timestamp >= start && message.timestamp <= end && message.role !== 'system')
             .slice(-35);
         messages.forEach(message => {
             const content = cleanContent(message.content);
@@ -206,7 +204,7 @@ async function collectTodayFacts(
         });
     }
 
-    const posts = (await loadMomentPosts()).filter(post => post.timestamp >= start && post.timestamp <= Date.now()).slice(0, 20);
+    const posts = (await loadMomentPosts()).filter(post => post.timestamp >= start && post.timestamp <= end).slice(0, 20);
     posts.forEach(post => {
         const relevant = post.authorCharId === char.id
             || post.authorType === 'user'
@@ -423,17 +421,18 @@ export async function generateCharacterHandbookText(input: {
     userProfile: UserProfile;
     apiConfig: APIConfig;
     realtimeConfig: RealtimeConfig;
+    existingEntry?: CharacterHandbookEntry;
 }): Promise<CharacterHandbookEntry> {
-    const { char, characters, groups, userProfile, apiConfig, realtimeConfig } = input;
+    const { char, characters, groups, userProfile, apiConfig, realtimeConfig, existingEntry } = input;
     if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) throw new Error('请先在设置中配置全局 API、模型和密钥');
-    const date = localDiaryDate();
+    const date = existingEntry?.date || localDiaryDate();
     const [facts, weatherData] = await Promise.all([
-        collectTodayFacts(char, characters, groups, userProfile),
-        RealtimeContextManager.fetchWeather(realtimeConfig).catch(() => null),
+        collectDiaryFacts(char, characters, groups, userProfile, date),
+        existingEntry ? Promise.resolve(null) : RealtimeContextManager.fetchWeather(realtimeConfig).catch(() => null),
     ]);
-    const weather: CharacterHandbookEntry['weather'] = weatherData
+    const weather: CharacterHandbookEntry['weather'] = existingEntry?.weather || (weatherData
         ? { emoji: weatherEmoji(weatherData.icon, weatherData.description), description: weatherData.description, temp: weatherData.temp, city: weatherData.city }
-        : { emoji: '🌤️', description: '天气未同步', temp: null };
+        : { emoji: '🌤️', description: '天气未同步', temp: null });
     const prompt = `你正在以角色「${char.name}」的第一人称写今天的私人手账。默认文风是自然、松弛的日常随笔，不是总结报告，也不是矫情散文；语气、用词和观察角度必须符合角色性格。
 
 角色设定：
@@ -462,13 +461,15 @@ marks 只标记正文中已经原样出现的短语及样式：highlight（荧�
         id: `${char.id}:${date}`,
         charId: char.id,
         date,
-        createdAt: Date.now(),
+        createdAt: existingEntry?.createdAt || Date.now(),
         mood: result.mood,
         weather,
         paragraphs: result.paragraphs,
-        stillLifePrompt: 'a quiet tabletop still life inspired by today, square composition, no people, no text',
+        stillLifePrompt: existingEntry?.stillLifePrompt || 'a quiet tabletop still life inspired by today, square composition, no people, no text',
+        stillImage: existingEntry?.stillImage,
+        chibiImage: existingEntry?.chibiImage,
         sourceIds: facts.ids,
-        imageStatus: char.novelAiImageGeneration?.enabled && apiConfig.novelAiImageGeneration ? 'generating' : 'none',
+        imageStatus: existingEntry?.imageStatus ?? (char.novelAiImageGeneration?.enabled && apiConfig.novelAiImageGeneration ? 'generating' : 'none'),
         schemaVersion: 1,
     };
     // 文字先落盘。第二次全局 API 只负责提示词，失败也不会让已经生成的文字消失。
@@ -507,6 +508,7 @@ export async function generateAndSaveHandbookImages(
     char: CharacterProfile,
     apiConfig: APIConfig,
     onUpdate?: (entry: CharacterHandbookEntry) => void,
+    kinds: Array<'still' | 'chibi'> = ['still', 'chibi'],
 ): Promise<CharacterHandbookEntry> {
     const api = apiConfig.novelAiImageGeneration;
     const cfg = char.novelAiImageGeneration;
@@ -524,7 +526,7 @@ export async function generateAndSaveHandbookImages(
         onUpdate?.(current);
     };
     let failures = 0;
-    try {
+    if (kinds.includes('still')) try {
         const still = await generateNovelAiImage(
             { ...api, width: 1024, height: 1024 },
             { ...cfg, characterTags: '', userTags: '', referenceImageUrl: undefined },
@@ -535,12 +537,13 @@ export async function generateAndSaveHandbookImages(
         failures += 1;
         console.warn('[Handbook] still-life generation failed:', error);
     }
-    try {
+    if (kinds.includes('chibi')) try {
         const chibi = await generateNovelAiImage(
             {
                 ...api,
                 width: 768,
                 height: 1024,
+                qualityToggle: false,
                 sampler: chibiPreset.sampler,
                 steps: chibiPreset.steps,
                 scale: chibiPreset.scale,
@@ -548,7 +551,8 @@ export async function generateAndSaveHandbookImages(
             {
                 ...cfg,
                 styleTags: chibiPreset.styleTags,
-                qualityTags: chibiPreset.qualityTags,
+                qualityTags: '',
+                disableQualityTags: true,
                 negativeTags: chibiPreset.negativeTags,
                 userTags: '',
             },
@@ -559,7 +563,9 @@ export async function generateAndSaveHandbookImages(
         failures += 1;
         console.warn('[Handbook] chibi generation failed:', error);
     }
-    const imageStatus: CharacterHandbookEntry['imageStatus'] = failures === 0 ? 'ready' : failures === 1 ? 'partial' : 'failed';
+    const imageStatus: CharacterHandbookEntry['imageStatus'] = failures === 0
+        ? (current.stillImage && current.chibiImage ? 'ready' : 'partial')
+        : (current.stillImage || current.chibiImage ? 'partial' : 'failed');
     await update({ imageStatus });
     return current;
 }

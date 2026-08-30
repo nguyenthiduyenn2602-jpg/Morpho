@@ -223,7 +223,14 @@ const BookCover: React.FC<{
     );
 };
 
-const HandbookDiaryPage: React.FC<{ character: CharacterProfile; entry: CharacterHandbookEntry; revealStep?: number; generating?: boolean }> = ({ character, entry, revealStep = 4, generating = false }) => {
+const HandbookDiaryPage: React.FC<{
+    character: CharacterProfile;
+    entry: CharacterHandbookEntry;
+    revealStep?: number;
+    generating?: boolean;
+    regeneratingPart?: 'text' | 'still' | 'chibi' | null;
+    onRegenerate: (kind: 'text' | 'still' | 'chibi') => void;
+}> = ({ character, entry, revealStep = 4, generating = false, regeneratingPart = null, onRegenerate }) => {
     const stillUrl = useBlobRefUrl(entry.stillImage);
     const dateParts = entry.date.split('-');
     return (
@@ -242,7 +249,14 @@ const HandbookDiaryPage: React.FC<{ character: CharacterProfile; entry: Characte
             </header>
             <div className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}><DiaryCopy entry={entry} /></div>
             <div className={`absolute bottom-5 right-4 w-[42%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
-            <div className="absolute bottom-7 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
+            <div className="absolute bottom-12 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
+            <div className="absolute bottom-3 left-4 z-30 flex gap-1">
+                {([['text', '文字'], ['still', '图片1'], ['chibi', '图片2']] as const).map(([kind, label]) => (
+                    <button key={kind} type="button" disabled={Boolean(regeneratingPart) || generating} onClick={() => onRegenerate(kind)} className="flex items-center gap-0.5 rounded-full border border-[#ded3c4] bg-[#fffaf0]/90 px-2 py-1 text-[8px] text-[#82776c] shadow-sm backdrop-blur disabled:opacity-45" aria-label={`重新生成${label}`}>
+                        <ArrowClockwise size={9} className={regeneratingPart === kind ? 'animate-spin' : ''} />{regeneratingPart === kind ? '生成中' : label}
+                    </button>
+                ))}
+            </div>
             {generating && (
                 <div className="absolute inset-x-0 bottom-5 z-30 flex justify-center">
                     <div className="flex items-center gap-2 rounded-full bg-[#575f50] px-5 py-2.5 text-[10px] tracking-[0.08em] text-white shadow-[0_8px_22px_rgba(70,78,64,.24)]"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />{entry.imageStatus === 'generating' ? '正在绘制手账贴图' : '正在生成今日手账'}</div>
@@ -342,7 +356,6 @@ const ChibiSettingsPanel: React.FC<{
                         <label className="block text-[10px] font-semibold text-[#766d64]">预设名称<input disabled={readOnly} className={fieldClass} value={selected.name} onChange={event => updateSelected({ name: event.target.value })} /></label>
                         <label className="block text-[10px] font-semibold text-[#766d64]">Q版画师串 / 正向标签<textarea disabled={readOnly} className={`${fieldClass} min-h-36 resize-y leading-5`} value={selected.styleTags} onChange={event => updateSelected({ styleTags: event.target.value })} /></label>
                         <label className="block text-[10px] font-semibold text-[#766d64]">负面标签<textarea disabled={readOnly} className={`${fieldClass} min-h-40 resize-y leading-5`} value={selected.negativeTags} onChange={event => updateSelected({ negativeTags: event.target.value })} /></label>
-                        <label className="block text-[10px] font-semibold text-[#766d64]">质量标签<textarea disabled={readOnly} className={`${fieldClass} min-h-20 resize-y leading-5`} value={selected.qualityTags} onChange={event => updateSelected({ qualityTags: event.target.value })} /></label>
                         <div className="grid grid-cols-3 gap-2">
                             <label className="block text-[10px] font-semibold text-[#766d64]">引导值<input disabled={readOnly} type="number" min="1" max="20" step="0.5" className={fieldClass} value={selected.scale} onChange={event => updateSelected({ scale: Number(event.target.value) })} /></label>
                             <label className="block text-[10px] font-semibold text-[#766d64]">步数<input disabled={readOnly} type="number" min="1" max="50" step="1" className={fieldClass} value={selected.steps} onChange={event => updateSelected({ steps: Number(event.target.value) })} /></label>
@@ -370,6 +383,7 @@ const HandbookApp: React.FC = () => {
     const [loadingEntries, setLoadingEntries] = useState(false);
     const [chibiSettingsOpen, setChibiSettingsOpen] = useState(false);
     const [chibiSettings, setChibiSettings] = useState<HandbookChibiSettings>({ selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [] });
+    const [regeneratingPart, setRegeneratingPart] = useState<'text' | 'still' | 'chibi' | null>(null);
 
     const notebooks = useMemo(() => characters.map((character, index) => ({ character, config: coverConfigs[character.id] ?? makeDefaultCover(character, index) })), [characters, coverConfigs]);
     const openNotebook = notebooks.find(item => item.character.id === openCharacterId) ?? null;
@@ -489,6 +503,30 @@ const HandbookApp: React.FC = () => {
         }
     };
 
+    const regenerateEntryPart = async (entry: CharacterHandbookEntry, kind: 'text' | 'still' | 'chibi') => {
+        if (!openNotebook || generationState === 'generating' || regeneratingPart) return;
+        const insertEntry = (next: CharacterHandbookEntry) => {
+            setEntries(previous => [...previous.filter(item => item.id !== next.id), next].sort((a, b) => a.date.localeCompare(b.date)));
+        };
+        setRegeneratingPart(kind);
+        try {
+            if (kind === 'text') {
+                const replacement = await generateCharacterHandbookText({ char: openNotebook.character, characters, groups, userProfile, apiConfig, realtimeConfig, existingEntry: entry });
+                insertEntry(replacement);
+                addToast('这页手账文字已重新生成', 'success');
+            } else {
+                const replacement = await generateAndSaveHandbookImages(entry, openNotebook.character, apiConfig, insertEntry, [kind]);
+                insertEntry(replacement);
+                if (replacement.imageStatus === 'failed' || replacement.imageStatus === 'partial') addToast(`${kind === 'still' ? '图片1' : '图片2'}重新生成未完成，原图已保留`, 'info');
+                else addToast(`${kind === 'still' ? '图片1' : '图片2'}已重新生成并保存到角色相册`, 'success');
+            }
+        } catch (error) {
+            showError('重新生成失败', error instanceof Error ? error.message : String(error));
+        } finally {
+            setRegeneratingPart(null);
+        }
+    };
+
     if (openNotebook) {
         const activeCover = draftCover ?? openNotebook.config;
         const visibleEntry = pageIndex >= 1 && pageIndex <= entries.length ? entries[pageIndex - 1] : null;
@@ -506,13 +544,13 @@ const HandbookApp: React.FC = () => {
                 <header className="shrink-0 border-b border-[#ded9d0] bg-[#f5f2ed]/95" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
                     <div className="flex h-14 items-center gap-2 px-3">
                         <button type="button" onClick={() => { setOpenCharacterId(null); setDraftCover(null); }} aria-label="返回手账本列表" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={20} weight="bold" /></button>
-                        <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={18} /></button>
                         <div className="min-w-0 flex-1">
                             <h1 className="truncate text-[15px] font-semibold">{openNotebook.character.name}的手账本</h1>
                             <p className="text-[10px] text-[#8b857b]">第 {pageIndex + 1} 页 · 共 {pageCount} 页</p>
                         </div>
                         {pageIndex === 0 && !draftCover && <button type="button" onClick={beginEditCover} className="flex items-center gap-1 rounded-full bg-white/70 px-3 py-2 text-[10px] shadow-sm active:scale-[0.98]"><PencilSimple size={13} /> 编辑封面</button>}
                         {draftCover && <div className="flex gap-1"><button type="button" onClick={() => setDraftCover(null)} aria-label="取消编辑" className="grid h-8 w-8 place-items-center rounded-full bg-white/65"><X size={15} /></button><button type="button" onClick={saveCover} aria-label="保存封面" className="grid h-8 w-8 place-items-center rounded-full bg-[#596151] text-white"><Check size={15} weight="bold" /></button></div>}
+                        <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={18} /></button>
                     </div>
                 </header>
 
@@ -527,7 +565,7 @@ const HandbookApp: React.FC = () => {
                         }}
                     >
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}
-                        {visibleEntry && <HandbookDiaryPage character={openNotebook.character} entry={visibleEntry} revealStep={visibleEntry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleEntry.date === today && generationState === 'generating'} />}
+                        {visibleEntry && <HandbookDiaryPage character={openNotebook.character} entry={visibleEntry} revealStep={visibleEntry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleEntry.date === today && generationState === 'generating'} regeneratingPart={regeneratingPart} onRegenerate={kind => void regenerateEntryPart(visibleEntry, kind)} />}
                         {blankGeneratingPage && <EmptyGeneratingPage />}
                         {!loadingEntries && pageIndex === pageCount - 1 && <EndPage onGenerate={showTodayPage} />}
                         {loadingEntries && pageIndex > 0 && <div className="handbook-paper grid h-full place-items-center rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] text-[11px] text-[#8b8176]">正在翻开手账……</div>}
@@ -586,8 +624,8 @@ const HandbookApp: React.FC = () => {
             <header className="sticky top-0 z-10 border-b border-[#dedbd4] bg-[#f3f1ec]/95 backdrop-blur" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
                 <div className="flex h-14 items-center gap-3 px-4">
                     <button type="button" onClick={closeApp} aria-label="关闭手账本" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={21} weight="bold" /></button>
+                    <div className="min-w-0 flex-1"><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
                     <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={19} /></button>
-                    <div><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
                 </div>
             </header>
             <main className="px-5 py-6">

@@ -165,7 +165,7 @@ export function buildNovelAiPrompt(
         ? 'selfie, looking at viewer, solo, upper body, phone camera perspective'
         : '';
     const layers = [
-        cfg.qualityTags || DEFAULT_NAI_QUALITY_TAGS,
+        cfg.disableQualityTags ? '' : (cfg.qualityTags || DEFAULT_NAI_QUALITY_TAGS),
         cfg.styleTags || '',
         cfg.characterTags || '',
         request.includeUser ? (cfg.userTags || '') : '',

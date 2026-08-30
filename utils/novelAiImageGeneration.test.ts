@@ -39,6 +39,12 @@ describe('novelAiImageGeneration', () => {
         expect(together).toContain('1girl, blonde hair');
     });
 
+    it('can disable default quality tags for style-sensitive requests', () => {
+        const prompt = buildNovelAiPrompt({ enabled: true, disableQualityTags: true, styleTags: '2::chibi::' }, { prompt: 'white background', selfie: false });
+        expect(prompt).toBe('2::chibi::, white background');
+        expect(prompt).not.toContain('masterpiece');
+    });
+
     it('parses and strips the hidden NAI control block', () => {
         const parsed = extractNovelAiDirective('先给你看。\n[[GENERATE_NAI_IMAGE]]\n{"prompt":"1boy, selfie","selfie":true}\n[[/GENERATE_NAI_IMAGE]]');
         expect(parsed.cleaned).toBe('先给你看。');
