@@ -389,18 +389,28 @@ const HandbookApp: React.FC = () => {
                     .handbook-paper { background-image: radial-gradient(rgba(92,75,58,.055) .7px, transparent .7px); background-size: 5px 5px; }
                     .handbook-cover { box-shadow: inset 8px 0 14px rgba(56,48,40,.06), 0 20px 45px rgba(67,55,44,.16); }
                 `}</style>
-                <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[#ded9d0] bg-[#f5f2ed]/95 px-3">
-                    <button type="button" onClick={() => { setOpenCharacterId(null); setDraftCover(null); }} aria-label="返回手账本列表" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={20} weight="bold" /></button>
-                    <div className="min-w-0 flex-1">
-                        <h1 className="truncate text-[15px] font-semibold">{openNotebook.character.name}的手账本</h1>
-                        <p className="text-[10px] text-[#8b857b]">第 {pageIndex + 1} 页 · 共 {pageCount} 页</p>
+                <header className="shrink-0 border-b border-[#ded9d0] bg-[#f5f2ed]/95" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
+                    <div className="flex h-14 items-center gap-2 px-3">
+                        <button type="button" onClick={() => { setOpenCharacterId(null); setDraftCover(null); }} aria-label="返回手账本列表" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={20} weight="bold" /></button>
+                        <div className="min-w-0 flex-1">
+                            <h1 className="truncate text-[15px] font-semibold">{openNotebook.character.name}的手账本</h1>
+                            <p className="text-[10px] text-[#8b857b]">第 {pageIndex + 1} 页 · 共 {pageCount} 页</p>
+                        </div>
+                        {pageIndex === 0 && !draftCover && <button type="button" onClick={beginEditCover} className="flex items-center gap-1 rounded-full bg-white/70 px-3 py-2 text-[10px] shadow-sm active:scale-[0.98]"><PencilSimple size={13} /> 编辑封面</button>}
+                        {draftCover && <div className="flex gap-1"><button type="button" onClick={() => setDraftCover(null)} aria-label="取消编辑" className="grid h-8 w-8 place-items-center rounded-full bg-white/65"><X size={15} /></button><button type="button" onClick={saveCover} aria-label="保存封面" className="grid h-8 w-8 place-items-center rounded-full bg-[#596151] text-white"><Check size={15} weight="bold" /></button></div>}
                     </div>
-                    {pageIndex === 0 && !draftCover && <button type="button" onClick={beginEditCover} className="flex items-center gap-1 rounded-full bg-white/70 px-3 py-2 text-[10px] shadow-sm active:scale-[0.98]"><PencilSimple size={13} /> 编辑封面</button>}
-                    {draftCover && <div className="flex gap-1"><button type="button" onClick={() => setDraftCover(null)} aria-label="取消编辑" className="grid h-8 w-8 place-items-center rounded-full bg-white/65"><X size={15} /></button><button type="button" onClick={saveCover} aria-label="保存封面" className="grid h-8 w-8 place-items-center rounded-full bg-[#596151] text-white"><Check size={15} weight="bold" /></button></div>}
                 </header>
 
-                <main className="relative min-h-0 flex-1 overflow-hidden px-5 py-4">
-                    <div key={`${pageIndex}-${direction}`} className={`mx-auto h-full w-full max-w-[370px] ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}>
+                <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-6" style={{ containerType: 'size' }}>
+                    <div
+                        key={`${pageIndex}-${direction}`}
+                        className={`shrink-0 ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}
+                        style={{
+                            // 常见 B16/16K 笔记本接近 B 系纸张比例；同时受当前 App 可用宽高约束并等比缩放。
+                            aspectRatio: '1 / 1.41421356',
+                            width: 'min(370px, calc(100cqw - 2.5rem), calc((100cqh - 3rem) / 1.41421356))',
+                        }}
+                    >
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}
                         {visibleEntry && <HandbookDiaryPage character={openNotebook.character} entry={visibleEntry} revealStep={visibleEntry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleEntry.date === today && generationState === 'generating'} />}
                         {blankGeneratingPage && <EmptyGeneratingPage />}
@@ -436,7 +446,7 @@ const HandbookApp: React.FC = () => {
                 </main>
 
                 {!draftCover && (
-                    <nav className="flex h-[62px] shrink-0 items-center justify-between border-t border-[#ddd7ce] bg-[#f7f4ef] px-4">
+                    <nav className="flex min-h-[72px] shrink-0 items-start justify-between border-t border-[#ddd7ce] bg-[#f7f4ef] px-4 pt-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.75rem)' }}>
                         <button type="button" onClick={() => goToPage(0)} disabled={pageIndex === 0} className="flex items-center gap-1 rounded-full px-2 py-2 text-[10px] text-[#777067] disabled:opacity-30"><SkipBack size={15} /> 封面</button>
                         <div className="flex items-center gap-3">
                             <button type="button" onClick={() => goToPage(pageIndex - 1)} disabled={pageIndex === 0} aria-label="上一页" className="grid h-9 w-9 place-items-center rounded-full border border-[#ddd4c8] bg-white/55 disabled:opacity-30"><CaretLeft size={16} /></button>
@@ -452,9 +462,11 @@ const HandbookApp: React.FC = () => {
 
     return (
         <div className="h-full w-full overflow-y-auto bg-[#f3f1ec] text-[#45413b]">
-            <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-[#dedbd4] bg-[#f3f1ec]/95 px-4 backdrop-blur">
-                <button type="button" onClick={closeApp} aria-label="关闭手账本" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={21} weight="bold" /></button>
-                <div><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
+            <header className="sticky top-0 z-10 border-b border-[#dedbd4] bg-[#f3f1ec]/95 backdrop-blur" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
+                <div className="flex h-14 items-center gap-3 px-4">
+                    <button type="button" onClick={closeApp} aria-label="关闭手账本" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={21} weight="bold" /></button>
+                    <div><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
+                </div>
             </header>
             <main className="px-5 py-6">
                 {notebooks.length > 0 ? <div className="grid grid-cols-2 gap-5">{notebooks.map(({ character, config }) => <button key={character.id} type="button" onClick={() => { setEntries([]); setOpenCharacterId(character.id); setPageIndex(0); setGenerationState('idle'); setRevealStep(0); }} className="aspect-[3/4] min-w-0 text-left transition-transform active:scale-[0.98]"><BookCover character={character} config={config} /></button>)}</div> : <div className="py-16 text-center text-sm text-[#8b857b]">神经链接中还没有角色</div>}
