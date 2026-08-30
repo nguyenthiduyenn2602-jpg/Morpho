@@ -72,11 +72,10 @@ const VoiceDesignerApp = lazyApp(() => import('../apps/VoiceDesignerApp'));
 const MemoryPalaceApp = lazyApp(() => import('../apps/MemoryPalaceApp'));
 const HandbookApp = lazyApp(() => import('../apps/HandbookApp'));
 const QQBridge = lazyApp(() => import('../apps/QQBridge'));
-const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
 const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, MomentsApp, MihuiApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, Appearance, ThemeMaker, QQBridge, CharCreatorDevApp,
+  Chat, Character, GroupChat, MomentsApp, MihuiApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, Appearance, ThemeMaker, QQBridge,
 ];
 
 const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
@@ -794,7 +793,6 @@ const PhoneShell: React.FC = () => {
       case AppID.MemoryPalace: return <MemoryPalaceApp />;
       case AppID.Handbook: return <HandbookApp />;
       case AppID.QQBridge: return <QQBridge />;
-      case AppID.CharCreatorDev: return <CharCreatorDevApp />;
       case AppID.Launcher:
       default: return <Launcher />;
     }

@@ -7,7 +7,6 @@ import AppIcon from './AppIcon';
 import { getMobileGameArt } from './mobilegameArt';
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
 import { getChibi } from '../../utils/chibiDisplay';
-import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/devDebug';
 
 // ===== 手游主题（mobilegame skin）=====
 // 风格：梦幻粉紫二次元手游首页（照搬参考图）。浅粉紫底 + 深紫文字 + 粉色强调，
@@ -216,8 +215,6 @@ const MobileGameHome: React.FC = () => {
     };
     const mgVars = useMemo(() => makeMgVars(mgStyle), [mgStyle]);
 
-    const [devDebugVisible, setDevDebugVisible] = useState(() => isDevDebugAvailable());
-    useEffect(() => subscribeDevDebugAvailability(setDevDebugVisible), []);
 
     useEffect(() => {
         if (!isDataLoaded) return;
@@ -281,10 +278,7 @@ const MobileGameHome: React.FC = () => {
     // 时钟卡角色：优先小小窝/见面立绘，没有就头像融合
     const chibi = widgetChar ? getChibi(widgetChar) : null;
 
-    const drawerApps = useMemo(
-        () => INSTALLED_APPS.filter(a => a.id !== AppID.CharCreatorDev || devDebugVisible),
-        [devDebugVisible]
-    );
+    const drawerApps = INSTALLED_APPS;
 
     // 货币大卡
     const CoinCard: React.FC<{ icon: React.ReactNode; value: string }> = ({ icon, value }) => (

@@ -9,7 +9,7 @@ const SELF_HANDLED: AppID[] = [
     AppID.Settings, AppID.Character, AppID.ThemeMaker, AppID.Appearance, AppID.Gallery,
     AppID.Date, AppID.User, AppID.FAQ, AppID.Worldbook, AppID.Browser,
     AppID.Call, AppID.VoiceDesigner, AppID.MemoryPalace, AppID.Handbook, AppID.QQBridge,
-    AppID.CharCreatorDev, AppID.Moments, AppID.Mihui,
+    AppID.Moments, AppID.Mihui,
 ];
 
 describe('shellHandlesSafeArea', () => {

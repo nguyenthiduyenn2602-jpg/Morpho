@@ -24,7 +24,6 @@ export const SELF_SAFE_AREA_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.MemoryPalace,
     AppID.Handbook,
     AppID.QQBridge,
-    AppID.CharCreatorDev,
     AppID.Moments,
     AppID.Mihui,
 ]);

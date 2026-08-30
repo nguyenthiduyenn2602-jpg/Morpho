@@ -14,7 +14,6 @@ import TokenImg from './TokenImg';
 import { useBlobRefUrl, putImageBlob } from '../../utils/blobRef';
 import { processImageToBlob } from '../../utils/file';
 import { FURNITURE_ICONS } from '../../utils/furnitureIcons';
-import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/devDebug';
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
 import { getDailyScheduleForChar } from '../../utils/dailySchedule';
 import { useLocalDateKey } from '../../hooks/useLocalDateKey';
@@ -897,8 +896,6 @@ const TamagotchiHome: React.FC = () => {
     // 日程详细演绎（小剧场）：点纸卷里「偷看此刻」时生成并播放
     const [theater, setTheater] = useState<{ schedule: DailySchedule; slotIndex: number } | null>(null);
     const [theaterGenerating, setTheaterGenerating] = useState(false);
-    const [devDebugVisible, setDevDebugVisible] = useState(() => isDevDebugAvailable());
-    useEffect(() => subscribeDevDebugAvailability(setDevDebugVisible), []);
 
     // 界面风格：localStorage 持久化（皮肤内偏好，不动 OS theme）；默认 星云紫，
     // 兼容旧版单色相偏好（tama_accent_hue → 亮色自定义）
@@ -1098,10 +1095,7 @@ const TamagotchiHome: React.FC = () => {
         }
     }, [char, schedule, userProfile, apiConfig]);
 
-    const drawerApps = useMemo(
-        () => INSTALLED_APPS.filter(a => a.id !== AppID.CharCreatorDev || devDebugVisible),
-        [devDebugVisible]
-    );
+    const drawerApps = INSTALLED_APPS;
 
     return (
         <div className="h-full w-full relative z-10 overflow-hidden select-none"

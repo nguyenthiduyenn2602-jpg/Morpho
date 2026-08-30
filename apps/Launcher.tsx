@@ -1,7 +1,6 @@
 import React, { useMemo, useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { isPaperWallpaper, useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
-import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/devDebug';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
@@ -509,18 +508,10 @@ const Launcher: React.FC = () => {
   const dragMoved = useRef(0);
 
   // Pagination Logic
-  // 跟随 DevDebug 可用性：prod 用户在设置页连点 5 下解锁后，CharCreatorDev 立刻出现；
-  // 点「关闭」/ 刷新（prod 自动失效）也立刻消失。useMemo deps 没列 devDebugVisible
-  // 会让它锁在 mount 时的初值。
-  const [devDebugVisible, setDevDebugVisible] = useState(() => isDevDebugAvailable());
-  useEffect(() => subscribeDevDebugAvailability(setDevDebugVisible), []);
-  const availableGridApps = useMemo(() => {
-    return INSTALLED_APPS.filter(app =>
-      !DOCK_APPS.includes(app.id)
-      // 「捏脸·开发」仅在开发模式（右下角开发徽标可见或手动解锁时）显示
-      && (app.id !== AppID.CharCreatorDev || devDebugVisible)
-    );
-  }, [devDebugVisible]);
+  const availableGridApps = useMemo(
+    () => INSTALLED_APPS.filter(app => !DOCK_APPS.includes(app.id)),
+    [],
+  );
 
   const normalizeOrder = useCallback((saved: string[] | undefined, available: string[]) => {
       const valid = new Set(available);

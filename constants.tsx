@@ -34,7 +34,6 @@ import {
   Plugs,
   Newspaper,
   Planet,
-  Wrench,
   HouseLine,
   CirclesFour,
 } from '@phosphor-icons/react';
@@ -57,7 +56,6 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   MemoryPalace: ({ className }) => <Brain className={className} weight="regular" />,
   Handbook: ({ className }) => <Notebook className={className} weight="regular" />,
   QQBridge: ({ className }) => <Plugs className={className} weight="regular" />,
-  CharCreatorDev: ({ className }) => <Wrench className={className} weight="regular" />,
   Moments: ({ className }) => <CirclesFour className={className} weight="fill" />,
   Mihui: ({ className }) => <Heart className={className} weight="fill" />,
 };
@@ -81,7 +79,6 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
   { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
-  { id: AppID.CharCreatorDev, name: '捏脸·开发', icon: 'CharCreatorDev', color: 'amber' }, // 仅开发模式显示（Launcher 过滤）
   // { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' }, // Hidden temporarily
 ];
 

@@ -21,7 +21,6 @@ const importers: Partial<Record<AppID, () => Promise<unknown>>> = {
   [AppID.MemoryPalace]: () => import('../../apps/MemoryPalaceApp'),
   [AppID.Handbook]: () => import('../../apps/HandbookApp'),
   [AppID.QQBridge]: () => import('../../apps/QQBridge'),
-  [AppID.CharCreatorDev]: () => import('../../apps/CharCreatorDevApp'),
 };
 
 // 已发起预取的 App（去重，避免同一图标多次 pointerdown 重复触发）。
