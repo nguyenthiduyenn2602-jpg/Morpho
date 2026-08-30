@@ -60,6 +60,7 @@ const Chat = lazyApp(() => import('../apps/Chat'));
 const GroupChat = lazyApp(() => import('../apps/GroupChat'));
 const MomentsApp = lazyApp(() => import('../apps/MomentsApp'));
 const MihuiApp = lazyApp(() => import('../apps/MihuiApp'));
+const Appearance = lazyApp(() => import('../apps/Appearance'));
 const ThemeMaker = lazyApp(() => import('../apps/ThemeMaker'));
 const Gallery = lazyApp(() => import('../apps/Gallery'));
 const FAQApp = lazyApp(() => import('../apps/FAQApp'));
@@ -75,7 +76,7 @@ const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
 const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, MomentsApp, MihuiApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge, CharCreatorDevApp,
+  Chat, Character, GroupChat, MomentsApp, MihuiApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, Appearance, ThemeMaker, QQBridge, CharCreatorDevApp,
 ];
 
 const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
@@ -87,7 +88,7 @@ const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp,
+  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.Appearance]: Appearance,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -781,6 +782,7 @@ const PhoneShell: React.FC = () => {
       case AppID.GroupChat: return <GroupChat />; 
       case AppID.Moments: return <MomentsApp />;
       case AppID.Mihui: return <MihuiApp />;
+      case AppID.Appearance: return <Appearance />;
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Gallery: return <Gallery />;
       case AppID.FAQ: return <FAQApp />; 

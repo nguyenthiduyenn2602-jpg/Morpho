@@ -10,6 +10,7 @@ const importers: Partial<Record<AppID, () => Promise<unknown>>> = {
   [AppID.Character]: () => import('../../apps/Character'),
   [AppID.Chat]: () => import('../../apps/Chat'),
   [AppID.GroupChat]: () => import('../../apps/GroupChat'),
+  [AppID.Appearance]: () => import('../../apps/Appearance'),
   [AppID.ThemeMaker]: () => import('../../apps/ThemeMaker'),
   [AppID.Gallery]: () => import('../../apps/Gallery'),
   [AppID.FAQ]: () => import('../../apps/FAQApp'),

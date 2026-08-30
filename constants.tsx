@@ -47,6 +47,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   GroupChat: ({ className }) => <UsersThree className={className} weight="regular" />,
   Settings: ({ className }) => <GearSix className={className} weight="regular" />,
   Gallery: ({ className }) => <Images className={className} weight="regular" />,
+  Appearance: ({ className }) => <Palette className={className} weight="regular" />,
   ThemeMaker: ({ className }) => <PaintBrush className={className} weight="regular" />,
   FAQ: ({ className }) => <Question className={className} weight="regular" />,
   Worldbook: ({ className }) => <Globe className={className} weight="regular" />,
@@ -77,6 +78,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
+  { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
   { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
   { id: AppID.CharCreatorDev, name: '捏脸·开发', icon: 'CharCreatorDev', color: 'amber' }, // 仅开发模式显示（Launcher 过滤）

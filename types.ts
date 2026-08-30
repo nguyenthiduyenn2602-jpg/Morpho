@@ -1,6 +1,7 @@
 
 export enum AppID {
   Launcher = 'launcher',
+  Appearance = 'appearance',
   Settings = 'settings',
   User = 'user', // 个人档案：用户姓名、头像、人设与生活记录
   Character = 'character',
