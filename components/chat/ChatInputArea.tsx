@@ -832,7 +832,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
                             </button>
                             {Array.from({ length: 7 }).map((_, index) => (
-                              <div key={`actions-page-3-spacer-${index}`} aria-hidden="true" className="w-14 h-[74px]" />
+                              <div key={`actions-page-3-spacer-${index}`} aria-hidden="true" className="w-14 h-20" />
                             ))}
                           </div>
 
