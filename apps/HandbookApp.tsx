@@ -1,20 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowClockwise, CaretLeft, CaretRight, Check, FloppyDisk, ImageSquare, PencilSimple, SkipBack, SkipForward, Sparkle, Trash, UploadSimple, X } from '@phosphor-icons/react';
+import { ArrowClockwise, CaretLeft, CaretRight, Check, FloppyDisk, GearSix, ImageSquare, PencilSimple, Plus, SkipBack, SkipForward, Sparkle, Trash, UploadSimple, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { CharacterProfile } from '../types';
 import { useBlobRefUrl } from '../utils/blobRef';
 import {
     type CharacterHandbookEntry,
     type CharacterHandbookRun,
+    type HandbookChibiPreset,
+    type HandbookChibiSettings,
+    DEFAULT_HANDBOOK_CHIBI_PRESET,
     generateAndSaveHandbookImages,
     generateCharacterHandbookText,
     loadCharacterHandbooks,
+    loadHandbookChibiSettings,
     localDiaryDate,
+    resolveHandbookChibiPreset,
+    saveHandbookChibiSettings,
 } from '../utils/characterHandbook';
 
 type CoverConfig = {
     color: string;
     accent: string;
+    fontColor?: string;
     backgroundImage?: string;
     title: string;
     subtitle: string;
@@ -31,6 +38,7 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 const makeDefaultCover = (character: CharacterProfile, index: number): CoverConfig => ({
     color: BOOK_COLORS[index % BOOK_COLORS.length],
     accent: ACCENT_COLORS[index % ACCENT_COLORS.length],
+    fontColor: ACCENT_COLORS[index % ACCENT_COLORS.length],
     title: character.name,
     subtitle: '日常手账',
     avatarX: 18,
@@ -206,7 +214,7 @@ const BookCover: React.FC<{
                 <Avatar character={character} size={config.avatarSize} />
                 {editing && <span className="absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#4a4640] px-2 py-1 text-[9px] font-medium text-white shadow">拖动头像</span>}
             </div>
-            <div className="absolute bottom-7 left-7 right-6">
+            <div className="absolute bottom-7 left-7 right-6" style={{ color: config.fontColor || config.accent }}>
                 <div className="truncate text-[21px] font-semibold tracking-[0.04em]">{config.title}</div>
                 <div className="mt-1 text-[11px] tracking-[0.18em] opacity-75">{config.subtitle}</div>
                 <div className="mt-4 h-px w-12 bg-current opacity-25" />
@@ -264,6 +272,91 @@ const EndPage: React.FC<{ onGenerate: (regenerate: boolean) => void }> = ({ onGe
     </div>
 );
 
+const ChibiSettingsPanel: React.FC<{
+    initial: HandbookChibiSettings;
+    onClose: () => void;
+    onSave: (settings: HandbookChibiSettings) => Promise<void>;
+}> = ({ initial, onClose, onSave }) => {
+    const [draft, setDraft] = useState<HandbookChibiSettings>(() => ({
+        selectedPresetId: initial.selectedPresetId,
+        customPresets: initial.customPresets.map(preset => ({ ...preset })),
+    }));
+    const [saving, setSaving] = useState(false);
+    const presets = [DEFAULT_HANDBOOK_CHIBI_PRESET, ...draft.customPresets];
+    const selected = resolveHandbookChibiPreset(draft);
+    const readOnly = selected.builtIn === true;
+
+    const updateSelected = (patch: Partial<HandbookChibiPreset>) => {
+        if (readOnly) return;
+        setDraft(current => ({
+            ...current,
+            customPresets: current.customPresets.map(preset => preset.id === current.selectedPresetId ? { ...preset, ...patch } : preset),
+        }));
+    };
+    const createPreset = () => {
+        const id = `handbook-chibi-${Date.now()}`;
+        const copy: HandbookChibiPreset = {
+            ...selected,
+            id,
+            name: `${selected.name} · 自定义`,
+            builtIn: false,
+        };
+        setDraft(current => ({ ...current, selectedPresetId: id, customPresets: [...current.customPresets, copy] }));
+    };
+    const removePreset = () => {
+        if (readOnly) return;
+        setDraft(current => ({
+            selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id,
+            customPresets: current.customPresets.filter(preset => preset.id !== current.selectedPresetId),
+        }));
+    };
+    const save = async () => {
+        setSaving(true);
+        try { await onSave(draft); } finally { setSaving(false); }
+    };
+
+    const fieldClass = 'mt-1.5 w-full rounded-2xl border border-[#ded7ce] bg-white/80 px-3 py-2.5 text-[11px] text-[#5a5149] outline-none disabled:bg-[#eeeae3] disabled:text-[#918981]';
+    return (
+        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/25 backdrop-blur-[2px]" onClick={onClose}>
+            <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[28px] bg-[#f6f2eb] shadow-2xl" onClick={event => event.stopPropagation()}>
+                <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e1dbd1] bg-[#f8f5f0]/95 px-5 py-4 backdrop-blur">
+                    <div><h2 className="flex items-center gap-2 text-[16px] font-semibold"><GearSix size={18} /> Q版生图设置</h2><p className="mt-1 text-[10px] text-[#958b80]">手账本独立配置 · 不修改角色原画师串</p></div>
+                    <button type="button" onClick={onClose} aria-label="关闭Q版设置" className="grid h-9 w-9 place-items-center rounded-full bg-white/70"><X size={16} /></button>
+                </header>
+                <div className="space-y-4 p-5" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 1.5rem)' }}>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-5 text-amber-800">
+                        如果你不知道这些参数是什么，请不要修改。默认预设为只读；需要换画师串时请先“新建预设”。
+                    </div>
+                    <section className="space-y-3 rounded-3xl bg-white/75 p-4 shadow-sm ring-1 ring-[#e7e0d7]">
+                        <label className="block text-[10px] font-semibold text-[#766d64]">当前预设
+                            <select className={fieldClass} value={draft.selectedPresetId} onChange={event => setDraft(current => ({ ...current, selectedPresetId: event.target.value }))}>
+                                {presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}{preset.builtIn ? '（默认）' : ''}</option>)}
+                            </select>
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button type="button" onClick={createPreset} className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#d8cfc4] bg-white py-2.5 text-[11px]"><Plus size={14} /> 新建预设</button>
+                            <button type="button" disabled={readOnly} onClick={removePreset} className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#e1cfd0] bg-white py-2.5 text-[11px] text-[#a2676b] disabled:opacity-35"><Trash size={14} /> 删除当前预设</button>
+                        </div>
+                    </section>
+                    <section className="space-y-3 rounded-3xl bg-white/75 p-4 shadow-sm ring-1 ring-[#e7e0d7]">
+                        <label className="block text-[10px] font-semibold text-[#766d64]">预设名称<input disabled={readOnly} className={fieldClass} value={selected.name} onChange={event => updateSelected({ name: event.target.value })} /></label>
+                        <label className="block text-[10px] font-semibold text-[#766d64]">Q版画师串 / 正向标签<textarea disabled={readOnly} className={`${fieldClass} min-h-36 resize-y leading-5`} value={selected.styleTags} onChange={event => updateSelected({ styleTags: event.target.value })} /></label>
+                        <label className="block text-[10px] font-semibold text-[#766d64]">负面标签<textarea disabled={readOnly} className={`${fieldClass} min-h-40 resize-y leading-5`} value={selected.negativeTags} onChange={event => updateSelected({ negativeTags: event.target.value })} /></label>
+                        <label className="block text-[10px] font-semibold text-[#766d64]">质量标签<textarea disabled={readOnly} className={`${fieldClass} min-h-20 resize-y leading-5`} value={selected.qualityTags} onChange={event => updateSelected({ qualityTags: event.target.value })} /></label>
+                        <div className="grid grid-cols-3 gap-2">
+                            <label className="block text-[10px] font-semibold text-[#766d64]">引导值<input disabled={readOnly} type="number" min="1" max="20" step="0.5" className={fieldClass} value={selected.scale} onChange={event => updateSelected({ scale: Number(event.target.value) })} /></label>
+                            <label className="block text-[10px] font-semibold text-[#766d64]">步数<input disabled={readOnly} type="number" min="1" max="50" step="1" className={fieldClass} value={selected.steps} onChange={event => updateSelected({ steps: Number(event.target.value) })} /></label>
+                            <label className="block text-[10px] font-semibold text-[#766d64]">采样器<select disabled={readOnly} className={`${fieldClass} px-2`} value={selected.sampler} onChange={event => updateSelected({ sampler: event.target.value })}><option value="k_euler_ancestral">Euler a</option><option value="k_euler">Euler</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_dpmpp_sde">DPM++ SDE</option></select></label>
+                        </div>
+                        <p className="text-[10px] leading-5 text-[#998f84]">Q版固定使用 768×1024（3:4）白底竖图；人物锚点仍读取角色自己的生图 2.0 配置。</p>
+                    </section>
+                    <button type="button" disabled={saving} onClick={() => void save()} className="w-full rounded-2xl bg-[#596151] py-3.5 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? '保存中…' : '保存Q版设置'}</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const HandbookApp: React.FC = () => {
     const { closeApp, characters, groups, userProfile, apiConfig, realtimeConfig, addToast, showError } = useOS();
     const [openCharacterId, setOpenCharacterId] = useState<string | null>(null);
@@ -275,6 +368,8 @@ const HandbookApp: React.FC = () => {
     const [revealStep, setRevealStep] = useState(0);
     const [entries, setEntries] = useState<CharacterHandbookEntry[]>([]);
     const [loadingEntries, setLoadingEntries] = useState(false);
+    const [chibiSettingsOpen, setChibiSettingsOpen] = useState(false);
+    const [chibiSettings, setChibiSettings] = useState<HandbookChibiSettings>({ selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [] });
 
     const notebooks = useMemo(() => characters.map((character, index) => ({ character, config: coverConfigs[character.id] ?? makeDefaultCover(character, index) })), [characters, coverConfigs]);
     const openNotebook = notebooks.find(item => item.character.id === openCharacterId) ?? null;
@@ -285,6 +380,25 @@ const HandbookApp: React.FC = () => {
     useEffect(() => {
         try { localStorage.setItem(COVER_STORAGE_KEY, JSON.stringify(coverConfigs)); } catch { /* ignore */ }
     }, [coverConfigs]);
+
+    useEffect(() => {
+        loadHandbookChibiSettings().then(setChibiSettings).catch(error => console.warn('[Handbook] chibi settings load failed:', error));
+    }, []);
+
+    const openChibiSettings = async () => {
+        setChibiSettings(await loadHandbookChibiSettings());
+        setChibiSettingsOpen(true);
+    };
+    const persistChibiSettings = async (settings: HandbookChibiSettings) => {
+        try {
+            const saved = await saveHandbookChibiSettings(settings);
+            setChibiSettings(saved);
+            setChibiSettingsOpen(false);
+            addToast('手账Q版生图设置已保存', 'success');
+        } catch (error) {
+            showError('保存Q版设置失败', error instanceof Error ? error.message : String(error));
+        }
+    };
 
     useEffect(() => {
         if (!openCharacterId) {
@@ -392,6 +506,7 @@ const HandbookApp: React.FC = () => {
                 <header className="shrink-0 border-b border-[#ded9d0] bg-[#f5f2ed]/95" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
                     <div className="flex h-14 items-center gap-2 px-3">
                         <button type="button" onClick={() => { setOpenCharacterId(null); setDraftCover(null); }} aria-label="返回手账本列表" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={20} weight="bold" /></button>
+                        <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={18} /></button>
                         <div className="min-w-0 flex-1">
                             <h1 className="truncate text-[15px] font-semibold">{openNotebook.character.name}的手账本</h1>
                             <p className="text-[10px] text-[#8b857b]">第 {pageIndex + 1} 页 · 共 {pageCount} 页</p>
@@ -422,7 +537,12 @@ const HandbookApp: React.FC = () => {
                         <div className="absolute inset-x-5 bottom-5 z-20 rounded-[20px] border border-white/70 bg-[#f8f5f0]/95 p-4 shadow-[0_14px_40px_rgba(65,55,46,0.22)] backdrop-blur">
                             <div className="flex items-center justify-between"><span className="text-[11px] font-semibold">封面设计</span><span className="text-[9px] text-[#938a80]">拖动封面上的头像</span></div>
                             <div className="mt-3 flex gap-2">
-                                {BOOK_COLORS.map((color, index) => <button key={color} type="button" aria-label={`封面颜色 ${index + 1}`} onClick={() => setDraftCover(current => current ? ({ ...current, color, accent: ACCENT_COLORS[index] }) : current)} className={`h-7 flex-1 rounded-full ${draftCover.color === color ? 'ring-2 ring-[#5e5a53] ring-offset-2' : ''}`} style={{ backgroundColor: color }} />)}
+                                {BOOK_COLORS.map((color, index) => <button key={color} type="button" aria-label={`封面颜色 ${index + 1}`} onClick={() => setDraftCover(current => current ? ({ ...current, color, accent: ACCENT_COLORS[index], fontColor: ACCENT_COLORS[index] }) : current)} className={`h-7 flex-1 rounded-full ${draftCover.color === color ? 'ring-2 ring-[#5e5a53] ring-offset-2' : ''}`} style={{ backgroundColor: color }} />)}
+                            </div>
+                            <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#ded7ce] bg-white/55 px-3 py-2">
+                                <span className="text-[10px] font-medium text-[#756c63]">封面字体颜色</span>
+                                <input type="color" value={draftCover.fontColor || draftCover.accent} onChange={event => setDraftCover({ ...draftCover, fontColor: event.target.value })} className="ml-auto h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0" aria-label="封面字体颜色" />
+                                <span className="font-mono text-[9px] uppercase text-[#958b80]">{draftCover.fontColor || draftCover.accent}</span>
                             </div>
                             <div className="mt-3 flex items-center gap-2">
                                 <label className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#ded7ce] bg-white/65 px-3 py-2 text-[10px] active:bg-white">
@@ -456,6 +576,7 @@ const HandbookApp: React.FC = () => {
                         <button type="button" onClick={() => goToPage(pageCount - 1)} disabled={pageIndex === pageCount - 1} className="flex items-center gap-1 rounded-full px-2 py-2 text-[10px] text-[#777067] disabled:opacity-30">末页 <SkipForward size={15} /></button>
                     </nav>
                 )}
+                {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
             </div>
         );
     }
@@ -465,12 +586,14 @@ const HandbookApp: React.FC = () => {
             <header className="sticky top-0 z-10 border-b border-[#dedbd4] bg-[#f3f1ec]/95 backdrop-blur" style={{ paddingTop: 'var(--chrome-top, 0px)' }}>
                 <div className="flex h-14 items-center gap-3 px-4">
                     <button type="button" onClick={closeApp} aria-label="关闭手账本" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><CaretLeft size={21} weight="bold" /></button>
+                    <button type="button" onClick={() => void openChibiSettings()} aria-label="Q版生图设置" className="grid h-9 w-9 place-items-center rounded-full text-[#625d55] active:bg-black/5"><GearSix size={19} /></button>
                     <div><h1 className="text-[16px] font-semibold">手账本</h1><p className="text-[11px] text-[#8b857b]">每个角色一本</p></div>
                 </div>
             </header>
             <main className="px-5 py-6">
                 {notebooks.length > 0 ? <div className="grid grid-cols-2 gap-5">{notebooks.map(({ character, config }) => <button key={character.id} type="button" onClick={() => { setEntries([]); setOpenCharacterId(character.id); setPageIndex(0); setGenerationState('idle'); setRevealStep(0); }} className="aspect-[3/4] min-w-0 text-left transition-transform active:scale-[0.98]"><BookCover character={character} config={config} /></button>)}</div> : <div className="py-16 text-center text-sm text-[#8b857b]">神经链接中还没有角色</div>}
             </main>
+            {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
         </div>
     );
 };

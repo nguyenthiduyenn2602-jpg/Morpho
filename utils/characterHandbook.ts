@@ -2,7 +2,12 @@ import type { APIConfig, CharacterProfile, GalleryImage, GroupProfile, RealtimeC
 import { DB } from './db';
 import { putImageBlob } from './blobRef';
 import { loadMomentPosts } from './moments';
-import { generateNovelAiImage } from './novelAiImageGeneration';
+import {
+    DEFAULT_NAI_NEGATIVE_TAGS,
+    DEFAULT_NAI_QUALITY_TAGS,
+    DEFAULT_NAI_SAMPLER,
+    generateNovelAiImage,
+} from './novelAiImageGeneration';
 import { RealtimeContextManager } from './realtimeContext';
 import { extractContent, extractJson, safeResponseJson } from './safeApi';
 
@@ -33,8 +38,85 @@ export interface CharacterHandbookEntry {
     schemaVersion: 1;
 }
 
+export interface HandbookChibiPreset {
+    id: string;
+    name: string;
+    builtIn?: boolean;
+    styleTags: string;
+    negativeTags: string;
+    qualityTags: string;
+    steps: number;
+    scale: number;
+    sampler: string;
+}
+
+export interface HandbookChibiSettings {
+    selectedPresetId: string;
+    customPresets: HandbookChibiPreset[];
+}
+
 const ASSET_PREFIX = 'character-handbook-v1:';
+const CHIBI_SETTINGS_ASSET_ID = 'character-handbook-chibi-settings-v1';
 const ALLOWED_STYLES = new Set<CharacterHandbookStyle>(['normal', 'highlight', 'wave', 'strike', 'censored', 'emphasis', 'handwritten', 'messy']);
+
+export const DEFAULT_HANDBOOK_CHIBI_PRESET: HandbookChibiPreset = {
+    id: 'builtin-morpho-chibi',
+    name: 'Morpho特调q版',
+    builtIn: true,
+    styleTags: `1.3::artist:horuhara::,1.4::artist:beni_shake::,0.9::artist:waka_(wk4444)::,year 2024,year 2025,2::chibi::,0.3::crayon line::,0.6::thick line::,1.2::high saturation::,1.3::white background::,
+chibi, super deformed, large head, small body, cute proportions,
+chibi background, background, soft colors, kawaii atmosphere`,
+    negativeTags: `text, logo, 2::signature, watermark::, too many watermarks, artist:gaoo (frpjx283), artist:matsunaga kouyou, artist:nameo (judgemasterkou), artist:bb (baalbuddy), 1990s (style), bad anatomy, distorted anatomy, disfigured, bad hands, missing finger, 1.5::too many fingers::, mutated hands, extra fingers, interlocked fingers, badly drawn hands and fingers, anatomically incorrect hands, extra digits, fewer digits, mutation, extra arms, extra legs, long neck, bad feet, very displeasing, undetailed eyes, multiple views, negative space, blank page, variant set, large variant set, oekaki, halftone, screentone, artistic error, film grain, scan artifacts, jpeg artifacts, chromatic aberration, dithering, disorganized colors, lowres, worst quality, bad quality, cheesy, sloppiness, unfinished, incomplete, colored inner hair, lineart, monochrome, black and white, sketch, line drawing, ink drawing, comic style, manga style`,
+    qualityTags: DEFAULT_NAI_QUALITY_TAGS,
+    steps: 24,
+    scale: 6.5,
+    sampler: DEFAULT_NAI_SAMPLER,
+};
+
+const normalizeChibiPreset = (preset: HandbookChibiPreset): HandbookChibiPreset => ({
+    ...preset,
+    id: String(preset.id || `handbook-chibi-${Date.now()}`),
+    name: cleanContent(preset.name, 40) || '未命名Q版预设',
+    builtIn: false,
+    styleTags: String(preset.styleTags || '').trim(),
+    negativeTags: String(preset.negativeTags || DEFAULT_NAI_NEGATIVE_TAGS).trim(),
+    qualityTags: String(preset.qualityTags || DEFAULT_NAI_QUALITY_TAGS).trim(),
+    steps: Math.min(50, Math.max(1, Number(preset.steps) || 24)),
+    scale: Math.min(20, Math.max(1, Number(preset.scale) || 6.5)),
+    sampler: String(preset.sampler || DEFAULT_NAI_SAMPLER),
+});
+
+export async function loadHandbookChibiSettings(): Promise<HandbookChibiSettings> {
+    try {
+        const saved = await DB.getAssetRaw(CHIBI_SETTINGS_ASSET_ID) as Partial<HandbookChibiSettings> | null;
+        const customPresets = Array.isArray(saved?.customPresets)
+            ? saved.customPresets.map(preset => normalizeChibiPreset(preset as HandbookChibiPreset))
+            : [];
+        const selectedPresetId = saved?.selectedPresetId === DEFAULT_HANDBOOK_CHIBI_PRESET.id
+            || customPresets.some(preset => preset.id === saved?.selectedPresetId)
+            ? String(saved?.selectedPresetId)
+            : DEFAULT_HANDBOOK_CHIBI_PRESET.id;
+        return { selectedPresetId, customPresets };
+    } catch {
+        return { selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [] };
+    }
+}
+
+export async function saveHandbookChibiSettings(settings: HandbookChibiSettings): Promise<HandbookChibiSettings> {
+    const customPresets = settings.customPresets.map(normalizeChibiPreset);
+    const selectedPresetId = settings.selectedPresetId === DEFAULT_HANDBOOK_CHIBI_PRESET.id
+        || customPresets.some(preset => preset.id === settings.selectedPresetId)
+        ? settings.selectedPresetId
+        : DEFAULT_HANDBOOK_CHIBI_PRESET.id;
+    const normalized = { selectedPresetId, customPresets };
+    await DB.saveAssetRaw(CHIBI_SETTINGS_ASSET_ID, normalized);
+    return normalized;
+}
+
+export function resolveHandbookChibiPreset(settings: HandbookChibiSettings): HandbookChibiPreset {
+    return settings.customPresets.find(preset => preset.id === settings.selectedPresetId)
+        || DEFAULT_HANDBOOK_CHIBI_PRESET;
+}
 
 export const localDiaryDate = (timestamp = Date.now()): string => {
     const date = new Date(timestamp);
@@ -315,6 +397,7 @@ export async function generateAndSaveHandbookImages(
         onUpdate?.(withoutImages);
         return withoutImages;
     }
+    const chibiPreset = resolveHandbookChibiPreset(await loadHandbookChibiSettings());
     let current = { ...entry, imageStatus: 'generating' as const };
     const update = async (patch: Partial<CharacterHandbookEntry>) => {
         current = { ...current, ...patch };
@@ -335,8 +418,21 @@ export async function generateAndSaveHandbookImages(
     }
     try {
         const chibi = await generateNovelAiImage(
-            { ...api, width: 768, height: 1024 },
-            cfg,
+            {
+                ...api,
+                width: 768,
+                height: 1024,
+                sampler: chibiPreset.sampler,
+                steps: chibiPreset.steps,
+                scale: chibiPreset.scale,
+            },
+            {
+                ...cfg,
+                styleTags: chibiPreset.styleTags,
+                qualityTags: chibiPreset.qualityTags,
+                negativeTags: chibiPreset.negativeTags,
+                userTags: '',
+            },
             { prompt: `one full-body chibi version of ${char.name}, mood: ${entry.mood}, expressive relaxed pose, fashionable cute sticker illustration, pure white background, centered composition, 3:4 portrait, no text, no watermark`, selfie: false },
         );
         await update({ chibiImage: await storeHandbookImage(chibi, entry, char, 'chibi') });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseCharacterHandbookDiaryResponse } from './characterHandbook';
+import {
+    DEFAULT_HANDBOOK_CHIBI_PRESET,
+    parseCharacterHandbookDiaryResponse,
+    resolveHandbookChibiPreset,
+} from './characterHandbook';
 
 describe('parseCharacterHandbookDiaryResponse', () => {
     it('parses the structured diary JSON returned by the global API', () => {
@@ -25,5 +29,29 @@ describe('parseCharacterHandbookDiaryResponse', () => {
 
         expect(result.mood).toBe('平静');
         expect(result.paragraphs).toHaveLength(2);
+    });
+});
+
+describe('handbook chibi preset', () => {
+    it('uses the locked Morpho preset by default', () => {
+        const preset = resolveHandbookChibiPreset({
+            selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id,
+            customPresets: [],
+        });
+
+        expect(preset.name).toBe('Morpho特调q版');
+        expect(preset.styleTags).toContain('artist:horuhara');
+        expect(preset.negativeTags).toContain('too many fingers');
+        expect(preset.scale).toBe(6.5);
+        expect(preset.steps).toBe(24);
+    });
+
+    it('resolves a separately created custom preset without changing the built-in', () => {
+        const custom = { ...DEFAULT_HANDBOOK_CHIBI_PRESET, id: 'custom', name: '我的Q版', builtIn: false, scale: 7 };
+        const preset = resolveHandbookChibiPreset({ selectedPresetId: custom.id, customPresets: [custom] });
+
+        expect(preset.name).toBe('我的Q版');
+        expect(preset.scale).toBe(7);
+        expect(DEFAULT_HANDBOOK_CHIBI_PRESET.scale).toBe(6.5);
     });
 });
