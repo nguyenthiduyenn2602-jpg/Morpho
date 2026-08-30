@@ -30,6 +30,29 @@ describe('parseCharacterHandbookDiaryResponse', () => {
         expect(result.mood).toBe('平静');
         expect(result.paragraphs).toHaveLength(2);
     });
+
+    it('applies marks from the compact paragraph schema', () => {
+        const result = parseCharacterHandbookDiaryResponse(JSON.stringify({
+            mood: '惦记',
+            paragraphs: ['今天还是记住了那句话。', '晚饭很好吃。'],
+            marks: [{ text: '那句话', style: 'highlight' }],
+        }));
+
+        expect(result.paragraphs[0].runs).toContainEqual({ text: '那句话', style: 'highlight' });
+        expect(result.paragraphs[1].runs.map(run => run.text).join('')).toBe('晚饭很好吃。');
+    });
+
+    it('salvages text fields from a truncated legacy JSON response without rendering JSON source', () => {
+        const broken = '{"mood":"操心又无奈","paragraphs":[{"runs":[{"text":"这包租公当得真像全职保姆了。","style":"normal"},{"text":"真当那破肠胃是铁打的","style":"strike"},{"text":"昨晚刚吃完麻辣烫，今天又塞一堆牛筋丸。","style":';
+        const result = parseCharacterHandbookDiaryResponse(broken);
+        const rendered = result.paragraphs.flatMap(paragraph => paragraph.runs).map(run => run.text).join('');
+
+        expect(result.mood).toBe('操心又无奈');
+        expect(rendered).toContain('这包租公当得真像全职保姆了。');
+        expect(rendered).toContain('昨晚刚吃完麻辣烫');
+        expect(rendered).not.toContain('{"mood"');
+        expect(result.paragraphs.flatMap(paragraph => paragraph.runs)).toContainEqual({ text: '真当那破肠胃是铁打的', style: 'strike' });
+    });
 });
 
 describe('handbook chibi preset', () => {

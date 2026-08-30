@@ -521,9 +521,9 @@ const HandbookApp: React.FC = () => {
                         key={`${pageIndex}-${direction}`}
                         className={`shrink-0 ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}
                         style={{
-                            // 常见 B16/16K 笔记本接近 B 系纸张比例；同时受当前 App 可用宽高约束并等比缩放。
-                            aspectRatio: '1 / 1.41421356',
-                            width: 'min(370px, calc(100cqw - 2.5rem), calc((100cqh - 3rem) / 1.41421356))',
+                            // 在 B 系纸张基础上略微加长，给 3～5 段正文与贴图留出更舒展的纵向空间。
+                            aspectRatio: '1 / 1.55',
+                            width: 'min(370px, calc(100cqw - 2.5rem), calc((100cqh - 3rem) / 1.55))',
                         }}
                     >
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}

@@ -128,7 +128,7 @@ const entryAssetId = (charId: string, date: string) => `${ASSET_PREFIX}${charId}
 export async function loadCharacterHandbooks(charId: string): Promise<CharacterHandbookEntry[]> {
     const assets = await DB.getAllAssets();
     const prefix = `${ASSET_PREFIX}${charId}:`;
-    return assets
+    const entries = assets
         .filter(asset => asset.id.startsWith(prefix))
         .map(asset => {
             try { return JSON.parse(asset.data) as CharacterHandbookEntry; }
@@ -136,6 +136,21 @@ export async function loadCharacterHandbooks(charId: string): Promise<CharacterH
         })
         .filter((entry): entry is CharacterHandbookEntry => Boolean(entry?.date && entry.charId === charId))
         .sort((a, b) => a.date.localeCompare(b.date));
+    const repaired: CharacterHandbookEntry[] = [];
+    for (const entry of entries) {
+        const rawText = entry.paragraphs?.flatMap(paragraph => paragraph.runs || []).map(run => run.text).join('\n') || '';
+        if (/^\s*\{[\s\S]*["“]paragraphs["”]\s*:/i.test(rawText)) {
+            try {
+                const parsed = parseCharacterHandbookDiaryResponse(rawText);
+                const healed = { ...entry, mood: parsed.mood || entry.mood, paragraphs: parsed.paragraphs };
+                await saveCharacterHandbook(healed);
+                repaired.push(healed);
+                continue;
+            } catch { /* 保留原记录，用户仍可选择重新生成 */ }
+        }
+        repaired.push(entry);
+    }
+    return repaired;
 }
 
 export async function saveCharacterHandbook(entry: CharacterHandbookEntry): Promise<void> {
@@ -211,21 +226,118 @@ async function collectTodayFacts(
     return { lines: lines.slice(-110), ids: Array.from(new Set(ids)) };
 }
 
+const decodeJsonString = (source: string): string => {
+    try { return JSON.parse(`"${source}"`); }
+    catch { return source.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\'); }
+};
+
+const readJsonStringAt = (raw: string, start: number): { value: string; end: number; closed: boolean } => {
+    let escaped = false;
+    let source = '';
+    for (let index = start; index < raw.length; index++) {
+        const char = raw[index];
+        if (!escaped && char === '"') return { value: decodeJsonString(source), end: index + 1, closed: true };
+        source += char;
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+    }
+    return { value: decodeJsonString(source), end: raw.length, closed: false };
+};
+
+const salvageTruncatedDiary = (raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[] } | null => {
+    const moodMatch = raw.match(/["“]mood["”]\s*:\s*"((?:\\.|[^"\\])*)"/i);
+    const mood = moodMatch ? cleanContent(decodeJsonString(moodMatch[1]), 20) : '平静';
+
+    // 新版精简结构：paragraphs 直接是字符串数组，优先按原自然段抢救。
+    const paragraphStart = raw.search(/["“]paragraphs["”]\s*:\s*\[/i);
+    if (paragraphStart >= 0) {
+        let cursor = raw.indexOf('[', paragraphStart) + 1;
+        const paragraphs: CharacterHandbookParagraph[] = [];
+        while (cursor > 0 && cursor < raw.length && paragraphs.length < 5) {
+            while (cursor < raw.length && /[\s,]/.test(raw[cursor])) cursor++;
+            if (raw[cursor] !== '"') break;
+            const found = readJsonStringAt(raw, cursor + 1);
+            const text = cleanContent(found.value, 260);
+            if (text) paragraphs.push({ runs: [{ text, style: 'normal' }] });
+            cursor = found.end;
+            if (!found.closed) break;
+        }
+        if (paragraphs.length) return { mood, paragraphs };
+    }
+
+    // 兼容已经保存的旧版嵌套 runs JSON：只抓完整 text 字段，绝不展示 JSON 源码。
+    const runs: CharacterHandbookRun[] = [];
+    const matcher = /["“]text["”]\s*:\s*"/gi;
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(raw)) && runs.length < 24) {
+        const found = readJsonStringAt(raw, matcher.lastIndex);
+        const text = cleanContent(found.value, 180);
+        const nearby = raw.slice(found.end, Math.min(raw.length, found.end + 100));
+        const styleMatch = nearby.match(/["“]style["”]\s*:\s*["“]([a-z]+)["”]/i);
+        const style = ALLOWED_STYLES.has(styleMatch?.[1] as CharacterHandbookStyle)
+            ? styleMatch![1] as CharacterHandbookStyle
+            : 'normal';
+        if (text) runs.push({ text, style });
+        matcher.lastIndex = Math.max(matcher.lastIndex, found.end);
+        if (!found.closed) break;
+    }
+    if (!runs.length) return null;
+    const total = runs.reduce((sum, run) => sum + Array.from(run.text).length, 0);
+    const target = Math.max(55, Math.ceil(total / 3));
+    const paragraphs: CharacterHandbookParagraph[] = [];
+    let current: CharacterHandbookRun[] = [];
+    let length = 0;
+    runs.forEach((run, index) => {
+        current.push(run);
+        length += Array.from(run.text).length;
+        if ((length >= target && paragraphs.length < 2) || index === runs.length - 1) {
+            paragraphs.push({ runs: current });
+            current = [];
+            length = 0;
+        }
+    });
+    return { mood, paragraphs };
+};
+
 export function parseCharacterHandbookDiaryResponse(raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[] } {
     const extracted = extractJson(raw) as any;
     const parsed = extracted?.diary && typeof extracted.diary === 'object' ? extracted.diary : extracted;
+    const marks = Array.isArray(parsed?.marks) ? parsed.marks : [];
     const rawParagraphs = Array.isArray(parsed?.paragraphs)
         ? parsed.paragraphs
         : typeof parsed?.body === 'string'
             ? parsed.body.split(/\n{2,}/)
             : [];
     const styleCounts = new Map<CharacterHandbookStyle, number>();
-    const paragraphs = rawParagraphs.slice(0, 5).map((paragraph: any) => ({
-        runs: (typeof paragraph === 'string'
+    const paragraphs = rawParagraphs.slice(0, 5).map((paragraph: any) => {
+        let sourceRuns: any[] = typeof paragraph === 'string'
             ? [{ text: paragraph, style: 'normal' }]
             : Array.isArray(paragraph?.runs)
                 ? paragraph.runs
-                : [])
+                : [];
+        if (typeof paragraph === 'string') {
+            for (const mark of marks) {
+                const markedText = cleanContent(mark?.text, 40);
+                if (!markedText) continue;
+                const nextRuns: any[] = [];
+                let applied = false;
+                for (const run of sourceRuns) {
+                    if (applied || run.style !== 'normal' || !String(run.text).includes(markedText)) {
+                        nextRuns.push(run);
+                        continue;
+                    }
+                    const [before, ...afterParts] = String(run.text).split(markedText);
+                    const after = afterParts.join(markedText);
+                    if (before) nextRuns.push({ text: before, style: 'normal' });
+                    nextRuns.push({ text: markedText, style: mark.style });
+                    if (after) nextRuns.push({ text: after, style: 'normal' });
+                    applied = true;
+                }
+                sourceRuns = nextRuns;
+            }
+        }
+        return {
+            runs: sourceRuns
             .map((run: any) => {
                 const text = cleanContent(run?.text, 180);
                 let style = ALLOWED_STYLES.has(run?.style) ? run.style as CharacterHandbookStyle : 'normal';
@@ -236,11 +348,18 @@ export function parseCharacterHandbookDiaryResponse(raw: string): { mood: string
                 return { text, style };
             })
             .filter((run: CharacterHandbookRun) => run.text),
-    })).filter((paragraph: CharacterHandbookParagraph) => paragraph.runs.length);
+        };
+    }).filter((paragraph: CharacterHandbookParagraph) => paragraph.runs.length);
     if (!paragraphs.length) {
-        // 少数兼容接口会无视 JSON 要求直接返回正文。文字仍然可用时不要让整本手账失败。
-        const plainParagraphs = raw
-            .replace(/```(?:json)?|```/gi, '')
+        const stripped = raw.replace(/```(?:json)?|```/gi, '').trim();
+        const looksLikeJson = /^\s*[\[{]/.test(stripped) || /["“]paragraphs["”]\s*:/.test(stripped);
+        if (looksLikeJson) {
+            const salvaged = salvageTruncatedDiary(stripped);
+            if (salvaged) return salvaged;
+            throw new Error('全局 API 返回的手账正文被截断，请重新生成');
+        }
+        // 少数兼容接口会无视 JSON 要求直接返回正文。真正的普通文字仍然保留。
+        const plainParagraphs = stripped
             .split(/\n{2,}/)
             .map(text => cleanContent(text, 220))
             .filter(text => text && !/^[\[{].*[\]}]$/.test(text))
@@ -329,15 +448,15 @@ ${cleanContent(char.systemPrompt, 3500)}
 今日素材：
 ${facts.lines.length ? facts.lines.join('\n') : '（今天没有可用聊天、群聊或朋友圈素材。只可简短写“今天没发生太多事情”一类感受，不能编造。）'}
 
-输出一篇 180～260 个中文字符、3～5 个自然段的日常随笔；素材不足时允许短于 180 字。正文必须自然连贯，不要逐条复述素材。
-用 runs 标记少量格式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
+输出一篇 180～260 个中文字符、3～5 个自然段的日常随笔；素材不足时允许短于 180 字。正文必须自然连贯，不要逐条复述素材。paragraphs 直接放每个自然段的完整纯文字，不要再嵌套 runs。
+marks 只标记正文中已经原样出现的短语及样式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 的 text 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
 这一次只写日记文字，不要生成任何图片描述或生图提示词。
 
 只输出 JSON：
-{"mood":"不超过10字的心情","paragraphs":[{"runs":[{"text":"正文片段","style":"normal|highlight|wave|strike|censored|emphasis|handwritten|messy"}]}]}`;
+{"mood":"不超过10字的心情","paragraphs":["第一自然段","第二自然段","第三自然段"],"marks":[{"text":"正文中原样出现的短语","style":"highlight|wave|strike|censored|emphasis|handwritten|messy"}]}`;
 
     // 第一次全局 API：只生成文字。extractContent 同时兼容 OpenAI、Gemini、Claude 中转格式。
-    const diaryRaw = await requestGlobalCompletion(apiConfig, prompt, 2400, apiConfig.temperature ?? 0.82);
+    const diaryRaw = await requestGlobalCompletion(apiConfig, prompt, 4096, apiConfig.temperature ?? 0.82);
     const result = parseCharacterHandbookDiaryResponse(diaryRaw);
     let entry: CharacterHandbookEntry = {
         id: `${char.id}:${date}`,
