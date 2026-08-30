@@ -130,7 +130,7 @@ const RichRun: React.FC<{ run: CharacterHandbookRun }> = ({ run }) => {
 const DiaryCopy: React.FC<{ entry: CharacterHandbookEntry }> = ({ entry }) => (
     <div className="space-y-2.5 text-[12px] leading-[1.72]">
         {entry.paragraphs.map((paragraph, index) => (
-            <p key={index} className={index >= Math.max(2, entry.paragraphs.length - 2) ? 'pr-[44%]' : ''}>
+            <p key={index}>
                 {paragraph.runs.map((run, runIndex) => <RichRun key={runIndex} run={run} />)}
             </p>
         ))}
@@ -247,8 +247,12 @@ const HandbookDiaryPage: React.FC<{
                     {stillUrl ? <img src={stillUrl} alt="手账静物横图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
                 </div>
             </header>
-            <div className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}><DiaryCopy entry={entry} /></div>
-            <div className={`absolute bottom-5 right-4 w-[42%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
+            <div className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
+                <div className="float-right -mr-3 ml-3 h-[360px] w-[42%]" style={{ shapeOutside: 'polygon(0 62%, 100% 62%, 100% 100%, 0 100%)' }}>
+                    <div className={`relative top-[62%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
+                </div>
+                <DiaryCopy entry={entry} />
+            </div>
             <div className="absolute bottom-12 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
             <div className="absolute bottom-3 left-4 z-30 flex gap-1">
                 {([['text', '文字'], ['still', '图片1'], ['chibi', '图片2']] as const).map(([kind, label]) => (
