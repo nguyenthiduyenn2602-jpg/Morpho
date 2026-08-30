@@ -1,10 +1,10 @@
-import type { APIConfig, CharacterProfile, GalleryImage, GroupProfile, Message, RealtimeConfig, UserProfile } from '../types';
+import type { APIConfig, CharacterProfile, GalleryImage, GroupProfile, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
 import { putImageBlob } from './blobRef';
 import { loadMomentPosts } from './moments';
 import { generateNovelAiImage } from './novelAiImageGeneration';
 import { RealtimeContextManager } from './realtimeContext';
-import { extractJson, safeResponseJson } from './safeApi';
+import { extractContent, extractJson, safeResponseJson } from './safeApi';
 
 export type CharacterHandbookStyle = 'normal' | 'highlight' | 'wave' | 'strike' | 'censored' | 'emphasis' | 'handwritten' | 'messy';
 
@@ -129,12 +129,21 @@ async function collectTodayFacts(
     return { lines: lines.slice(-110), ids: Array.from(new Set(ids)) };
 }
 
-function parseDiary(raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[]; stillLifePrompt: string } {
-    const parsed = extractJson(raw) as any;
-    if (!parsed || !Array.isArray(parsed.paragraphs)) throw new Error('全局 API 没有返回有效的手账 JSON');
+export function parseCharacterHandbookDiaryResponse(raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[] } {
+    const extracted = extractJson(raw) as any;
+    const parsed = extracted?.diary && typeof extracted.diary === 'object' ? extracted.diary : extracted;
+    const rawParagraphs = Array.isArray(parsed?.paragraphs)
+        ? parsed.paragraphs
+        : typeof parsed?.body === 'string'
+            ? parsed.body.split(/\n{2,}/)
+            : [];
     const styleCounts = new Map<CharacterHandbookStyle, number>();
-    const paragraphs = parsed.paragraphs.slice(0, 5).map((paragraph: any) => ({
-        runs: (Array.isArray(paragraph?.runs) ? paragraph.runs : [])
+    const paragraphs = rawParagraphs.slice(0, 5).map((paragraph: any) => ({
+        runs: (typeof paragraph === 'string'
+            ? [{ text: paragraph, style: 'normal' }]
+            : Array.isArray(paragraph?.runs)
+                ? paragraph.runs
+                : [])
             .map((run: any) => {
                 const text = cleanContent(run?.text, 180);
                 let style = ALLOWED_STYLES.has(run?.style) ? run.style as CharacterHandbookStyle : 'normal';
@@ -146,12 +155,64 @@ function parseDiary(raw: string): { mood: string; paragraphs: CharacterHandbookP
             })
             .filter((run: CharacterHandbookRun) => run.text),
     })).filter((paragraph: CharacterHandbookParagraph) => paragraph.runs.length);
-    if (!paragraphs.length) throw new Error('手账正文为空');
+    if (!paragraphs.length) {
+        // 少数兼容接口会无视 JSON 要求直接返回正文。文字仍然可用时不要让整本手账失败。
+        const plainParagraphs = raw
+            .replace(/```(?:json)?|```/gi, '')
+            .split(/\n{2,}/)
+            .map(text => cleanContent(text, 220))
+            .filter(text => text && !/^[\[{].*[\]}]$/.test(text))
+            .slice(0, 5)
+            .map(text => ({ runs: [{ text, style: 'normal' as const }] }));
+        if (plainParagraphs.length) return { mood: '平静', paragraphs: plainParagraphs };
+        throw new Error('全局 API 没有返回可用的手账正文');
+    }
     return {
         mood: cleanContent(parsed.mood, 20) || '平静',
         paragraphs,
-        stillLifePrompt: cleanContent(parsed.stillLifePrompt, 500) || 'a quiet tabletop still life inspired by today, no people',
     };
+}
+
+async function requestGlobalCompletion(apiConfig: APIConfig, prompt: string, maxTokens: number, temperature: number): Promise<string> {
+    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+        body: JSON.stringify({
+            model: apiConfig.model,
+            stream: false,
+            temperature,
+            max_tokens: maxTokens,
+            messages: [{ role: 'user', content: prompt }],
+        }),
+    });
+    if (!response.ok) throw new Error(`全局 API 调用失败（HTTP ${response.status}）`);
+    const data = await safeResponseJson(response);
+    return extractContent(data);
+}
+
+async function generateStillLifePrompt(entry: CharacterHandbookEntry, char: CharacterProfile, apiConfig: APIConfig): Promise<string> {
+    const diaryText = entry.paragraphs
+        .map(paragraph => paragraph.runs.map(run => run.text).join(''))
+        .join('\n');
+    const prompt = `请根据下面这篇已经完成的角色日记，单独写一条英文生图提示词。它将生成手账顶部的正方形静物贴图。
+
+角色：${char.name}
+日期：${entry.date}
+天气：${entry.weather.emoji} ${entry.weather.description}${entry.weather.temp == null ? '' : ` / ${entry.weather.temp}℃`}
+心情：${entry.mood}
+日记正文：
+${diaryText}
+
+只描绘日记中确实提到的物品或环境细节，不要添加未发生的事件。只画静物或场景局部，不出现人物、人体、文字、水印、UI。
+画面为 1:1 正方形，现代时尚的手账插画或生活摄影感，构图清楚，适合作为小贴图。
+只输出一条英文 prompt，不要 JSON，不要标题，不要解释，不要 Markdown。`;
+    const raw = await requestGlobalCompletion(apiConfig, prompt, 600, 0.55);
+    const cleaned = cleanContent(
+        raw.replace(/```(?:text)?|```/gi, '').replace(/^(?:prompt|image prompt)\s*:\s*/i, '').replace(/^['"]|['"]$/g, ''),
+        800,
+    );
+    if (!cleaned) throw new Error('全局 API 没有返回生图提示词');
+    return cleaned;
 }
 
 export async function generateCharacterHandbookText(input: {
@@ -188,26 +249,15 @@ ${facts.lines.length ? facts.lines.join('\n') : '（今天没有可用聊天、�
 
 输出一篇 180～260 个中文字符、3～5 个自然段的日常随笔；素材不足时允许短于 180 字。正文必须自然连贯，不要逐条复述素材。
 用 runs 标记少量格式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
-stillLifePrompt 用英文描述一张与正文真实内容有关的静物方图：只画物品或环境细节，不出现人物，不出现文字、水印或界面。
+这一次只写日记文字，不要生成任何图片描述或生图提示词。
 
 只输出 JSON：
-{"mood":"不超过10字的心情","stillLifePrompt":"English still-life prompt","paragraphs":[{"runs":[{"text":"正文片段","style":"normal|highlight|wave|strike|censored|emphasis|handwritten|messy"}]}]}`;
+{"mood":"不超过10字的心情","paragraphs":[{"runs":[{"text":"正文片段","style":"normal|highlight|wave|strike|censored|emphasis|handwritten|messy"}]}]}`;
 
-    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-        body: JSON.stringify({
-            model: apiConfig.model,
-            stream: false,
-            temperature: apiConfig.temperature ?? 0.82,
-            max_tokens: 2400,
-            messages: [{ role: 'user', content: prompt }],
-        }),
-    });
-    if (!response.ok) throw new Error(`生成手账失败（HTTP ${response.status}）`);
-    const data = await safeResponseJson(response);
-    const result = parseDiary(String(data?.choices?.[0]?.message?.content || ''));
-    const entry: CharacterHandbookEntry = {
+    // 第一次全局 API：只生成文字。extractContent 同时兼容 OpenAI、Gemini、Claude 中转格式。
+    const diaryRaw = await requestGlobalCompletion(apiConfig, prompt, 2400, apiConfig.temperature ?? 0.82);
+    const result = parseCharacterHandbookDiaryResponse(diaryRaw);
+    let entry: CharacterHandbookEntry = {
         id: `${char.id}:${date}`,
         charId: char.id,
         date,
@@ -215,12 +265,19 @@ stillLifePrompt 用英文描述一张与正文真实内容有关的静物方图�
         mood: result.mood,
         weather,
         paragraphs: result.paragraphs,
-        stillLifePrompt: result.stillLifePrompt,
+        stillLifePrompt: 'a quiet tabletop still life inspired by today, square composition, no people, no text',
         sourceIds: facts.ids,
         imageStatus: char.novelAiImageGeneration?.enabled && apiConfig.novelAiImageGeneration ? 'generating' : 'none',
         schemaVersion: 1,
     };
+    // 文字先落盘。第二次全局 API 只负责提示词，失败也不会让已经生成的文字消失。
     await saveCharacterHandbook(entry);
+    try {
+        entry = { ...entry, stillLifePrompt: await generateStillLifePrompt(entry, char, apiConfig) };
+        await saveCharacterHandbook(entry);
+    } catch (error) {
+        console.warn('[Handbook] image prompt generation failed, using fallback:', error);
+    }
     return entry;
 }
 
