@@ -86,7 +86,7 @@ const Avatar: React.FC<{ character: CharacterProfile; size?: number }> = ({ char
 const ChibiPortrait: React.FC<{ character: CharacterProfile; image?: string }> = ({ character, image }) => {
     const imageUrl = useBlobRefUrl(image);
     return (
-        <div className="relative aspect-[3/4] w-full overflow-hidden rounded-[20px] border-[6px] border-white bg-white shadow-[0_10px_24px_rgba(69,55,47,0.18)]">
+        <div className="relative aspect-square w-full overflow-hidden rounded-[20px] border-[6px] border-white bg-white shadow-[0_10px_24px_rgba(69,55,47,0.18)]">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_68%,rgba(236,218,211,.6),transparent_48%)]" />
             {imageUrl ? (
                 <img src={imageUrl} alt={`${character.name}的Q版手账贴图`} draggable={false} className="relative z-10 h-full w-full object-cover" />
@@ -236,15 +236,15 @@ const HandbookDiaryPage: React.FC<{
     return (
         <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-7 pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
             <div className="absolute left-7 top-0 h-7 w-16 -rotate-2 bg-[#f6d88c]/70" />
-            <header className="relative z-10 grid grid-cols-[.92fr_1.08fr] gap-3">
+            <header className="relative z-10 grid grid-cols-[.92fr_1.08fr] items-start gap-3">
                 <div className={`pt-1 transition-all duration-700 ${revealStep >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
                     <div className="text-[26px] font-semibold tracking-tight">{Number(dateParts[1])}月{Number(dateParts[2])}日</div>
                     <div className="mt-1 text-[12px] text-[#71695f]">{entry.weather.emoji} {entry.weather.description}{entry.weather.temp == null ? '' : ` / ${entry.weather.temp}℃`}</div>
                     <div className="mt-3 inline-flex rounded-full bg-[#efd7df] px-3 py-1 text-[10px] text-[#7c5463]">心情 · {entry.mood}</div>
                     <div className="mt-3 text-[9px] tracking-[0.14em] text-[#a09387]">日常随笔</div>
                 </div>
-                <div className={`relative aspect-square overflow-hidden rounded-[14px] bg-gradient-to-br from-[#c9d4c7] via-[#ede4d2] to-[#d3b9aa] shadow-inner transition-all duration-700 ${revealStep >= 2 ? 'scale-100 opacity-100' : 'scale-[.94] opacity-0'}`}>
-                    {stillUrl ? <img src={stillUrl} alt="手账静物方图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
+                <div className={`relative aspect-[4/3] overflow-hidden rounded-[14px] bg-gradient-to-br from-[#c9d4c7] via-[#ede4d2] to-[#d3b9aa] shadow-inner transition-all duration-700 ${revealStep >= 2 ? 'scale-100 opacity-100' : 'scale-[.94] opacity-0'}`}>
+                    {stillUrl ? <img src={stillUrl} alt="手账静物横图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
                 </div>
             </header>
             <div className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}><DiaryCopy entry={entry} /></div>
@@ -364,7 +364,7 @@ const ChibiSettingsPanel: React.FC<{
                             <label className="block text-[10px] font-semibold text-[#766d64]">步数<input disabled={readOnly} type="number" min="1" max="50" step="1" className={fieldClass} value={selected.steps} onChange={event => updateSelected({ steps: Number(event.target.value) })} /></label>
                             <label className="block text-[10px] font-semibold text-[#766d64]">采样器<select disabled={readOnly} className={`${fieldClass} px-2`} value={selected.sampler} onChange={event => updateSelected({ sampler: event.target.value })}><option value="k_euler_ancestral">Euler a</option><option value="k_euler">Euler</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_dpmpp_sde">DPM++ SDE</option></select></label>
                         </div>
-                        <p className="text-[10px] leading-5 text-[#998f84]">Q版固定使用 768×1024（3:4）。画师预设只控制共同画风。</p>
+                        <p className="text-[10px] leading-5 text-[#998f84]">Q版固定使用 1024×1024（1:1 方图）。画师预设只控制共同画风。</p>
                     </section>
                     <section className="space-y-3 rounded-3xl bg-white/75 p-4 shadow-sm ring-1 ring-[#e7e0d7]">
                         <div><h3 className="text-[11px] font-semibold text-[#6d645b]">每本手账的Q版人物锚点</h3><p className="mt-1 text-[9px] leading-4 text-[#998f84]">各角色独立保存。生成时只使用这里的锚点、参考图、上方画师预设和当日心情。</p></div>

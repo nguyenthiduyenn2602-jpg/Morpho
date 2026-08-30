@@ -47,11 +47,23 @@ describe('parseCharacterHandbookDiaryResponse', () => {
         const result = parseCharacterHandbookDiaryResponse(broken);
         const rendered = result.paragraphs.flatMap(paragraph => paragraph.runs).map(run => run.text).join('');
 
-        expect(result.mood).toBe('操心又无奈');
+        expect(result.mood).toBe('无奈');
         expect(rendered).toContain('这包租公当得真像全职保姆了。');
         expect(rendered).toContain('昨晚刚吃完麻辣烫');
         expect(rendered).not.toContain('{"mood"');
         expect(result.paragraphs.flatMap(paragraph => paragraph.runs)).toContainEqual({ text: '真当那破肠胃是铁打的', style: 'strike' });
+    });
+
+    it('forces mood into the fixed adjective list and caps total diary length', () => {
+        const result = parseCharacterHandbookDiaryResponse(JSON.stringify({
+            mood: '大半夜不睡觉的小混蛋',
+            paragraphs: ['甲'.repeat(120), '乙'.repeat(120), '丙'.repeat(120)],
+        }));
+        const text = result.paragraphs.flatMap(paragraph => paragraph.runs).map(run => run.text).join('');
+
+        expect(result.mood).toBe('平静');
+        expect(Array.from(text.replace(/…/g, '')).length).toBeLessThanOrEqual(210);
+        expect(result.paragraphs.length).toBeLessThanOrEqual(4);
     });
 });
 

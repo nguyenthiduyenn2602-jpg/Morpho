@@ -57,6 +57,7 @@ export interface HandbookChibiSettings {
 const ASSET_PREFIX = 'character-handbook-v1:';
 const CHIBI_SETTINGS_ASSET_ID = 'character-handbook-chibi-settings-v1';
 const ALLOWED_STYLES = new Set<CharacterHandbookStyle>(['normal', 'highlight', 'wave', 'strike', 'censored', 'emphasis', 'handwritten', 'messy']);
+export const HANDBOOK_MOODS = ['开心', '愉快', '兴奋', '期待', '满足', '感动', '害羞', '轻松', '闲适', '平静', '安稳', '惦记', '思念', '惊讶', '困惑', '无奈', '疲惫', '焦虑', '烦躁', '生气', '委屈', '难过', '失落', '孤独', '吃醋'] as const;
 
 export const DEFAULT_HANDBOOK_CHIBI_PRESET: HandbookChibiPreset = {
     id: 'builtin-morpho-chibi',
@@ -153,7 +154,9 @@ export async function loadCharacterHandbooks(charId: string): Promise<CharacterH
                 continue;
             } catch { /* 保留原记录，用户仍可选择重新生成 */ }
         }
-        repaired.push(entry);
+        const normalized = { ...entry, mood: normalizeHandbookMood(entry.mood), paragraphs: limitHandbookParagraphs(entry.paragraphs) };
+        if (JSON.stringify(normalized) !== JSON.stringify(entry)) await saveCharacterHandbook(normalized);
+        repaired.push(normalized);
     }
     return repaired;
 }
@@ -174,6 +177,32 @@ const weatherEmoji = (icon = '', description = ''): string => {
 
 const formatTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 const cleanContent = (content: unknown, max = 320): string => String(content || '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+export function normalizeHandbookMood(value: unknown): string {
+    const mood = cleanContent(value, 24);
+    return HANDBOOK_MOODS.find(option => mood === option || mood.includes(option)) || '平静';
+}
+
+export function limitHandbookParagraphs(paragraphs: CharacterHandbookParagraph[], maxCharacters = 210): CharacterHandbookParagraph[] {
+    let remaining = maxCharacters;
+    const result: CharacterHandbookParagraph[] = [];
+    for (const paragraph of (paragraphs || []).slice(0, 4)) {
+        if (remaining <= 0) break;
+        const runs: CharacterHandbookRun[] = [];
+        for (const run of paragraph.runs || []) {
+            if (remaining <= 0) break;
+            const characters = Array.from(cleanContent(run.text, 260));
+            if (!characters.length) continue;
+            const clipped = characters.slice(0, remaining);
+            const truncated = clipped.length < characters.length;
+            const text = `${clipped.join('').replace(/[，、；：\s]+$/u, '')}${truncated ? '…' : ''}`;
+            if (text) runs.push({ text, style: run.style || 'normal' });
+            remaining -= clipped.length;
+        }
+        if (runs.length) result.push({ runs });
+    }
+    return result;
+}
 
 async function collectDiaryFacts(
     char: CharacterProfile,
@@ -253,7 +282,7 @@ const readJsonStringAt = (raw: string, start: number): { value: string; end: num
 
 const salvageTruncatedDiary = (raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[] } | null => {
     const moodMatch = raw.match(/["“]mood["”]\s*:\s*"((?:\\.|[^"\\])*)"/i);
-    const mood = moodMatch ? cleanContent(decodeJsonString(moodMatch[1]), 20) : '平静';
+    const mood = normalizeHandbookMood(moodMatch ? decodeJsonString(moodMatch[1]) : '平静');
 
     // 新版精简结构：paragraphs 直接是字符串数组，优先按原自然段抢救。
     const paragraphStart = raw.search(/["“]paragraphs["”]\s*:\s*\[/i);
@@ -269,7 +298,7 @@ const salvageTruncatedDiary = (raw: string): { mood: string; paragraphs: Charact
             cursor = found.end;
             if (!found.closed) break;
         }
-        if (paragraphs.length) return { mood, paragraphs };
+        if (paragraphs.length) return { mood, paragraphs: limitHandbookParagraphs(paragraphs) };
     }
 
     // 兼容已经保存的旧版嵌套 runs JSON：只抓完整 text 字段，绝不展示 JSON 源码。
@@ -303,7 +332,7 @@ const salvageTruncatedDiary = (raw: string): { mood: string; paragraphs: Charact
             length = 0;
         }
     });
-    return { mood, paragraphs };
+    return { mood, paragraphs: limitHandbookParagraphs(paragraphs) };
 };
 
 export function parseCharacterHandbookDiaryResponse(raw: string): { mood: string; paragraphs: CharacterHandbookParagraph[] } {
@@ -372,12 +401,12 @@ export function parseCharacterHandbookDiaryResponse(raw: string): { mood: string
             .filter(text => text && !/^[\[{].*[\]}]$/.test(text))
             .slice(0, 5)
             .map(text => ({ runs: [{ text, style: 'normal' as const }] }));
-        if (plainParagraphs.length) return { mood: '平静', paragraphs: plainParagraphs };
+        if (plainParagraphs.length) return { mood: '平静', paragraphs: limitHandbookParagraphs(plainParagraphs) };
         throw new Error('全局 API 没有返回可用的手账正文');
     }
     return {
-        mood: cleanContent(parsed.mood, 20) || '平静',
-        paragraphs,
+        mood: normalizeHandbookMood(parsed.mood),
+        paragraphs: limitHandbookParagraphs(paragraphs),
     };
 }
 
@@ -402,7 +431,7 @@ async function generateStillLifePrompt(entry: CharacterHandbookEntry, char: Char
     const diaryText = entry.paragraphs
         .map(paragraph => paragraph.runs.map(run => run.text).join(''))
         .join('\n');
-    const prompt = `请根据下面这篇已经完成的角色日记，单独写一条英文生图提示词。它将生成手账顶部的正方形静物贴图。
+    const prompt = `请根据下面这篇已经完成的角色日记，单独写一条英文生图提示词。它将生成手账右上角的小横图静物贴图。
 
 角色：${char.name}
 日期：${entry.date}
@@ -412,7 +441,7 @@ async function generateStillLifePrompt(entry: CharacterHandbookEntry, char: Char
 ${diaryText}
 
 只描绘日记中确实提到的物品或环境细节，不要添加未发生的事件。只画静物或场景局部，不出现人物、人体、文字、水印、UI。
-画面为 1:1 正方形，现代时尚的手账插画或生活摄影感，构图清楚，适合作为小贴图。
+画面为 4:3 横图，现代时尚的手账插画或生活摄影感，构图清楚，适合作为小贴图。
 只输出一条英文 prompt，不要 JSON，不要标题，不要解释，不要 Markdown。`;
     const raw = await requestGlobalCompletion(apiConfig, prompt, 600, 0.55);
     const cleaned = cleanContent(
@@ -456,12 +485,13 @@ ${cleanContent(char.systemPrompt, 3500)}
 今日素材：
 ${facts.lines.length ? facts.lines.join('\n') : '（今天没有可用聊天、群聊或朋友圈素材。只可简短写“今天没发生太多事情”一类感受，不能编造。）'}
 
-输出一篇 180～260 个中文字符、3～5 个自然段的日常随笔；素材不足时允许短于 180 字。正文必须自然连贯，不要逐条复述素材。paragraphs 直接放每个自然段的完整纯文字，不要再嵌套 runs。
+输出一篇 160～210 个中文字符、3～4 个自然段的日常随笔；绝对不能超过 210 个中文字符，素材不足时允许更短。正文必须自然连贯，不要逐条复述素材。paragraphs 直接放每个自然段的完整纯文字，不要再嵌套 runs。
 marks 只标记正文中已经原样出现的短语及样式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 的 text 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
 这一次只写日记文字，不要生成任何图片描述或生图提示词。
+心情只能从以下词表选择一个，禁止自行造句或输出词表之外的内容：${HANDBOOK_MOODS.join('、')}。
 
 只输出 JSON：
-{"mood":"不超过10字的心情","paragraphs":["第一自然段","第二自然段","第三自然段"],"marks":[{"text":"正文中原样出现的短语","style":"highlight|wave|strike|censored|emphasis|handwritten|messy"}]}`;
+{"mood":"从固定词表选择一个","paragraphs":["第一自然段","第二自然段","第三自然段"],"marks":[{"text":"正文中原样出现的短语","style":"highlight|wave|strike|censored|emphasis|handwritten|messy"}]}`;
 
     // 第一次全局 API：只生成文字。extractContent 同时兼容 OpenAI、Gemini、Claude 中转格式。
     const diaryRaw = await requestGlobalCompletion(apiConfig, prompt, 4096, apiConfig.temperature ?? 0.82);
@@ -474,7 +504,7 @@ marks 只标记正文中已经原样出现的短语及样式：highlight（荧�
         mood: result.mood,
         weather,
         paragraphs: result.paragraphs,
-        stillLifePrompt: existingEntry?.stillLifePrompt || 'a quiet tabletop still life inspired by today, square composition, no people, no text',
+        stillLifePrompt: existingEntry?.stillLifePrompt || 'a quiet tabletop still life inspired by today, 4:3 landscape composition, no people, no text',
         stillImage: existingEntry?.stillImage,
         chibiImage: existingEntry?.chibiImage,
         sourceIds: facts.ids,
@@ -499,7 +529,7 @@ async function storeHandbookImage(
     kind: 'still' | 'chibi',
 ): Promise<string> {
     const ref = typeof image === 'string' ? image : await putImageBlob(image);
-    const label = kind === 'still' ? '静物方图' : 'Q版人物竖图';
+    const label = kind === 'still' ? '静物横图' : 'Q版人物方图';
     const gallery: GalleryImage = {
         id: `handbook-${entry.charId}-${entry.date}-${kind}`,
         charId: entry.charId,
@@ -539,9 +569,9 @@ export async function generateAndSaveHandbookImages(
     let failures = 0;
     if (kinds.includes('still')) try {
         const still = await generateNovelAiImage(
-            { ...api, width: 1024, height: 1024 },
+            { ...api, width: 1024, height: 768 },
             { ...cfg, characterTags: '', userTags: '', referenceImageUrl: undefined },
-            { prompt: `${entry.stillLifePrompt}, square composition, stylish modern journal illustration, still life only, no people, no text, no watermark`, selfie: false },
+            { prompt: `${entry.stillLifePrompt}, 4:3 landscape composition, stylish modern journal illustration, still life only, no people, no text, no watermark`, selfie: false },
         );
         await update({ stillImage: await storeHandbookImage(still, entry, char, 'still') });
     } catch (error) {
@@ -552,7 +582,7 @@ export async function generateAndSaveHandbookImages(
         const chibi = await generateNovelAiImage(
             {
                 ...api,
-                width: 768,
+                width: 1024,
                 height: 1024,
                 qualityToggle: false,
                 sampler: chibiPreset.sampler,
