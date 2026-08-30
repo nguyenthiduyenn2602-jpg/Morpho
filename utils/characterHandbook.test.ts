@@ -76,8 +76,12 @@ describe('handbook chibi preset', () => {
         });
 
         expect(preset.name).toBe('Morpho特调q版');
+        expect(preset.styleTags).toContain('only one people');
         expect(preset.styleTags).toContain('artist:horuhara');
+        expect(preset.styleTags).not.toContain('kawaii atmosphere');
+        expect(preset.negativeTags).toContain('many people');
         expect(preset.negativeTags).toContain('too many fingers');
+        expect(preset.negativeTags).not.toContain('manga style');
         expect(preset.scale).toBe(6.5);
         expect(preset.steps).toBe(24);
     });
