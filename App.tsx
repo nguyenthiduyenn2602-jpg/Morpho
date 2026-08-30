@@ -3,19 +3,11 @@ import React from 'react';
 import { OSProvider } from './context/OSContext';
 import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
-import BuildBadge from './components/BuildBadge';
-import DevDebugPanel from './components/DevDebugPanel';
 import WorldBroadcast from './components/WorldBroadcast';
 import ChatBroadcast from './components/ChatBroadcast';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
-import { installDevDebugLifecycleCapture } from './utils/devDebug';
 
 const App: React.FC = () => {
-  React.useEffect(() => {
-    // 常驻监听前后台 / 焦点 / 网络事件；抓不抓由 devDebug 的 lifecycle 类勾选决定
-    installDevDebugLifecycleCapture();
-  }, []);
-
   const useAbsoluteShell = typeof window !== 'undefined' && isIOSStandaloneWebApp();
   const shellClassName = useAbsoluteShell
     ? 'fixed inset-0 w-full h-full bg-transparent overflow-hidden'
@@ -41,8 +33,6 @@ const App: React.FC = () => {
           </OSProvider>
         </div>
       </div>
-      <BuildBadge />
-      <DevDebugPanel />
       <WorldBroadcast />
       <ChatBroadcast />
     </>
