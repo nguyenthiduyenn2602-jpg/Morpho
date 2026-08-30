@@ -517,7 +517,9 @@ const HandbookApp: React.FC = () => {
             } else {
                 const replacement = await generateAndSaveHandbookImages(entry, openNotebook.character, apiConfig, insertEntry, [kind]);
                 insertEntry(replacement);
-                if (replacement.imageStatus === 'failed' || replacement.imageStatus === 'partial') addToast(`${kind === 'still' ? '图片1' : '图片2'}重新生成未完成，原图已保留`, 'info');
+                const previousImage = kind === 'still' ? entry.stillImage : entry.chibiImage;
+                const nextImage = kind === 'still' ? replacement.stillImage : replacement.chibiImage;
+                if (!nextImage || nextImage === previousImage) addToast(`${kind === 'still' ? '图片1' : '图片2'}重新生成未完成，原图已保留`, 'info');
                 else addToast(`${kind === 'still' ? '图片1' : '图片2'}已重新生成并保存到角色相册`, 'success');
             }
         } catch (error) {
