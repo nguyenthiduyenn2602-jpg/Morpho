@@ -125,6 +125,7 @@ const ACNH_ICON_MAP: Partial<Record<AppID, React.ReactNode>> = {
   [AppID.Novel]: draw([21, 24, 79, 77], bookGlyph),
   [AppID.Study]: draw([21, 24, 79, 77], bookGlyph),
   [AppID.Worldbook]: draw([21, 24, 79, 77], bookGlyph),
+  [AppID.Handbook]: draw([21, 24, 79, 77], bookGlyph),
   [AppID.Guidebook]: draw([21, 24, 79, 77], bookGlyph),
   [AppID.Schedule]: draw([22, 20, 78, 80], <>
     <rect x="22" y="26" width="56" height="54" rx="8" fill={CREAM} />
@@ -209,6 +210,7 @@ const ACTION_TILES: Record<string, { color: string; bbox: [number, number, numbe
   image: { color: '#82D5BB', bbox: [17, 25, 83, 79], glyph: camGlyph('#FC736D') },
   regenerate: { color: '#889DF0', bbox: [22, 25, 76, 77], glyph: refreshGlyph },
   proactive: { color: '#8AC68A', bbox: [9, 24, 91, 72], glyph: chatGlyph },
+  handbook: { color: '#E99BC2', bbox: [21, 24, 79, 77], glyph: bookGlyph2 },
   schedule: { color: '#FC736D', bbox: [22, 20, 78, 80], glyph: calGlyph },
 };
 

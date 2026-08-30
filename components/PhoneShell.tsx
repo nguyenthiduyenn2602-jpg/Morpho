@@ -87,7 +87,7 @@ const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.Appearance]: Appearance,
+  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.Handbook]: HandbookApp, [AppID.Appearance]: Appearance,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
