@@ -60,6 +60,7 @@ describe('handbook chibi preset', () => {
         const preset = resolveHandbookChibiPreset({
             selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id,
             customPresets: [],
+            characterAnchors: {},
         });
 
         expect(preset.name).toBe('Morpho特调q版');
@@ -71,7 +72,7 @@ describe('handbook chibi preset', () => {
 
     it('resolves a separately created custom preset without changing the built-in', () => {
         const custom = { ...DEFAULT_HANDBOOK_CHIBI_PRESET, id: 'custom', name: '我的Q版', builtIn: false, scale: 7 };
-        const preset = resolveHandbookChibiPreset({ selectedPresetId: custom.id, customPresets: [custom] });
+        const preset = resolveHandbookChibiPreset({ selectedPresetId: custom.id, customPresets: [custom], characterAnchors: {} });
 
         expect(preset.name).toBe('我的Q版');
         expect(preset.scale).toBe(7);

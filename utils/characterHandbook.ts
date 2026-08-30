@@ -51,6 +51,7 @@ export interface HandbookChibiPreset {
 export interface HandbookChibiSettings {
     selectedPresetId: string;
     customPresets: HandbookChibiPreset[];
+    characterAnchors: Record<string, { characterTags: string; referenceImageUrl: string }>;
 }
 
 const ASSET_PREFIX = 'character-handbook-v1:';
@@ -92,9 +93,13 @@ export async function loadHandbookChibiSettings(): Promise<HandbookChibiSettings
             || customPresets.some(preset => preset.id === saved?.selectedPresetId)
             ? String(saved?.selectedPresetId)
             : DEFAULT_HANDBOOK_CHIBI_PRESET.id;
-        return { selectedPresetId, customPresets };
+        const characterAnchors = Object.fromEntries(Object.entries(saved?.characterAnchors || {}).map(([charId, anchor]) => [charId, {
+            characterTags: String((anchor as any)?.characterTags || '').trim(),
+            referenceImageUrl: String((anchor as any)?.referenceImageUrl || '').trim(),
+        }]));
+        return { selectedPresetId, customPresets, characterAnchors };
     } catch {
-        return { selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [] };
+        return { selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [], characterAnchors: {} };
     }
 }
 
@@ -104,7 +109,11 @@ export async function saveHandbookChibiSettings(settings: HandbookChibiSettings)
         || customPresets.some(preset => preset.id === settings.selectedPresetId)
         ? settings.selectedPresetId
         : DEFAULT_HANDBOOK_CHIBI_PRESET.id;
-    const normalized = { selectedPresetId, customPresets };
+    const characterAnchors = Object.fromEntries(Object.entries(settings.characterAnchors || {}).map(([charId, anchor]) => [charId, {
+        characterTags: String(anchor?.characterTags || '').trim(),
+        referenceImageUrl: String(anchor?.referenceImageUrl || '').trim(),
+    }]));
+    const normalized = { selectedPresetId, customPresets, characterAnchors };
     await DB.saveAssetRaw(CHIBI_SETTINGS_ASSET_ID, normalized);
     return normalized;
 }
@@ -518,7 +527,9 @@ export async function generateAndSaveHandbookImages(
         onUpdate?.(withoutImages);
         return withoutImages;
     }
-    const chibiPreset = resolveHandbookChibiPreset(await loadHandbookChibiSettings());
+    const chibiSettings = await loadHandbookChibiSettings();
+    const chibiPreset = resolveHandbookChibiPreset(chibiSettings);
+    const chibiAnchor = chibiSettings.characterAnchors[char.id] || { characterTags: '', referenceImageUrl: '' };
     let current = { ...entry, imageStatus: 'generating' as const };
     const update = async (patch: Partial<CharacterHandbookEntry>) => {
         current = { ...current, ...patch };
@@ -549,14 +560,17 @@ export async function generateAndSaveHandbookImages(
                 scale: chibiPreset.scale,
             },
             {
-                ...cfg,
+                enabled: true,
                 styleTags: chibiPreset.styleTags,
+                characterTags: chibiAnchor.characterTags,
                 qualityTags: '',
                 disableQualityTags: true,
                 negativeTags: chibiPreset.negativeTags,
                 userTags: '',
+                referenceStrength: 0.6,
             },
-            { prompt: `one full-body chibi version of ${char.name}, mood: ${entry.mood}, expressive relaxed pose, fashionable cute sticker illustration, pure white background, centered composition, 3:4 portrait, no text, no watermark`, selfie: false },
+            { prompt: `mood: ${entry.mood}`, selfie: false },
+            chibiAnchor.referenceImageUrl ? [chibiAnchor.referenceImageUrl] : [],
         );
         await update({ chibiImage: await storeHandbookImage(chibi, entry, char, 'chibi') });
     } catch (error) {

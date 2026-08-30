@@ -288,12 +288,14 @@ const EndPage: React.FC<{ onGenerate: (regenerate: boolean) => void }> = ({ onGe
 
 const ChibiSettingsPanel: React.FC<{
     initial: HandbookChibiSettings;
+    characters: CharacterProfile[];
     onClose: () => void;
     onSave: (settings: HandbookChibiSettings) => Promise<void>;
-}> = ({ initial, onClose, onSave }) => {
+}> = ({ initial, characters, onClose, onSave }) => {
     const [draft, setDraft] = useState<HandbookChibiSettings>(() => ({
         selectedPresetId: initial.selectedPresetId,
         customPresets: initial.customPresets.map(preset => ({ ...preset })),
+        characterAnchors: Object.fromEntries(Object.entries(initial.characterAnchors || {}).map(([charId, anchor]) => [charId, { ...anchor }])),
     }));
     const [saving, setSaving] = useState(false);
     const presets = [DEFAULT_HANDBOOK_CHIBI_PRESET, ...draft.customPresets];
@@ -320,6 +322,7 @@ const ChibiSettingsPanel: React.FC<{
     const removePreset = () => {
         if (readOnly) return;
         setDraft(current => ({
+            ...current,
             selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id,
             customPresets: current.customPresets.filter(preset => preset.id !== current.selectedPresetId),
         }));
@@ -361,7 +364,19 @@ const ChibiSettingsPanel: React.FC<{
                             <label className="block text-[10px] font-semibold text-[#766d64]">步数<input disabled={readOnly} type="number" min="1" max="50" step="1" className={fieldClass} value={selected.steps} onChange={event => updateSelected({ steps: Number(event.target.value) })} /></label>
                             <label className="block text-[10px] font-semibold text-[#766d64]">采样器<select disabled={readOnly} className={`${fieldClass} px-2`} value={selected.sampler} onChange={event => updateSelected({ sampler: event.target.value })}><option value="k_euler_ancestral">Euler a</option><option value="k_euler">Euler</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_dpmpp_sde">DPM++ SDE</option></select></label>
                         </div>
-                        <p className="text-[10px] leading-5 text-[#998f84]">Q版固定使用 768×1024（3:4）白底竖图；人物锚点仍读取角色自己的生图 2.0 配置。</p>
+                        <p className="text-[10px] leading-5 text-[#998f84]">Q版固定使用 768×1024（3:4）。画师预设只控制共同画风。</p>
+                    </section>
+                    <section className="space-y-3 rounded-3xl bg-white/75 p-4 shadow-sm ring-1 ring-[#e7e0d7]">
+                        <div><h3 className="text-[11px] font-semibold text-[#6d645b]">每本手账的Q版人物锚点</h3><p className="mt-1 text-[9px] leading-4 text-[#998f84]">各角色独立保存。生成时只使用这里的锚点、参考图、上方画师预设和当日心情。</p></div>
+                        {characters.map(character => {
+                            const anchor = draft.characterAnchors[character.id] || { characterTags: '', referenceImageUrl: '' };
+                            const updateAnchor = (patch: Partial<typeof anchor>) => setDraft(current => ({ ...current, characterAnchors: { ...current.characterAnchors, [character.id]: { ...(current.characterAnchors[character.id] || { characterTags: '', referenceImageUrl: '' }), ...patch } } }));
+                            return <div key={character.id} className="rounded-2xl border border-[#e5ddd3] bg-[#faf8f4] p-3">
+                                <div className="text-[11px] font-semibold text-[#625950]">{character.name}</div>
+                                <label className="mt-2 block text-[10px] font-semibold text-[#766d64]">Q版人物锚点提示词<textarea className={`${fieldClass} min-h-24 resize-y leading-5`} value={anchor.characterTags} onChange={event => updateAnchor({ characterTags: event.target.value })} placeholder="发型、发色、眼睛、服装等固定人物特征" /></label>
+                                <label className="mt-2 block text-[10px] font-semibold text-[#766d64]">Q版参考图 URL<input type="url" className={fieldClass} value={anchor.referenceImageUrl} onChange={event => updateAnchor({ referenceImageUrl: event.target.value })} placeholder="https://…（允许外链读取的图片直链）" /></label>
+                            </div>;
+                        })}
                     </section>
                     <button type="button" disabled={saving} onClick={() => void save()} className="w-full rounded-2xl bg-[#596151] py-3.5 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? '保存中…' : '保存Q版设置'}</button>
                 </div>
@@ -382,7 +397,7 @@ const HandbookApp: React.FC = () => {
     const [entries, setEntries] = useState<CharacterHandbookEntry[]>([]);
     const [loadingEntries, setLoadingEntries] = useState(false);
     const [chibiSettingsOpen, setChibiSettingsOpen] = useState(false);
-    const [chibiSettings, setChibiSettings] = useState<HandbookChibiSettings>({ selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [] });
+    const [chibiSettings, setChibiSettings] = useState<HandbookChibiSettings>({ selectedPresetId: DEFAULT_HANDBOOK_CHIBI_PRESET.id, customPresets: [], characterAnchors: {} });
     const [regeneratingPart, setRegeneratingPart] = useState<'text' | 'still' | 'chibi' | null>(null);
 
     const notebooks = useMemo(() => characters.map((character, index) => ({ character, config: coverConfigs[character.id] ?? makeDefaultCover(character, index) })), [characters, coverConfigs]);
@@ -616,7 +631,7 @@ const HandbookApp: React.FC = () => {
                         <button type="button" onClick={() => goToPage(pageCount - 1)} disabled={pageIndex === pageCount - 1} className="flex items-center gap-1 rounded-full px-2 py-2 text-[10px] text-[#777067] disabled:opacity-30">末页 <SkipForward size={15} /></button>
                     </nav>
                 )}
-                {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
+                {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
             </div>
         );
     }
@@ -633,7 +648,7 @@ const HandbookApp: React.FC = () => {
             <main className="px-5 py-6">
                 {notebooks.length > 0 ? <div className="grid grid-cols-2 gap-5">{notebooks.map(({ character, config }) => <button key={character.id} type="button" onClick={() => { setEntries([]); setOpenCharacterId(character.id); setPageIndex(0); setGenerationState('idle'); setRevealStep(0); }} className="aspect-[3/4] min-w-0 text-left transition-transform active:scale-[0.98]"><BookCover character={character} config={config} /></button>)}</div> : <div className="py-16 text-center text-sm text-[#8b857b]">神经链接中还没有角色</div>}
             </main>
-            {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
+            {chibiSettingsOpen && <ChibiSettingsPanel initial={chibiSettings} characters={characters} onClose={() => setChibiSettingsOpen(false)} onSave={persistChibiSettings} />}
         </div>
     );
 };
