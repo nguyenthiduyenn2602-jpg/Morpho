@@ -1,4 +1,4 @@
-import type { APIConfig, CharacterExportData, CharacterProfile, UserProfile } from '../types';
+import type { APIConfig, CharacterExportData, CharacterProfile, Message, UserProfile } from '../types';
 import { extractContent, extractJson, safeFetchJson } from './safeApi';
 import { stripSensitiveCardFields } from './characterCard';
 
@@ -123,6 +123,48 @@ export function saveMihuiState(state: MihuiState): void {
     } catch (error) {
         console.error('[Mihui] 保存本地会话失败（可能是照片占用空间过大）', error);
     }
+}
+
+/**
+ * 给熟人彩蛋补齐神经链接里的连续上下文。包含已归档记忆和最近私聊原文，
+ * 但严格限长，避免密会每轮请求被长期聊天撑爆。
+ */
+export function buildMihuiFamiliarContinuity(
+    character: CharacterProfile,
+    recentMessages: Message[],
+): string {
+    const memories = (character.memories || []).slice(-12).map(memory => {
+        const date = memory.date ? `[${String(memory.date).slice(0, 10)}] ` : '';
+        return `${date}${memory.summary}${memory.mood ? `（${memory.mood}）` : ''}`;
+    }).join('\n').slice(-4200);
+    const chat = recentMessages.slice(-36).map(message => {
+        const sender = message.role === 'user' ? '用户' : character.name;
+        const content = message.type === 'image'
+            ? '[图片]'
+            : message.type === 'voice'
+                ? '[语音]'
+                : String(message.content || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        return content ? `${sender}：${content}` : '';
+    }).filter(Boolean).join('\n').slice(-6200);
+    return [
+        memories ? `【已有长期记忆】\n${memories}` : '',
+        chat ? `【神经链接最近私聊】\n${chat}` : '',
+    ].filter(Boolean).join('\n\n');
+}
+
+/** 揭晓前也持续写回原角色的单条可更新记忆，既不刷屏，也不会让两边失忆。 */
+export function buildMihuiFamiliarMemorySummary(
+    session: MihuiSession,
+    realName: string,
+    userName = '用户',
+): string {
+    const transcript = session.messages.slice(-30)
+        .map(message => `${message.role === 'user' ? userName : session.persona.name}：${mihuiMessageSummary(message)}`)
+        .join('\n');
+    const revealState = session.familiar?.revealedAt
+        ? '身份已经揭晓，可以承认并自然续接这段经历。'
+        : `身份尚未揭晓。你清楚自己就是${realName}，不要把用户当陌生人，也不要明确否认你们认识；可以用化名回避、装傻或试探，但不要主动剧透真实身份。`;
+    return `你正在「密会」中使用化名「${session.persona.name}」与${userName}聊天。这是你亲自经历的真实连续事件。${revealState}\n密会近期记录：\n${transcript}`;
 }
 
 const boundedText = (value: unknown, fallback = '', max = 800): string => {
@@ -298,6 +340,7 @@ export async function generateMihuiFamiliarPersona(
     user: UserProfile,
     character: CharacterProfile,
     prefs: MihuiPreferences,
+    familiarContinuity = '',
 ): Promise<MihuiPersona> {
     const raw = await callGlobalApi(api, [
         {
@@ -306,7 +349,7 @@ export async function generateMihuiFamiliarPersona(
         },
         {
             role: 'user',
-            content: `用户：${user.name || '用户'}\n用户资料：${user.bio || '未填写'}\n真实角色名（只供后台理解，严禁输出）：${character.name}\n真实角色简介：${character.description || '无'}\n真实角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n用户当前快速匹配偏好：${genderLine(prefs)}，${prefs.ageMin}-${prefs.ageMax}岁。`,
+            content: `用户：${user.name || '用户'}\n用户资料：${user.bio || '未填写'}\n真实角色名（只供后台理解，严禁输出）：${character.name}\n真实角色简介：${character.description || '无'}\n真实角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n${familiarContinuity ? `真实角色与用户的连续记忆（只供后台理解，不能照抄或直接暴露身份）：\n${familiarContinuity}\n` : ''}用户当前快速匹配偏好：${genderLine(prefs)}，${prefs.ageMin}-${prefs.ageMax}岁。`,
         },
     ], 0.9, 1600);
     const persona = normalizePersona(extractJsonObject(raw), prefs);
@@ -372,6 +415,7 @@ export async function generateMihuiReply(
     user: UserProfile,
     session: MihuiSession,
     sourceCharacter?: CharacterProfile,
+    familiarContinuity = '',
 ): Promise<MihuiReplyResult> {
     const history = session.messages.slice(-24).map(message => {
         if (message.type === 'image' && message.role === 'user') {
@@ -395,9 +439,9 @@ export async function generateMihuiReply(
     const persona = session.persona;
     const familiar = session.familiar;
     const hiddenFamiliarPrompt = familiar && !familiar.revealedAt
-        ? `\n[隐藏身份规则] 你实际上是用户神经链接里的熟人「${familiar.realName}」，当前故意使用化名「${persona.name}」。你的真实设定如下：\n${sourceCharacter?.systemPrompt || familiar.systemPrompt}\n${sourceCharacter?.description || familiar.description}\n${sourceCharacter?.worldview || familiar.worldview || ''}\n必须以真实角色的性格和记忆回应，但在系统通知身份揭晓前，绝不能直接说出真名、头像、原职业或明确共同经历；只允许非常轻微的熟悉感。`
+        ? `\n[隐藏身份规则] 你实际上是用户神经链接里的熟人「${familiar.realName}」，当前故意使用化名「${persona.name}」。你从始至终都清楚对方是谁，也记得你们已有的关系和经历。你的真实设定如下：\n${sourceCharacter?.systemPrompt || familiar.systemPrompt}\n${sourceCharacter?.description || familiar.description}\n${sourceCharacter?.worldview || familiar.worldview || ''}\n${familiarContinuity ? `你与用户的连续记忆如下：\n${familiarContinuity}\n` : ''}必须以真实角色的性格、感情与记忆回应。身份揭晓前不能直接说出真名、头像或原职业，也不要把共同经历完整复述成证据；但绝对禁止明确声称“我们不认识”“第一次见”或真的把用户当陌生人。被试探时可以符合性格地回避、装傻、反问、调侃或露出熟悉的细节。`
         : familiar?.revealedAt
-            ? `\n[身份已揭晓] 你就是「${familiar.realName}」，不再使用化名隐瞒。继续承接密会里发生的一切。`
+            ? `\n[身份已揭晓] 你就是「${familiar.realName}」，不再使用化名隐瞒。继续承接密会里发生的一切。${familiarContinuity ? `\n你与用户此前的连续记忆：\n${familiarContinuity}` : ''}`
             : '';
     const raw = await callGlobalApi(api, [
         {

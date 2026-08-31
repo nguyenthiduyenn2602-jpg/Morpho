@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     affinityDelta,
     affinityStage,
+    buildMihuiFamiliarContinuity,
+    buildMihuiFamiliarMemorySummary,
     buildMihuiRevealLine,
     buildMihuiCharacterCard,
     clampAffinity,
@@ -114,5 +116,29 @@ describe('mihui core', () => {
     it('creates a local personality-flavoured reveal line without another API call', () => {
         expect(buildMihuiRevealLine({ name: '苏郁', description: '毒舌又腹黑', systemPrompt: '', memories: [] } as any)).toContain('胆子不小');
         expect(buildMihuiRevealLine({ name: '秦少川', description: '冷静寡言', systemPrompt: '', memories: [] } as any)).toContain('不瞒你了');
+    });
+
+    it('carries long-term memories and archived private chat into a familiar match', () => {
+        const continuity = buildMihuiFamiliarContinuity({
+            id: 'a', name: '苏郁', memories: [{ id: 'mem-1', date: '2026-08-31', summary: '答应陪用户去夜市', mood: '期待' }],
+        } as any, [
+            { id: 1, charId: 'a', role: 'user', type: 'text', content: '别忘了我们约好的夜市', timestamp: 1 },
+            { id: 2, charId: 'a', role: 'assistant', type: 'text', content: '记得。', timestamp: 2 },
+        ] as any);
+        expect(continuity).toContain('答应陪用户去夜市');
+        expect(continuity).toContain('用户：别忘了我们约好的夜市');
+        expect(continuity).toContain('苏郁：记得。');
+    });
+
+    it('writes a live familiar memory that forbids pretending to be a real stranger', () => {
+        const summary = buildMihuiFamiliarMemorySummary({
+            id: 's1', affinity: 20, createdAt: 1, updatedAt: 2,
+            persona: { name: '林默', age: 29, gender: '男性', occupation: '编辑', city: '北京', appearance: '', personality: '', socialStyle: '', relationshipIntent: '', background: '', greeting: '' },
+            familiar: { characterId: 'a', realName: '苏郁', description: '', systemPrompt: '' },
+            messages: [{ id: 'm1', role: 'user', content: '你是不是认识我', timestamp: 1 }],
+        }, '苏郁', '小眠');
+        expect(summary).toContain('不要把用户当陌生人');
+        expect(summary).toContain('不要明确否认你们认识');
+        expect(summary).toContain('小眠：你是不是认识我');
     });
 });

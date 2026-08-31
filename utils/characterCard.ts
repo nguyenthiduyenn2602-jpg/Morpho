@@ -51,6 +51,7 @@ export const CARD_STRIPPED_FIELDS = [
   'activeBuffs',
   'buffInjection',
   'memoryPalaceInjection',
+  'mihuiContinuity',
   'savedDateState',
   'savedRoomState',
   'lastRoomDate',

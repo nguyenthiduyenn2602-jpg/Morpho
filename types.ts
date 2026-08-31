@@ -2316,6 +2316,8 @@ export interface CharacterProfile {
   /** 角色分组：指向 CharacterGroup.id；空或指向已删分组 = 未分组。仅本地组织用，不随角色卡导出 */
   groupId?: string;
   memories: MemoryFragment[];
+  /** 密会熟人彩蛋的跨 App 连续记忆；每轮覆写，始终注入私聊但不随角色卡外发。 */
+  mihuiContinuity?: string;
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
   

@@ -48,6 +48,11 @@ export const ContextBuilder = {
             context += `### 世界观与设定\n${char.worldview}\n\n`;
         }
 
+        // 密会熟人彩蛋是正在发生的跨 App 经历，不能被记忆宫殿的 skipMemories 过滤。
+        if (char.mihuiContinuity?.trim()) {
+            context += `### 跨应用连续经历 · 密会\n${char.mihuiContinuity.trim()}\n\n`;
+        }
+
         // 4. 记忆摘要（月度总结 + 当月日度总结）
         //    开启记忆宫殿时 skipMemories=true，由调用方注入向量检索结果替代
         if (!options?.skipMemories) {
@@ -173,6 +178,11 @@ export const ContextBuilder = {
         // 2. 世界观 (Worldview) - New Centralized Logic
         if (char.worldview && char.worldview.trim() && !groupOptions?.skipWorldview) {
             context += `### 世界观与设定 (World Settings)\n${char.worldview}\n\n`;
+        }
+
+        // 始终注入密会熟人连续经历：主私聊即使启用了记忆宫殿，也必须承接密会中的互动。
+        if (char.mihuiContinuity?.trim()) {
+            context += `### 跨应用连续经历 · 密会\n${char.mihuiContinuity.trim()}\n\n`;
         }
 
         context += formatWorldbookSection(worldbookSections.afterCharacter, '扩展设定集 (Worldbooks)');

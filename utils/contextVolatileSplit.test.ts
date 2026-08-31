@@ -65,4 +65,13 @@ describe('buildCoreContext deferVolatile 分层', () => {
         expect(volatile).not.toContain('【召回片段】');
         expect(volatile).toContain('### 当前时间 (Now)');
     });
+
+    it('密会熟人连续经历不受记忆宫殿和 deferVolatile 过滤', () => {
+        const char = { ...makeChar(), mihuiContinuity: '身份未揭晓，但记得昨晚在密会聊过夜市。' };
+        const core = ContextBuilder.buildCoreContext(char, user, true, undefined, undefined, undefined, { deferVolatile: true });
+        const roleSettings = ContextBuilder.buildRoleSettingsContext(char, { skipMemories: true });
+        expect(core).toContain('跨应用连续经历 · 密会');
+        expect(core).toContain('昨晚在密会聊过夜市');
+        expect(roleSettings).toContain('昨晚在密会聊过夜市');
+    });
 });

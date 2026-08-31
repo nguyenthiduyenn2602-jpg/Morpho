@@ -20,12 +20,14 @@ import {
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
-import { AppID, type CharacterExportData } from '../types';
+import { AppID, type CharacterExportData, type CharacterProfile } from '../types';
 import { processImage } from '../utils/file';
 import { DB } from '../utils/db';
 import {
     affinityDelta,
     affinityStage,
+    buildMihuiFamiliarContinuity,
+    buildMihuiFamiliarMemorySummary,
     buildMihuiRevealLine,
     buildMihuiCharacterCard,
     clampAffinity,
@@ -174,6 +176,43 @@ const MihuiApp: React.FC = () => {
         setDraftPrefs(prev => ({ ...prev, [key]: value }));
     };
 
+    const loadFamiliarContinuity = async (character: CharacterProfile): Promise<string> => {
+        try {
+            // includeProcessed=true：即使私聊已被记忆宫殿归档，也仍可供密会熟人续接。
+            const recent = await DB.getRecentMessagesByCharId(character.id, 36, true);
+            return buildMihuiFamiliarContinuity(character, recent);
+        } catch (error) {
+            console.warn('[Mihui] 读取熟人连续上下文失败，回退角色长期记忆', error);
+            return buildMihuiFamiliarContinuity(character, []);
+        }
+    };
+
+    const syncFamiliarContinuity = async (session: MihuiSession): Promise<void> => {
+        const familiar = session.familiar;
+        if (!familiar) return;
+        const character = characters.find(item => item.id === familiar.characterId);
+        if (!character) return;
+        const memoryId = `mihui-live-${session.id}`;
+        const now = Date.now();
+        const continuity = buildMihuiFamiliarMemorySummary(session, character.name, userProfile.name || '用户');
+        const nextMemory = {
+            id: memoryId,
+            date: new Date(now).toISOString(),
+            summary: continuity,
+            mood: familiar.revealedAt ? '密会身份已经揭晓' : '在密会中以化名保持联系',
+        };
+        await updateCharacter(character.id, previous => {
+            const memories = previous.memories || [];
+            const index = memories.findIndex(memory => memory.id === memoryId);
+            return {
+                mihuiContinuity: continuity,
+                memories: index >= 0
+                    ? memories.map((memory, memoryIndex) => memoryIndex === index ? nextMemory : memory)
+                    : [...memories, nextMemory],
+            };
+        });
+    };
+
     const match = async (quick = false) => {
         if (matching) return;
         if (!apiConfig.baseUrl?.trim() || !apiConfig.model?.trim()) {
@@ -187,8 +226,9 @@ const MihuiApp: React.FC = () => {
         try {
             const prefs = quick ? { ...DEFAULT_MIHUI_PREFERENCES, ...state.preferences } : draftPrefs;
             const familiar = quick ? pickMihuiFamiliar(characters, state.sessions) : undefined;
+            const familiarContinuity = familiar ? await loadFamiliarContinuity(familiar) : '';
             const persona = familiar
-                ? await generateMihuiFamiliarPersona(apiConfig, userProfile, familiar, prefs)
+                ? await generateMihuiFamiliarPersona(apiConfig, userProfile, familiar, prefs, familiarContinuity)
                 : await generateMihuiPersona(apiConfig, userProfile, prefs, quick);
             const now = Date.now();
             const session: MihuiSession = {
@@ -209,6 +249,7 @@ const MihuiApp: React.FC = () => {
                     },
                 } : {}),
             };
+            if (familiar) await syncFamiliarContinuity(session).catch(error => console.warn('[Mihui] 初始熟人记忆回写失败', error));
             setState(prev => ({
                 ...prev,
                 version: 1,
@@ -274,16 +315,17 @@ const MihuiApp: React.FC = () => {
             });
         }
 
-        updateActive(session => {
-            const alreadyHasLine = session.messages.some(message => message.content === line);
-            return {
-                ...session,
-                linkedCharacterId: character.id,
-                familiar: { ...session.familiar!, realName: character.name, avatar: character.avatar, revealedAt: session.familiar?.revealedAt || now, revealLine: line, syncedAt: now },
-                messages: alreadyHasLine ? session.messages : [...session.messages, { id: messageId(), role: 'assistant', type: 'text', content: line, timestamp: now }],
-                updatedAt: now,
-            };
-        });
+        const alreadyHasLine = target.messages.some(message => message.content === line);
+        const revealedSession: MihuiSession = {
+            ...target,
+            linkedCharacterId: character.id,
+            familiar: { ...target.familiar!, realName: character.name, avatar: character.avatar, revealedAt: target.familiar?.revealedAt || now, revealLine: line, syncedAt: now },
+            messages: alreadyHasLine ? target.messages : [...target.messages, { id: messageId(), role: 'assistant', type: 'text', content: line, timestamp: now }],
+            updatedAt: now,
+        };
+        updateActive(() => revealedSession);
+        await syncFamiliarContinuity(revealedSession)
+            .catch(error => console.warn('[Mihui] 揭晓后的熟人记忆回写失败', error));
         addToast(`原来是 ${character.name}`, 'success');
         return character.id;
     };
@@ -297,7 +339,8 @@ const MihuiApp: React.FC = () => {
             const sourceCharacter = requestSession.familiar
                 ? characters.find(character => character.id === requestSession.familiar?.characterId)
                 : undefined;
-            const result = await generateMihuiReply(apiConfig, userProfile, requestSession, sourceCharacter);
+            const familiarContinuity = sourceCharacter ? await loadFamiliarContinuity(sourceCharacter) : '';
+            const result = await generateMihuiReply(apiConfig, userProfile, requestSession, sourceCharacter, familiarContinuity);
             const replyTurnId = `mh-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const replyTimestamp = Date.now();
             const assistantMessages: MihuiMessage[] = result.bubbles.map((content, index) => ({
@@ -305,10 +348,18 @@ const MihuiApp: React.FC = () => {
             }));
             const nextAffinity = clampAffinity(activeSession.affinity + affinityDelta(result.signal, affinityText));
             const becameFull = activeSession.affinity < 100 && nextAffinity >= 100;
+            const completedSession: MihuiSession = {
+                ...requestSession,
+                affinity: nextAffinity,
+                messages: [...requestSession.messages, ...assistantMessages],
+                updatedAt: Date.now(),
+            };
             updateActive(session => {
                 const affinity = clampAffinity(session.affinity + affinityDelta(result.signal, affinityText));
                 return { ...session, affinity, messages: [...session.messages, ...assistantMessages], updatedAt: Date.now() };
             });
+            if (requestSession.familiar) await syncFamiliarContinuity(completedSession)
+                .catch(error => console.warn('[Mihui] 熟人密会记忆回写失败', error));
             if (becameFull && requestSession.familiar && !requestSession.familiar.revealedAt) {
                 await revealFamiliar({ ...requestSession, affinity: nextAffinity, messages: [...requestSession.messages, ...assistantMessages] });
                 setShowGraduation(true);
@@ -415,13 +466,14 @@ const MihuiApp: React.FC = () => {
             const sourceCharacter = activeSession.familiar
                 ? characters.find(character => character.id === activeSession.familiar?.characterId)
                 : undefined;
-            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history }, sourceCharacter);
+            const familiarContinuity = sourceCharacter ? await loadFamiliarContinuity(sourceCharacter) : '';
+            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history }, sourceCharacter, familiarContinuity);
             const replyTurnId = targetTurnId || `mh-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const replyTimestamp = Date.now();
             const replacements: MihuiMessage[] = result.bubbles.map((content, index) => ({
                 id: messageId(), role: 'assistant', type: 'text', content, turnId: replyTurnId, timestamp: replyTimestamp + index,
             }));
-            updateActive(session => {
+            const applyReplacements = (session: MihuiSession): MihuiSession => {
                 const firstIndex = targetTurnId
                     ? session.messages.findIndex(message => message.role === 'assistant' && message.turnId === targetTurnId)
                     : session.messages.findIndex(message => message.id === target.id);
@@ -430,7 +482,11 @@ const MihuiApp: React.FC = () => {
                     : session.messages.filter(message => message.id !== target.id);
                 retained.splice(Math.max(0, firstIndex), 0, ...replacements);
                 return { ...session, messages: retained, updatedAt: Date.now() };
-            });
+            };
+            const replacedSession = applyReplacements(activeSession);
+            updateActive(applyReplacements);
+            if (activeSession.familiar) await syncFamiliarContinuity(replacedSession)
+                .catch(error => console.warn('[Mihui] 重生成后的熟人记忆回写失败', error));
             addToast('已换一种回复，好感度保持不变', 'success');
         } catch (error: any) {
             addToast(error?.message || '重新生成失败', 'error');
@@ -442,7 +498,10 @@ const MihuiApp: React.FC = () => {
     const deleteSelectedMessage = () => {
         if (!selectedMessage) return;
         const deletedId = selectedMessage.id;
+        const nextSession = activeSession ? removeMihuiMessage(activeSession, deletedId) : undefined;
         updateActive(session => removeMihuiMessage(session, deletedId));
+        if (nextSession?.familiar) void syncFamiliarContinuity(nextSession)
+            .catch(error => console.warn('[Mihui] 删除消息后的熟人记忆回写失败', error));
         setSelectedMessage(null);
         addToast('消息已删除，好感度保持不变', 'success');
     };

@@ -42,6 +42,7 @@ describe('stripSensitiveCardFields', () => {
       // 运行时状态
       activeBuffs: [{ id: 'b1' }],
       buffInjection: '（开心）',
+      mihuiContinuity: '在密会中发生的私密对话',
       phoneState: { records: [] },
       savedDateState: { foo: 1 },
     };
@@ -55,7 +56,7 @@ describe('stripSensitiveCardFields', () => {
 
     // 全部被剥离
     for (const key of ['bubbleStyle', 'chatFineTune', 'chromeCustomCss', 'embeddedTheme', 'chatBackground',
-      'chatVoiceLang', 'dateVoiceLang', 'activeBuffs', 'buffInjection', 'phoneState', 'savedDateState']) {
+      'chatVoiceLang', 'dateVoiceLang', 'activeBuffs', 'buffInjection', 'mihuiContinuity', 'phoneState', 'savedDateState']) {
       expect(out).not.toHaveProperty(key);
     }
   });
@@ -72,7 +73,7 @@ describe('stripSensitiveCardFields', () => {
   });
 
   it('清单覆盖四类敏感字段', () => {
-    for (const k of ['emotionConfig', 'embeddingConfig', 'bubbleStyle', 'chatVoiceLang', 'activeBuffs', 'phoneState']) {
+    for (const k of ['emotionConfig', 'embeddingConfig', 'bubbleStyle', 'chatVoiceLang', 'activeBuffs', 'mihuiContinuity', 'phoneState']) {
       expect(CARD_STRIPPED_FIELDS).toContain(k);
     }
   });
