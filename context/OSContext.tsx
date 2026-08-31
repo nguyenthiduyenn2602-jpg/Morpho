@@ -2509,7 +2509,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         addToast('主题没能保存到本地（存储空间可能已满），重启后可能会还原', 'error');
     }
   };
-  const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
+  const updateApiConfig = (updates: Partial<APIConfig>) => {
+    // 使用 ref 中的最新值合并，避免同一轮内连续保存不同 API 子配置时，
+    // 后一次调用拿到旧 render 的 apiConfig 并覆盖前一次结果。
+    const newConfig = { ...apiConfigRef.current, ...updates };
+    apiConfigRef.current = newConfig;
+    setApiConfig(newConfig);
+    try {
+      localStorage.setItem('os_api_config', JSON.stringify(newConfig));
+    } catch (error) {
+      console.warn('[updateApiConfig] localStorage 写入失败', error);
+      addToast('API 设置没能保存到本地（存储空间可能已满）', 'error');
+    }
+  };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
 
   // Cloud Backup functions
@@ -2654,18 +2666,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     return newChar;
   };
   const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => {
-    let target: CharacterProfile | undefined;
-    setCharacters(prev => {
-      const updated = prev.map(c => c.id === id
-        ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) })
-        : c);
-      target = updated.find(c => c.id === id);
-      return updated;
-    });
-    if (target) {
-      await DB.saveCharacter(target);
-      markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
-    }
+    // React 不保证 setState 的 updater 会在下一行代码前执行。旧实现从 updater
+    // 给外部 target 赋值后立即落库，刷新/重开网页时经常因 target 仍为空而恢复旧值。
+    // 从同步维护的 ref 计算完整角色并先更新 ref，确保 UI 与 IndexedDB 保存同一份数据。
+    const current = charactersRef.current.find(c => c.id === id);
+    if (!current) return;
+    const patch = typeof updates === 'function' ? updates(current) : updates;
+    const target = normalizeCharacterImpression({ ...current, ...patch });
+    const updated = charactersRef.current.map(c => c.id === id ? target : c);
+    charactersRef.current = updated;
+    setCharacters(updated);
+    await DB.saveCharacter(target);
+    markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
   };
   const deleteCharacter = async (id: string) => {
     setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; });
