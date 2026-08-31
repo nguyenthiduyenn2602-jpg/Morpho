@@ -8,6 +8,7 @@ import {
     DEFAULT_MIHUI_PREFERENCES,
     extractJsonObject,
     mihuiMessageSummary,
+    normalizeMihuiReply,
     normalizePersona,
     pickMihuiFamiliar,
     removeMihuiMessage,
@@ -35,6 +36,20 @@ describe('mihui core', () => {
         const p = normalizePersona({ name: 'A', age: 12 }, { ...DEFAULT_MIHUI_PREFERENCES, ageMin: 24, ageMax: 32 });
         expect(p.age).toBe(24);
         expect(p.greeting.length).toBeGreaterThan(0);
+    });
+
+    it('normalizes new bubble arrays and keeps at most three bubbles', () => {
+        expect(normalizeMihuiReply('{"bubbles":["第一句","第二句","第三句","第四句"],"signal":"warm"}')).toEqual({
+            bubbles: ['第一句', '第二句', '第三句'],
+            signal: 'warm',
+        });
+    });
+
+    it('keeps old single reply responses compatible and splits long chat naturally', () => {
+        const result = normalizeMihuiReply({ reply: '刚下班。路上有点堵。你吃饭了吗？', signal: 'neutral' });
+        expect(result.bubbles.length).toBeGreaterThanOrEqual(1);
+        expect(result.bubbles.length).toBeLessThanOrEqual(3);
+        expect(result.bubbles.join('')).toBe('刚下班。路上有点堵。你吃饭了吗？');
     });
 
     it('uses deterministic bounded affinity', () => {

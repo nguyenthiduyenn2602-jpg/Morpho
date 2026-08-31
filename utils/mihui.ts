@@ -4,6 +4,7 @@ import { stripSensitiveCardFields } from './characterCard';
 
 export type MihuiGender = 'male' | 'female' | 'any' | 'custom';
 export type MihuiStage = '初识' | '熟悉' | '暧昧' | '心动' | '密友';
+export type MihuiThemeId = 'noir' | 'pink' | 'crimson';
 
 export interface MihuiPreferences {
     gender: MihuiGender;
@@ -41,6 +42,8 @@ export interface MihuiMessage {
         name: string;
         address?: string;
     };
+    /** 同一次模型回复拆出的气泡共享此 id，重新生成时按整轮替换。 */
+    turnId?: string;
 }
 
 export interface MihuiSession {
@@ -72,6 +75,8 @@ export interface MihuiState {
     preferences: MihuiPreferences;
     sessions: MihuiSession[];
     activeSessionId?: string;
+    /** 只作用于密会 App，不跟随也不覆盖系统或聊天美化。 */
+    theme: MihuiThemeId;
 }
 
 export const MIHUI_STORAGE_KEY = 'morpho_mihui_v1';
@@ -92,6 +97,7 @@ export const DEFAULT_MIHUI_STATE: MihuiState = {
     version: 1,
     preferences: DEFAULT_MIHUI_PREFERENCES,
     sessions: [],
+    theme: 'noir',
 };
 
 export function loadMihuiState(): MihuiState {
@@ -104,6 +110,7 @@ export function loadMihuiState(): MihuiState {
             preferences: { ...DEFAULT_MIHUI_PREFERENCES, ...(parsed.preferences || {}) },
             sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
             activeSessionId: parsed.activeSessionId,
+            theme: ['noir', 'pink', 'crimson'].includes(parsed.theme) ? parsed.theme : 'noir',
         };
     } catch {
         return DEFAULT_MIHUI_STATE;
@@ -314,8 +321,50 @@ export async function generateMihuiFamiliarPersona(
 }
 
 export interface MihuiReplyResult {
-    reply: string;
+    bubbles: string[];
     signal: 'warm' | 'neutral' | 'cool';
+}
+
+export const MIHUI_KAOMOJI = [
+    '˶ᗜ - ᗜ˶ಣ', '⩌⤙⩌', 'ᗜ⩊ᗜ', 'ᗜ - ᗜ', 'ᗜ ‸ ᗜ', 'ᗜ^ᗜ', '˵>ㅿ<˵', 'ᗜ ˰ ᗜ',
+    '╸▵╺', 'ᗜ⤚ᗜ', '⁃̀⩊⁃́', '⁃̀ 𐋣 ⁃́', 'ᗜ - ᗜ.', '՞⩌⌯⩌՞', '￣へ￣', 'ᗜへᗜ',
+    'ᗜᴖᗜ', 'ᗜᴗᗜ', '⩌⌯⩌', 'ᗜ﹁ᗜ', 'ᗜ﹃ᗜ', 'ᗜ ֊ ᗜ', 'ᗜ◞ᗜ', 'ᗜ - ᗜꐦ',
+    'ᗜ 𖥦 ᗜ', '˶ᗜ ▵ ᗜ˶', '₌ ᗜ - ᗜ ₌', '=⩌⩊⩌=', '˶ᗜ𐃷ᗜ˶ಣ', '.ᗜ ◞ ᗜ',
+    '◂ ᗜ ˰ ᗜ ▾ಎ↝', '⩌⩊⩌', 'ᗜ⌯ᗜ̥̥', '՞⩌⌯⩌՞ ᶻ', 'ᗜ×ᗜ', '꒰ᐡ⩌⤙⩌ᐡ꒱',
+    '=ᗜωᗜ=', '꧞ ˃ 𛱊 ˂', '૮ ៸៸៸ᗜ ~ ᗜ៸៸៸ ა', '⩌ ֊ ⩌',
+] as const;
+
+const splitReplyText = (value: unknown): string[] => {
+    const text = String(value ?? '').replace(/```(?:json)?|```/gi, '').trim();
+    if (!text) return [];
+    const paragraphs = text.split(/\n+|\s*\|{2,}\s*/).map(item => item.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (paragraphs.length > 1) return paragraphs.slice(0, 3).map(item => item.slice(0, 420));
+
+    const single = paragraphs[0] || text;
+    const sentences = single.match(/[^。！？!?…]+[。！？!?…]*/g)?.map(item => item.trim()).filter(Boolean) || [single];
+    const desired = single.length > 120 ? 3 : single.length > 58 ? 2 : 1;
+    if (desired === 1 || sentences.length === 1) return [single.slice(0, 420)];
+    const groups = Array.from({ length: Math.min(desired, sentences.length) }, () => '');
+    sentences.forEach((sentence, index) => {
+        const target = Math.min(groups.length - 1, Math.floor(index * groups.length / sentences.length));
+        groups[target] += sentence;
+    });
+    return groups.map(item => item.trim().slice(0, 420)).filter(Boolean);
+};
+
+export function normalizeMihuiReply(raw: unknown): MihuiReplyResult {
+    const parsed = typeof raw === 'string' ? (() => {
+        try { return extractJsonObject(raw); } catch { return { reply: raw }; }
+    })() : raw as any;
+    const signal = ['warm', 'neutral', 'cool'].includes(parsed?.signal) ? parsed.signal : 'neutral';
+    const candidate = Array.isArray(parsed?.bubbles) && parsed.bubbles.length > 0
+        ? parsed.bubbles
+        : parsed?.reply;
+    const bubbles = (Array.isArray(candidate) ? candidate.flatMap(splitReplyText) : splitReplyText(candidate))
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+    return { bubbles: bubbles.length ? bubbles : ['嗯？你继续说。'], signal } as MihuiReplyResult;
 }
 
 export async function generateMihuiReply(
@@ -353,17 +402,11 @@ export async function generateMihuiReply(
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}${hiddenFamiliarPrompt}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。回复通常 1-3 句。所有人物均为成年人。\n只输出 JSON：{"reply":"你的回复","signal":"warm|neutral|cool"}。signal 只表示这一轮互动给你的主观感受，不直接给分。`,
+            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}${hiddenFamiliarPrompt}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。每轮必须拆成 1-3 个自然聊天气泡；每个气泡只承载一个连贯意思，不要为了凑数硬拆，也不要把长篇文字塞进一个气泡。所有人物均为成年人。\n可以依据角色性格和当下情绪偶尔自然使用 0-1 个颜文字，不要每轮必用，也不要连续堆叠。可选颜文字：${MIHUI_KAOMOJI.join(' ')}\n只输出 JSON：{"bubbles":["气泡1","气泡2"],"signal":"warm|neutral|cool"}。bubbles 必须有 1-3 项；signal 只表示这一轮互动给你的主观感受，不直接给分。`,
         },
         ...history,
-    ], 0.9, 1000);
-    try {
-        const parsed = extractJsonObject(raw);
-        const signal = ['warm', 'neutral', 'cool'].includes(parsed?.signal) ? parsed.signal : 'neutral';
-        return { reply: boundedText(parsed?.reply, '嗯？你继续说。', 600), signal } as MihuiReplyResult;
-    } catch {
-        return { reply: boundedText(raw, '嗯？你继续说。', 600), signal: 'neutral' };
-    }
+    ], 0.9, 1400);
+    return normalizeMihuiReply(raw);
 }
 
 export function buildMihuiRevealLine(character: CharacterProfile): string {
