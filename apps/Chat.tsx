@@ -32,6 +32,9 @@ import LuckinLocationModal from '../components/luckin/LuckinLocationModal';
 import LuckinHelpModal from '../components/luckin/LuckinHelpModal';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { resolveChatTheme } from '../utils/groupChat/theme';
+import type { ImageGenerationDirective } from '../utils/imageGeneration';
+import { replaceGeneratedCharacterImage } from '../utils/imageGeneration';
+import { generateNovelAiCharacterImage } from '../utils/novelAiImageGeneration';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
@@ -96,6 +99,7 @@ const Chat: React.FC = () => {
         } catch { return 0; }
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
+    const [regeneratingGeneratedImageIds, setRegeneratingGeneratedImageIds] = useState<Set<number>>(new Set());
     // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = SSE POST 已排进
     // 浏览器网络栈. 页面关闭时会主动 abort SSE, 让 worker 尽量走 Web Push fallback。
     const [instantSendingActive, setInstantSendingActive] = useState(false);
@@ -1349,6 +1353,46 @@ const Chat: React.FC = () => {
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
         triggerAI(newHistory, undefined, undefined, { skipEmotionInjection: true });
     };
+
+    const handleRegenerateGeneratedImage = useCallback(async (message: Message) => {
+        if (!char || regeneratingGeneratedImageIds.has(message.id)) return;
+        const imageApi = apiConfig.novelAiImageGeneration;
+        if (!char.novelAiImageGeneration?.enabled || !imageApi) {
+            addToast('请先为当前角色开启并配置生图 2.0', 'error');
+            return;
+        }
+        const metadata = message.metadata || {};
+        const savedDirective = metadata.imageDirective as Partial<ImageGenerationDirective> | undefined;
+        const prompt = String(savedDirective?.prompt || metadata.scenePrompt || '').trim();
+        if (!prompt) {
+            addToast('这张旧图片没有保存场景提示词，暂时无法重新生成', 'error');
+            return;
+        }
+        const directive: ImageGenerationDirective = {
+            prompt,
+            selfie: savedDirective?.selfie ?? metadata.selfie !== false,
+            includeUser: savedDirective?.includeUser ?? !!metadata.includeUser,
+            characterPrompts: savedDirective?.characterPrompts,
+        };
+        setRegeneratingGeneratedImageIds(previous => new Set(previous).add(message.id));
+        try {
+            const image = await generateNovelAiCharacterImage(imageApi, char, directive);
+            const contextAtImage = messages.filter(item => item.id <= message.id);
+            const ref = await replaceGeneratedCharacterImage(image, message, char, contextAtImage, directive);
+            setMessages(previous => previous.map(item => item.id === message.id
+                ? { ...item, content: ref, metadata: { ...(item.metadata || {}), imageDirective: directive, imageProvider: 'novelai', regeneratedAt: Date.now() } }
+                : item));
+            addToast('图片已重新生成并保存到角色相册', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '图片重新生成失败', 'error');
+        } finally {
+            setRegeneratingGeneratedImageIds(previous => {
+                const next = new Set(previous);
+                next.delete(message.id);
+                return next;
+            });
+        }
+    }, [apiConfig.novelAiImageGeneration, char, messages, regeneratingGeneratedImageIds, addToast]);
 
     const handleImageSelect = async (file: File) => {
         try {
@@ -3372,6 +3416,8 @@ const Chat: React.FC = () => {
                             onMcdCandidate={handleMcdCandidate}
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
+                            onRegenerateGeneratedImage={handleRegenerateGeneratedImage}
+                            regeneratingGeneratedImage={regeneratingGeneratedImageIds.has(m.id)}
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {showToolTrace && (

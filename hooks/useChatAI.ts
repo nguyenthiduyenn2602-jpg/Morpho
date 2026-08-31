@@ -2020,6 +2020,7 @@ export const useChatAI = ({
                     charForGen,
                     contextMsgs,
                     pendingGeneratedImage.directive,
+                    novelAiImageGenerationEnabled ? 'novelai' : 'legacy',
                 );
                 setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
                 addToast('图片已生成并保存到相册', 'success');

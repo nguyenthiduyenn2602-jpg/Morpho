@@ -186,6 +186,7 @@ export async function persistGeneratedCharacterImage(
     char: CharacterProfile,
     contextMessages: Message[],
     request: ImageGenerationDirective,
+    provider?: 'novelai' | 'legacy',
 ): Promise<string> {
     const ref = typeof image === 'string' ? image : await putImageBlob(image);
     const now = Date.now();
@@ -198,10 +199,55 @@ export async function persistGeneratedCharacterImage(
         role: 'assistant',
         type: 'image',
         content: ref,
-        metadata: { generatedImage: true, scenePrompt: request.prompt, selfie: request.selfie },
+        metadata: {
+            generatedImage: true,
+            imageProvider: provider,
+            // 保留完整指令，单独重生图片时不必重新调用聊天模型，也不会改写对话。
+            imageDirective: request,
+            // 旧字段继续保留，兼容已发布版本与已有消息。
+            scenePrompt: request.prompt,
+            selfie: request.selfie,
+            includeUser: request.includeUser,
+        },
     });
     await DB.saveGalleryImage({
         id: `generated-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        charId: char.id,
+        url: ref,
+        timestamp: now,
+        savedDate: localDateKey(now),
+        chatContext: recentChat,
+    });
+    return ref;
+}
+
+/** 用新生成结果替换聊天中的原图，并把新图作为独立记录保存到角色相册。 */
+export async function replaceGeneratedCharacterImage(
+    image: Blob | string,
+    message: Message,
+    char: CharacterProfile,
+    contextMessages: Message[],
+    request: ImageGenerationDirective,
+): Promise<string> {
+    const ref = typeof image === 'string' ? image : await putImageBlob(image);
+    const now = Date.now();
+    const recentChat = contextMessages.slice(-10).map(item => {
+        const sender = item.role === 'user' ? '用户' : char.name;
+        return `${sender}: ${String(item.content || '').slice(0, 100)}`;
+    });
+    await DB.updateMessage(message.id, ref);
+    await DB.updateMessageMetadata(message.id, previous => ({
+        ...(previous || {}),
+        generatedImage: true,
+        imageProvider: 'novelai',
+        imageDirective: request,
+        scenePrompt: request.prompt,
+        selfie: request.selfie,
+        includeUser: request.includeUser,
+        regeneratedAt: now,
+    }));
+    await DB.saveGalleryImage({
+        id: `generated-reroll-${now}-${Math.random().toString(36).slice(2, 8)}`,
         charId: char.id,
         url: ref,
         timestamp: now,

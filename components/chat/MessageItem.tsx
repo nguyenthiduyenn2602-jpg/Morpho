@@ -1405,6 +1405,9 @@ interface MessageItemProps {
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
+    /** 单独重生角色发送的生图 2.0 图片，不改动相邻文字消息。 */
+    onRegenerateGeneratedImage?: (m: Message) => void;
+    regeneratingGeneratedImage?: boolean;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1451,6 +1454,8 @@ const MessageItem = React.memo(({
     onLuckinCandidate,
     onResolveTransfer,
     onResolveLifeRecord,
+    onRegenerateGeneratedImage,
+    regeneratingGeneratedImage = false,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -3243,12 +3248,30 @@ const MessageItem = React.memo(({
     }
 
     if (m.type === 'image') {
+        const canRegenerate = !selectionMode
+            && m.role === 'assistant'
+            && !!m.metadata?.generatedImage
+            && !!m.metadata?.scenePrompt
+            && !!onRegenerateGeneratedImage;
         return commonLayout(
-            <div className="relative group">
+            <div className="relative flex items-end gap-2 group">
                 {m.content ? (
                     <TokenImg value={m.content} className="max-w-[200px] max-h-[300px] rounded-2xl" alt="Uploaded" loading="lazy" decoding="async" />
                 ) : (
                     <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
+                )}
+                {canRegenerate && (
+                    <button
+                        type="button"
+                        disabled={regeneratingGeneratedImage}
+                        onClick={event => { event.stopPropagation(); onRegenerateGeneratedImage?.(m); }}
+                        className="mb-1 inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-2.5 py-1.5 text-[10px] font-semibold text-slate-500 shadow-sm backdrop-blur transition active:scale-95 disabled:opacity-55"
+                        aria-label="重新生成这张图片"
+                        title="只重新生成图片，不改变对话"
+                    >
+                        <span className={regeneratingGeneratedImage ? 'animate-spin' : ''}>↻</span>
+                        {regeneratingGeneratedImage ? '生成中' : '重新生成'}
+                    </button>
                 )}
             </div>
         );
