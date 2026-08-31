@@ -6,6 +6,7 @@ import {
     CaretRight,
     ChatsCircle,
     DownloadSimple,
+    CurrencyCircleDollar,
     Heart,
     ImageSquare,
     MapPin,
@@ -23,6 +24,7 @@ import { useOS } from '../context/OSContext';
 import { AppID, type CharacterExportData, type CharacterProfile } from '../types';
 import { processImage } from '../utils/file';
 import { DB } from '../utils/db';
+import { mergePalaceFragmentsIntoMemories, processNewMessages } from '../utils/memoryPalace/pipeline';
 import {
     affinityDelta,
     affinityStage,
@@ -120,7 +122,7 @@ const downloadCard = (card: CharacterExportData) => {
 };
 
 const MihuiApp: React.FC = () => {
-    const { closeApp, openApp, apiConfig, userProfile, characters, addCharacter, updateCharacter, setActiveCharacterId, openDateWithChar, addToast } = useOS();
+    const { closeApp, openApp, apiConfig, userProfile, characters, addCharacter, updateCharacter, setActiveCharacterId, openDateWithChar, addToast, memoryPalaceConfig } = useOS();
     const [state, setState] = useState<MihuiState>(() => loadMihuiState());
     const [screen, setScreen] = useState<Screen>(() => state.activeSessionId ? 'chat' : 'home');
     const [draftPrefs, setDraftPrefs] = useState<MihuiPreferences>(() => ({ ...state.preferences }));
@@ -133,9 +135,12 @@ const MihuiApp: React.FC = () => {
     const [showProfile, setShowProfile] = useState(false);
     const [showGraduation, setShowGraduation] = useState(false);
     const [showLocation, setShowLocation] = useState(false);
+    const [showTransfer, setShowTransfer] = useState(false);
     const [showAppearance, setShowAppearance] = useState(false);
     const [locationName, setLocationName] = useState('');
     const [locationAddress, setLocationAddress] = useState('');
+    const [transferAmount, setTransferAmount] = useState('');
+    const [transferNote, setTransferNote] = useState('');
     const [openingMeetup, setOpeningMeetup] = useState(false);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const photoInputRef = useRef<HTMLInputElement>(null);
@@ -195,6 +200,38 @@ const MihuiApp: React.FC = () => {
         const memoryId = `mihui-live-${session.id}`;
         const now = Date.now();
         const continuity = buildMihuiFamiliarMemorySummary(session, character.name, userProfile.name || '用户');
+        // 密会原文落入原角色的隐藏消息流：聊天 UI 不展示，但记忆宫殿可以按自己的
+        // 高水位、热区和自动总结设置正常提取，不另造一套总结算法。
+        const storedMessages = await DB.getMessagesByCharId(character.id, true);
+        const storedIds = new Set(storedMessages
+            .filter(message => message.metadata?.source === 'mihui' && message.metadata?.mihuiSessionId === session.id)
+            .map(message => message.metadata?.mihuiMessageId));
+        for (const message of session.messages) {
+            if (storedIds.has(message.id)) continue;
+            await DB.saveMessage({
+                charId: character.id,
+                role: message.role,
+                type: 'text',
+                content: mihuiMessageSummary(message),
+                timestamp: message.timestamp,
+                metadata: {
+                    source: 'mihui',
+                    mihuiSessionId: session.id,
+                    mihuiMessageId: message.id,
+                    alias: session.persona.name,
+                },
+            });
+        }
+
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const configuredLLM = memoryPalaceConfig?.lightLLM;
+        const mpLLM = configuredLLM?.baseUrl
+            ? configuredLLM
+            : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        const usePalace = Boolean(character.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl);
+        const palaceResult = usePalace
+            ? await processNewMessages([], character.id, character.name, mpEmb!, mpLLM, userProfile.name || '', false)
+            : null;
         const nextMemory = {
             id: memoryId,
             date: new Date(now).toISOString(),
@@ -204,11 +241,20 @@ const MihuiApp: React.FC = () => {
         await updateCharacter(character.id, previous => {
             const memories = previous.memories || [];
             const index = memories.findIndex(memory => memory.id === memoryId);
+            let nextMemories = usePalace
+                ? memories.filter(memory => memory.id !== memoryId)
+                : index >= 0
+                    ? memories.map((memory, memoryIndex) => memoryIndex === index ? nextMemory : memory)
+                    : [...memories, nextMemory];
+            if (usePalace && previous.autoArchiveEnabled && palaceResult?.autoArchive?.fragments?.length) {
+                nextMemories = mergePalaceFragmentsIntoMemories(nextMemories, palaceResult.autoArchive.fragments);
+            }
             return {
                 mihuiContinuity: continuity,
-                memories: index >= 0
-                    ? memories.map((memory, memoryIndex) => memoryIndex === index ? nextMemory : memory)
-                    : [...memories, nextMemory],
+                memories: nextMemories,
+                ...(usePalace && previous.autoArchiveEnabled && palaceResult?.autoArchive
+                    ? { hideBeforeMessageId: Math.max(previous.hideBeforeMessageId || 0, palaceResult.autoArchive.hideBeforeMessageId) }
+                    : {}),
             };
         });
     };
@@ -353,22 +399,47 @@ const MihuiApp: React.FC = () => {
             const assistantMessages: MihuiMessage[] = result.bubbles.map((content, index) => ({
                 id: messageId(), role: 'assistant', type: 'text', content, turnId: replyTurnId, timestamp: replyTimestamp + index,
             }));
+            if (result.location) assistantMessages.push({
+                id: messageId(), role: 'assistant', type: 'location', content: result.location.name,
+                location: result.location, turnId: replyTurnId, timestamp: replyTimestamp + assistantMessages.length,
+            });
+            if (result.transfer) assistantMessages.push({
+                id: messageId(), role: 'assistant', type: 'transfer', content: '[转账]',
+                transfer: { ...result.transfer, status: 'pending' }, turnId: replyTurnId, timestamp: replyTimestamp + assistantMessages.length,
+            });
+            const pendingUserTransfer = [...requestSession.messages].reverse()
+                .find(message => message.role === 'user' && message.type === 'transfer' && !message.transfer?.receipt && message.transfer?.status === 'pending');
+            const settledMessages = pendingUserTransfer && result.transferAction
+                ? requestSession.messages.map(message => message.id === pendingUserTransfer.id
+                    ? { ...message, transfer: { ...message.transfer!, status: result.transferAction === 'accept' ? 'accepted' as const : 'returned' as const } }
+                    : message)
+                : requestSession.messages;
+            if (pendingUserTransfer && result.transferAction) assistantMessages.push({
+                id: messageId(), role: 'assistant', type: 'transfer', content: '[转账回执]',
+                transfer: { amount: pendingUserTransfer.transfer!.amount, status: result.transferAction === 'accept' ? 'accepted' : 'returned', receipt: true },
+                turnId: replyTurnId, timestamp: replyTimestamp + assistantMessages.length,
+            });
             const nextAffinity = clampAffinity(activeSession.affinity + affinityDelta(result.signal, affinityText));
             const becameFull = activeSession.affinity < 100 && nextAffinity >= 100;
             const completedSession: MihuiSession = {
                 ...requestSession,
                 affinity: nextAffinity,
-                messages: [...requestSession.messages, ...assistantMessages],
+                messages: [...settledMessages, ...assistantMessages],
                 updatedAt: Date.now(),
             };
             updateActive(session => {
                 const affinity = clampAffinity(session.affinity + affinityDelta(result.signal, affinityText));
-                return { ...session, affinity, messages: [...session.messages, ...assistantMessages], updatedAt: Date.now() };
+                const messages = pendingUserTransfer && result.transferAction
+                    ? session.messages.map(message => message.id === pendingUserTransfer.id
+                        ? { ...message, transfer: { ...message.transfer!, status: result.transferAction === 'accept' ? 'accepted' as const : 'returned' as const } }
+                        : message)
+                    : session.messages;
+                return { ...session, affinity, messages: [...messages, ...assistantMessages], updatedAt: Date.now() };
             });
             if (requestSession.familiar) await syncFamiliarContinuity(completedSession)
                 .catch(error => console.warn('[Mihui] 熟人密会记忆回写失败', error));
             if (becameFull && requestSession.familiar && !requestSession.familiar.revealedAt) {
-                await revealFamiliar({ ...requestSession, affinity: nextAffinity, messages: [...requestSession.messages, ...assistantMessages] });
+                await revealFamiliar({ ...requestSession, affinity: nextAffinity, messages: [...settledMessages, ...assistantMessages] });
                 setShowGraduation(true);
             } else if (becameFull) {
                 setShowGraduation(true);
@@ -412,35 +483,82 @@ const MihuiApp: React.FC = () => {
         }, `分享位置：${name}${address ? `，${address}` : ''}`);
     };
 
+    const sendTransfer = async () => {
+        const amount = Number(transferAmount);
+        if (!activeSession || sending || regenerating || !Number.isFinite(amount) || amount <= 0) return;
+        const rounded = Math.min(999999, Math.round(amount * 100) / 100);
+        const note = transferNote.trim();
+        setShowTransfer(false);
+        setTransferAmount('');
+        setTransferNote('');
+        await sendUserMessage({
+            id: messageId(), role: 'user', type: 'transfer', content: '[转账]', timestamp: Date.now(),
+            transfer: { amount: rounded, ...(note ? { note } : {}), status: 'pending' },
+        }, `向对方转账 ¥${rounded}${note ? `，留言：${note}` : ''}`);
+    };
+
+    const settleIncomingTransfer = (target: MihuiMessage, status: 'accepted' | 'returned') => {
+        if (!activeSession || target.role !== 'assistant' || target.type !== 'transfer' || target.transfer?.status !== 'pending') return;
+        const receipt: MihuiMessage = {
+            id: messageId(), role: 'user', type: 'transfer', content: '[转账回执]', timestamp: Date.now(),
+            transfer: { amount: target.transfer.amount, status, receipt: true },
+        };
+        const nextSession: MihuiSession = {
+            ...activeSession,
+            messages: [...activeSession.messages.map(message => message.id === target.id
+                ? { ...message, transfer: { ...message.transfer!, status } }
+                : message), receipt],
+            updatedAt: Date.now(),
+        };
+        updateActive(() => nextSession);
+        if (nextSession.familiar) void syncFamiliarContinuity(nextSession)
+            .catch(error => console.warn('[Mihui] 转账回执记忆回写失败', error));
+        addToast(status === 'accepted' ? '已接收转账' : '已退回转账', 'success');
+    };
+
     const buildLinkedCharacter = async (): Promise<string> => {
         if (!activeSession) throw new Error('当前匹配已经失效');
-        const existing = activeSession.linkedCharacterId && characters.find(item => item.id === activeSession.linkedCharacterId);
-        if (existing) return existing.id;
+        const sourceCharacter = activeSession.familiar
+            ? characters.find(item => item.id === activeSession.familiar?.characterId)
+            : undefined;
+        // 老版本曾把 linkedCharacterId 直接写成真实熟人 id；绝不能把原角色卡改成化名。
+        const existing = activeSession.linkedCharacterId && activeSession.linkedCharacterId !== activeSession.familiar?.characterId
+            ? characters.find(item => item.id === activeSession.linkedCharacterId)
+            : undefined;
         const card = buildMihuiCharacterCard(activeSession);
-        const created = await addCharacter();
-        await updateCharacter(created.id, {
+        const linked = existing || await addCharacter();
+        const transcript = activeSession.messages.slice(-30)
+            .map(message => `${message.role === 'user' ? (userProfile.name || '用户') : activeSession.persona.name}：${mihuiMessageSummary(message)}`)
+            .join('\n');
+        const familiarMeetingRule = sourceCharacter ? `\n[后台真实身份规则]\n你实际上是「${sourceCharacter.name}」，必须保留以下真实人设、情感和说话习惯：\n${sourceCharacter.systemPrompt}\n${sourceCharacter.worldview || ''}\n但这次见面仍是密会化名阶段。你必须以「${activeSession.persona.name}」的外在身份赴约，像与陌生网友第一次线下见面一样自然谨慎；不能主动说出真名、神经链接身份或完整共同经历，也不能直接否认你认识用户。可以回避、装傻、试探或露出轻微熟悉感。` : '';
+        const memoryEntry = {
+            id: `mihui-meet-memory-${activeSession.id}`,
+            date: new Date().toISOString(),
+            summary: transcript,
+            mood: sourceCharacter ? '以密会化名第一次线下见面' : '从密会相识后的共同回忆',
+        };
+        await updateCharacter(linked.id, previous => {
+            const previousMemories = previous.memories || [];
+            const memoryIndex = previousMemories.findIndex(memory => memory.id === memoryEntry.id);
+            return {
             name: card.name,
             description: card.description,
-            systemPrompt: card.systemPrompt,
-            worldview: card.worldview,
-            memories: activeSession.messages.length ? [{
-                id: `mihui-meet-memory-${Date.now()}`,
-                date: new Date().toISOString(),
-                summary: activeSession.messages.slice(-18).map(message => `${message.role === 'user' ? '用户' : card.name}：${message.type === 'image' ? '[分享照片]' : message.type === 'location' ? `[分享位置：${message.location?.name || message.content}]` : message.content}`).join('\n'),
-                mood: '从密会相识后的共同回忆',
-            }] : [],
+            systemPrompt: `${card.systemPrompt || ''}${familiarMeetingRule}`,
+            worldview: `${card.worldview || ''}\n\n密会最新聊天（见面必须承接）：\n${transcript}`,
+            memories: memoryIndex >= 0
+                ? previousMemories.map((memory, index) => index === memoryIndex ? memoryEntry : memory)
+                : [...previousMemories, memoryEntry],
+            };
         });
-        updateActive(session => ({ ...session, linkedCharacterId: created.id, updatedAt: Date.now() }));
-        return created.id;
+        updateActive(session => ({ ...session, linkedCharacterId: linked.id, updatedAt: Date.now() }));
+        return linked.id;
     };
 
     const openMeetup = async () => {
         if (!activeSession || openingMeetup) return;
         setOpeningMeetup(true);
         try {
-            const characterId = activeSession.familiar
-                ? (await revealFamiliar(activeSession))
-                : await buildLinkedCharacter();
+            const characterId = await buildLinkedCharacter();
             if (!characterId) throw new Error('没有找到可以见面的角色');
             openDateWithChar(characterId, AppID.Mihui);
         } catch (error: any) {
@@ -480,6 +598,14 @@ const MihuiApp: React.FC = () => {
             const replacements: MihuiMessage[] = result.bubbles.map((content, index) => ({
                 id: messageId(), role: 'assistant', type: 'text', content, turnId: replyTurnId, timestamp: replyTimestamp + index,
             }));
+            if (result.location) replacements.push({
+                id: messageId(), role: 'assistant', type: 'location', content: result.location.name,
+                location: result.location, turnId: replyTurnId, timestamp: replyTimestamp + replacements.length,
+            });
+            if (result.transfer) replacements.push({
+                id: messageId(), role: 'assistant', type: 'transfer', content: '[转账]',
+                transfer: { ...result.transfer, status: 'pending' }, turnId: replyTurnId, timestamp: replyTimestamp + replacements.length,
+            });
             const applyReplacements = (session: MihuiSession): MihuiSession => {
                 const firstIndex = targetTurnId
                     ? session.messages.findIndex(message => message.role === 'assistant' && message.turnId === targetTurnId)
@@ -779,6 +905,23 @@ const MihuiApp: React.FC = () => {
         );
     };
 
+    const renderTransferSheet = () => {
+        if (!showTransfer) return null;
+        const amount = Number(transferAmount);
+        return (
+            <div className="absolute inset-0 z-[60] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setShowTransfer(false)}>
+                <div className="w-full rounded-t-[2rem] bg-[var(--mh-bg)] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[var(--mh-soft-2)]" />
+                    <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--mh-soft)] text-[var(--mh-accent)]"><CurrencyCircleDollar size={23} weight="fill" /></div><div><p className="font-black text-[var(--mh-text)]">发起转账</p><p className="text-[11px] text-[var(--mh-muted)]">金额只用于剧情互动，不关联真实支付</p></div></div>
+                    <div className="mt-5 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] px-4 py-3"><span className="text-lg font-black text-[var(--mh-accent)]">¥</span><input type="number" min="0.01" max="999999" step="0.01" value={transferAmount} onChange={event => setTransferAmount(event.target.value)} className="ml-2 w-[calc(100%-2rem)] bg-transparent text-2xl font-black text-[var(--mh-text)] outline-none" placeholder="0.00" autoFocus /></div>
+                    <input value={transferNote} onChange={event => setTransferNote(event.target.value.slice(0, 80))} className={`${fieldClass} mt-3`} placeholder="转账留言（可选）" />
+                    <button onClick={sendTransfer} disabled={!Number.isFinite(amount) || amount <= 0} className="mt-4 w-full rounded-2xl bg-[var(--mh-accent-strong)] py-3.5 text-sm font-black text-[var(--mh-on-accent)] disabled:opacity-40">确认转账</button>
+                    <button onClick={() => setShowTransfer(false)} className="mt-2 w-full py-3 text-sm font-bold text-[var(--mh-muted)]">取消</button>
+                </div>
+            </div>
+        );
+    };
+
     const renderAppearanceSheet = () => {
         if (!showAppearance) return null;
         return (
@@ -844,12 +987,14 @@ const MihuiApp: React.FC = () => {
                     {activeSession.messages.map((message, index) => (
                         <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
                             {message.role === 'assistant' && renderSessionAvatar(activeSession, 'w-8 h-8', message.timestamp)}
-                            <button
+                            <div
                                 onClick={() => setSelectedMessage(message)}
                                 onContextMenu={event => { event.preventDefault(); setSelectedMessage(message); }}
-                                className={message.type === 'location'
+                                className={message.type === 'location' || message.type === 'transfer'
                                     ? 'max-w-[78%] text-left'
                                     : `max-w-[78%] rounded-[1.35rem] px-4 py-3 text-left text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-[var(--mh-user-bubble)] text-[var(--mh-user-text)] rounded-br-md' : 'bg-[var(--mh-assistant-bubble)] text-[var(--mh-assistant-text)] border border-[var(--mh-border)] rounded-bl-md'}`}
+                                role="button"
+                                tabIndex={0}
                                 aria-label="打开消息操作"
                             >
                                 {message.type === 'image' ? (
@@ -859,8 +1004,18 @@ const MihuiApp: React.FC = () => {
                                         <span className="flex items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--mh-accent)] text-[var(--mh-on-accent)]"><MapPin size={22} weight="fill" /></span><span className="min-w-0"><strong className="block truncate text-sm">{message.location?.name || message.content}</strong>{message.location?.address && <small className="mt-0.5 block truncate text-[10px] text-[var(--mh-muted)]">{message.location.address}</small>}</span></span>
                                         <span className="mt-3 block border-t border-[var(--mh-border)] pt-2 text-[10px] text-[var(--mh-muted)]">位置 · 点击可管理消息</span>
                                     </span>
+                                ) : message.type === 'transfer' ? (
+                                    message.transfer?.receipt ? (
+                                        <span className="block rounded-xl border border-[var(--mh-border)] bg-[var(--mh-panel)] px-3 py-2 text-[11px] text-[var(--mh-muted)] shadow-sm">{message.role === 'user' ? '你' : displayName(activeSession)}{message.transfer.status === 'accepted' ? '已接收' : '已退回'}转账 · ¥{message.transfer.amount}</span>
+                                    ) : (
+                                        <span className="block min-w-56 overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--mh-accent)] to-[var(--mh-accent-strong)] text-[var(--mh-on-accent)] shadow-md">
+                                            <span className="flex items-center gap-3 px-4 py-4"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/15"><CurrencyCircleDollar size={25} weight="fill" /></span><span><strong className="block text-xl">¥{message.transfer?.amount || 0}</strong><small className="block max-w-40 truncate opacity-75">{message.transfer?.note || '转账给你'}</small></span></span>
+                                            <span className="block border-t border-white/15 bg-black/10 px-4 py-2 text-[10px] opacity-80">{message.transfer?.status === 'accepted' ? '已接收' : message.transfer?.status === 'returned' ? '已退回' : message.role === 'assistant' ? '待你处理' : '等待对方处理'}</span>
+                                            {message.role === 'assistant' && message.transfer?.status === 'pending' && <span className="flex gap-2 px-3 pb-3 pt-1"><button onClick={event => { event.stopPropagation(); settleIncomingTransfer(message, 'returned'); }} className="flex-1 rounded-xl bg-white/15 py-2 text-xs font-bold">退回</button><button onClick={event => { event.stopPropagation(); settleIncomingTransfer(message, 'accepted'); }} className="flex-1 rounded-xl bg-white py-2 text-xs font-black text-[var(--mh-accent)]">接收</button></span>}
+                                        </span>
+                                    )
                                 ) : message.content}
-                            </button>
+                            </div>
                             {message.role === 'assistant' && index === activeSession.messages.length - 1 && activeSession.messages.some(item => item.role === 'user') && (
                                 <button onClick={regenerateLastReply} disabled={sending || regenerating} className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--mh-soft-2)] text-[var(--mh-accent)] disabled:opacity-40" aria-label="重新生成最后一条回复">
                                     <ArrowClockwise size={14} className={regenerating ? 'animate-spin' : ''} />
@@ -876,6 +1031,7 @@ const MihuiApp: React.FC = () => {
                     <div className="flex items-center gap-1.5 pb-2 overflow-x-auto">
                         <button onClick={() => photoInputRef.current?.click()} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[var(--mh-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--mh-accent)] flex items-center gap-1 disabled:opacity-40"><ImageSquare size={14} />照片</button>
                         <button onClick={() => setShowLocation(true)} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[var(--mh-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--mh-accent)] flex items-center gap-1 disabled:opacity-40"><MapPin size={14} />位置</button>
+                        <button onClick={() => setShowTransfer(true)} disabled={sending || regenerating} className="shrink-0 rounded-full bg-[var(--mh-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--mh-accent)] flex items-center gap-1 disabled:opacity-40"><CurrencyCircleDollar size={14} />转账</button>
                         <button onClick={openMeetup} disabled={openingMeetup || sending || regenerating} className="shrink-0 rounded-full bg-[var(--mh-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--mh-accent)] flex items-center gap-1 disabled:opacity-40"><Sparkle size={14} />{openingMeetup ? '正在打开…' : '见面'}</button>
                         {activeSession.affinity >= 100 && <button onClick={() => setShowGraduation(true)} className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 flex items-center gap-1">{activeSession.familiar?.revealedAt ? <Heart size={14} weight="fill" /> : <UserPlus size={14} />}{activeSession.familiar?.revealedAt ? '原来是你' : '角色卡'}</button>}
                     </div>
@@ -888,6 +1044,7 @@ const MihuiApp: React.FC = () => {
                 {renderGraduation()}
                 {renderMessageOptions()}
                 {renderLocationSheet()}
+                {renderTransferSheet()}
                 {renderAppearanceSheet()}
             </>
         );

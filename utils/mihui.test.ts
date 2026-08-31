@@ -54,6 +54,19 @@ describe('mihui core', () => {
         expect(result.bubbles.join('')).toBe('刚下班。路上有点堵。你吃饭了吗？');
     });
 
+    it('normalizes optional AI location, transfer and transfer decision cards', () => {
+        const result = normalizeMihuiReply({
+            bubbles: ['我把位置发你。'], signal: 'warm',
+            location: { name: '梧桐咖啡馆', address: '二楼靠窗' },
+            transfer: { amount: 52.1314, note: '打车费' },
+            transferAction: 'accept',
+        });
+        expect(result.location).toEqual({ name: '梧桐咖啡馆', address: '二楼靠窗' });
+        expect(result.transfer).toEqual({ amount: 52.13, note: '打车费' });
+        expect(result.transferAction).toBe('accept');
+        expect(normalizeMihuiReply({ bubbles: ['不用。'], transfer: { amount: -1 }, transferAction: 'ignore' }).transfer).toBeUndefined();
+    });
+
     it('uses deterministic bounded affinity', () => {
         expect(affinityDelta('warm', '认真写了很长的一段回复，并且主动问了对方最近过得怎么样')).toBe(4);
         expect(clampAffinity(108)).toBe(100);
@@ -91,6 +104,8 @@ describe('mihui core', () => {
     it('summarizes media without leaking image base64 into memories', () => {
         expect(mihuiMessageSummary({ id: 'p1', role: 'user', type: 'image', content: 'data:image/jpeg;base64,very-long', timestamp: 1 })).toBe('[分享照片]');
         expect(mihuiMessageSummary({ id: 'l1', role: 'user', type: 'location', content: '国贸', location: { name: '国贸三期' }, timestamp: 1 })).toBe('[分享位置：国贸三期]');
+        expect(mihuiMessageSummary({ id: 't1', role: 'assistant', type: 'transfer', content: '[转账]', transfer: { amount: 88, note: '夜宵', status: 'pending' }, timestamp: 1 })).toContain('¥88');
+        expect(mihuiMessageSummary({ id: 't2', role: 'user', type: 'transfer', content: '[转账回执]', transfer: { amount: 88, status: 'accepted', receipt: true }, timestamp: 1 })).toContain('已接收');
     });
 
     it('only lets quick match hit a familiar on the one-third branch', () => {

@@ -747,7 +747,7 @@ const Chat: React.FC = () => {
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = recent
-                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'mihui' && m.metadata?.source !== 'story_theater_memory')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
             // totalCount 走 charId 索引全量计数，包含群聊消息（以及上面被过滤的约会/通话
             // 消息）——它们永远不会出现在单聊列表里。直接拿它算「加载历史消息」会出现
@@ -2707,7 +2707,7 @@ const Chat: React.FC = () => {
     // windowed 模式：定位到旧消息时只渲染目标周围 51 条，避免 DOM 卡爆。
     const displayMessages = useMemo(() => {
         const base = messages
-            .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
+            .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'mihui' && m.metadata?.source !== 'story_theater_memory')
             .filter(m => !m.metadata?.proactiveHint)
             .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; });
         if (windowedFocusMsgId !== null) {
