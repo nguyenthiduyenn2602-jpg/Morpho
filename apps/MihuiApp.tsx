@@ -213,6 +213,13 @@ const MihuiApp: React.FC = () => {
         });
     };
 
+    // 兼容更新前已经存在的熟人密会：只要重新进入该会话，就把旧记录补写回原角色。
+    useEffect(() => {
+        if (screen !== 'chat' || !activeSession?.familiar) return;
+        void syncFamiliarContinuity(activeSession)
+            .catch(error => console.warn('[Mihui] 旧熟人会话自动迁移失败', error));
+    }, [screen, activeSession?.id, activeSession?.messages.length, activeSession?.familiar?.revealedAt]);
+
     const match = async (quick = false) => {
         if (matching) return;
         if (!apiConfig.baseUrl?.trim() || !apiConfig.model?.trim()) {
