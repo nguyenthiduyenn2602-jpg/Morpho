@@ -813,7 +813,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
                           </div>
 
-                          {/* Page 3: HTML 模式；空白格补齐两行，保持三页面板高度一致 */}
+                          {/* Page 3: HTML 模式 + 私聊关系操作 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
                             <button
                               onClick={() => onPanelAction('html-mode-toggle')}
@@ -831,8 +831,21 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </div>)}
                               <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
                             </button>
-                            {Array.from({ length: 7 }).map((_, index) => (
-                              <div key={`actions-page-3-spacer-${index}`} aria-hidden="true" className="w-14 h-20" />
+                            {Array.from({ length: 3 }).map((_, index) => (
+                              <div key={`actions-page-3-first-row-spacer-${index}`} aria-hidden="true" className="w-14 h-20" />
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => onPanelAction('delete-friend')}
+                              className={`col-span-2 flex flex-col items-stretch gap-2 active:scale-[0.97] transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`h-14 min-w-[8rem] rounded-2xl px-3 flex items-center justify-center text-[11px] font-black tracking-tight shadow-sm border ${acnh ? 'bg-[#fff6e5] border-[#e6c9ad] text-[#a64f44]' : isDiscordStyle ? 'bg-rose-500/15 border-rose-400/30 text-rose-200' : 'bg-gradient-to-r from-rose-50 to-red-50 border-rose-200 text-rose-600'}`}>
+                                【卧槽，用户彻底怒了】
+                              </div>
+                              <span className="text-xs font-bold text-center">删好友</span>
+                            </button>
+                            {Array.from({ length: 2 }).map((_, index) => (
+                              <div key={`actions-page-3-second-row-spacer-${index}`} aria-hidden="true" className="w-14 h-20" />
                             ))}
                           </div>
 

@@ -25,6 +25,7 @@ import { isMcpChatAvailable } from './mcpClient';
 import { buildMcpSystemBlock, MCP_TAIL_REMINDER } from './mcpToolBridge';
 import type { MusicCfg, Song, LyricLine, MusicPlaybackSnapshot, RecentTrackChange } from '../context/MusicContext';
 import { isPromptBuildSkipped, isSystemMessageMergeEnabled } from './devDebug';
+import { buildPrivateChatFriendshipPrompt } from './privateChatFriendship';
 import { mergeSystemMessages } from './systemMessageMerge';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
@@ -295,6 +296,8 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     );
     let systemPrompt = parts.stable;
     let volatileTail = parts.volatileState;
+    const friendshipPrompt = buildPrivateChatFriendshipPrompt(char);
+    if (friendshipPrompt) volatileTail += `\n\n${friendshipPrompt}`;
 
     // ── 4. 双语指令注入 ───────────────────────────────────
     const sourceLang = normalizeTranslationLangLabel(translationConfig?.sourceLang);

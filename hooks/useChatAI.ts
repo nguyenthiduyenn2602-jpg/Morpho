@@ -727,7 +727,7 @@ export const useChatAI = ({
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
         onInstantPosted?: () => void,
-        opts?: { skipEmotionInjection?: boolean },
+        opts?: { skipEmotionInjection?: boolean; extraSystemPrompt?: string },
     ) => {
         // 早退路径也要熄「发送准备中」灯: caller (Chat.tsx) 是先 setInstantSendingActive(true)
         // 再调 triggerAI 的, 这里 return 掉而不通知的话指示灯会永远亮着。
@@ -1004,11 +1004,14 @@ export const useChatAI = ({
                 luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
                 luckinChat: luckinChatOn ? luckinChatRef?.current : undefined,
                 timelyByWorker: instantChatRoute,
-                extraSystemPrompt: localImageGenerationEnabled
-                    ? (novelAiImageGenerationEnabled
-                        ? buildNovelAiDecisionPrompt(charForGen, userProfile)
-                        : buildImageGenerationDecisionPrompt(charForGen, userProfile))
-                    : undefined,
+                extraSystemPrompt: [
+                    opts?.extraSystemPrompt?.trim(),
+                    localImageGenerationEnabled
+                        ? (novelAiImageGenerationEnabled
+                            ? buildNovelAiDecisionPrompt(charForGen, userProfile)
+                            : buildImageGenerationDecisionPrompt(charForGen, userProfile))
+                        : '',
+                ].filter(Boolean).join('\n\n') || undefined,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;

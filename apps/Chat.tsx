@@ -66,6 +66,12 @@ import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgState
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import {
+    buildFriendDeletedNotice,
+    buildFriendRestoredNotice,
+    buildPrivateChatFriendRequestPrompt,
+    isPrivateChatFriendDeleted,
+} from '../utils/privateChatFriendship';
+import {
     CONTEXT_RANGE_POLICY_VERSION,
     computeContextRangeSnapshot,
     countMessagesFrom,
@@ -151,7 +157,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result' | 'delete-friend' | 'friend-request'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [fineTuneOpen, setFineTuneOpen] = useState(false);          // 圆气泡在场
     const [fineTunePanelOpen, setFineTunePanelOpen] = useState(false); // 小面板展开/收起
@@ -224,6 +230,8 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    const isFriendDeleted = isPrivateChatFriendDeleted(char);
+    const friendRequestTriggerRef = useRef<{ charId: string; afterMessageId: number; armedAt: number } | null>(null);
     const charDateKey = useLocalDateKey(resolveCharTimeZone(char));
     charRef.current = char; // Keep ref in sync for async callbacks
     const historyContextRange = useMemo(() => {
@@ -748,7 +756,7 @@ const Chat: React.FC = () => {
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = recent
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'mihui' && m.metadata?.source !== 'story_theater_memory')
-                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
+                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card' && !m.metadata?.friendshipEvent));
             // totalCount 走 charId 索引全量计数，包含群聊消息（以及上面被过滤的约会/通话
             // 消息）——它们永远不会出现在单聊列表里。直接拿它算「加载历史消息」会出现
             // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
@@ -1300,6 +1308,21 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
+    // 点闪电后的好友申请要等角色这一轮真正回复到达再弹出，避免弹窗抢在角色开口前。
+    useEffect(() => {
+        const pending = friendRequestTriggerRef.current;
+        if (!pending || pending.charId !== char?.id || !isFriendDeleted) return;
+        const replyArrived = messages.some(message => (
+            message.charId === pending.charId
+            && message.role === 'assistant'
+            && message.id > pending.afterMessageId
+            && message.timestamp >= pending.armedAt
+        ));
+        if (!replyArrived) return;
+        friendRequestTriggerRef.current = null;
+        setModalType('friend-request');
+    }, [messages, char?.id, isFriendDeleted]);
+
     // 用户点「生活记录」代记卡选择确认 / 否决：
     // 否决 → 记录标记 rejected（不再计入注入摘要）+ 回滚银行流水（expense）+
     // 给代记角色挂一条一次性反馈，下一轮 system prompt 会告诉角色它弄错了。
@@ -1322,12 +1345,68 @@ const Chat: React.FC = () => {
     const handleManualTrigger = () => {
         // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
         if (isTyping) return;
-        if (!isInstantConfigReady()) { triggerAI(messages); return; }
+        const extraSystemPrompt = isFriendDeleted ? buildPrivateChatFriendRequestPrompt(char.name) : undefined;
+        if (isFriendDeleted) {
+            friendRequestTriggerRef.current = {
+                charId: char.id,
+                afterMessageId: messages.reduce((max, message) => Math.max(max, message.id || 0), 0),
+                armedAt: Date.now(),
+            };
+        }
+        if (!isInstantConfigReady()) { triggerAI(messages, undefined, undefined, { extraSystemPrompt }); return; }
         // instantSendingActive 驱动 header "发送中…" 徽章 (拼接+发送窗口). 消息上的三个小圆点
         // 另走纯前端判定 (isTyping && 最后一条消息), 见渲染处.
         setInstantSendingActive(true);
-        triggerAI(messages, undefined, () => setInstantSendingActive(false));
+        triggerAI(messages, undefined, () => setInstantSendingActive(false), { extraSystemPrompt });
     };
+
+    const handleConfirmDeleteFriend = useCallback(async () => {
+        if (!char) return;
+        setModalType('none');
+        setShowPanel('none');
+        if (isPrivateChatFriendDeleted(char)) {
+            addToast('目前已经是临时会话', 'info');
+            return;
+        }
+        updateCharacter(char.id, {
+            privateChatFriendStatus: 'deleted',
+            privateChatFriendDeletedAt: Date.now(),
+            privateChatFriendRequestRejectedAt: undefined,
+        });
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'system',
+            content: buildFriendDeletedNotice(char.name),
+            metadata: { friendshipEvent: 'deleted' },
+        });
+        await reloadMessages(visibleCountRef.current);
+    }, [char, updateCharacter, addToast, reloadMessages]);
+
+    const handleAcceptFriendRequest = useCallback(async () => {
+        if (!char) return;
+        friendRequestTriggerRef.current = null;
+        setModalType('none');
+        updateCharacter(char.id, {
+            privateChatFriendStatus: 'friend',
+            privateChatFriendDeletedAt: undefined,
+            privateChatFriendRequestRejectedAt: undefined,
+        });
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'system',
+            content: buildFriendRestoredNotice(char.name),
+            metadata: { friendshipEvent: 'restored' },
+        });
+        await reloadMessages(visibleCountRef.current);
+    }, [char, updateCharacter, reloadMessages]);
+
+    const handleRejectFriendRequest = useCallback(() => {
+        if (char) updateCharacter(char.id, { privateChatFriendRequestRejectedAt: Date.now() });
+        friendRequestTriggerRef.current = null;
+        setModalType('none');
+    }, [char, updateCharacter]);
 
     const handleReroll = async () => {
         if (isTyping || messages.length === 0) return;
@@ -1413,6 +1492,7 @@ const Chat: React.FC = () => {
             case 'chrome-css': setModalType('chrome-css'); break;
             case 'chrome-sound': setModalType('chrome-sound'); break;
             case 'fine-tune': setShowPanel('none'); setFineTuneOpen(true); setFineTunePanelOpen(true); break;
+            case 'delete-friend': setShowPanel('none'); setModalType('delete-friend'); break;
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
@@ -2709,7 +2789,7 @@ const Chat: React.FC = () => {
         const base = messages
             .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'mihui' && m.metadata?.source !== 'story_theater_memory')
             .filter(m => !m.metadata?.proactiveHint)
-            .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; });
+            .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card' && !m.metadata?.friendshipEvent) return false; return true; });
         if (windowedFocusMsgId !== null) {
             const idx = base.findIndex(m => m.id === windowedFocusMsgId);
             if (idx >= 0) {
@@ -3154,6 +3234,65 @@ const Chat: React.FC = () => {
                 }}
              />
 
+             <Modal
+                isOpen={!!char && modalType === 'delete-friend'}
+                title={`是否删除【${char?.name || '该角色'}】？`}
+                onClose={() => setModalType('none')}
+                footer={(
+                    <>
+                        <button
+                            type="button"
+                            onClick={() => setModalType('none')}
+                            className="flex-1 rounded-2xl bg-slate-100 py-3 text-sm font-bold text-slate-600 active:scale-95 transition-transform"
+                        >
+                            给个机会
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleConfirmDeleteFriend}
+                            className="flex-1 rounded-2xl bg-gradient-to-r from-rose-500 to-red-500 py-3 text-sm font-bold text-white shadow-lg shadow-rose-200 active:scale-95 transition-transform"
+                        >
+                            残忍删除
+                        </button>
+                    </>
+                )}
+             >
+                <div className="py-2 text-center">
+                    <div className="mx-auto mb-3 flex h-14 w-20 items-center justify-center rounded-2xl bg-rose-50 text-2xl shadow-inner">💔</div>
+                    <p className="text-xs leading-relaxed text-slate-400">该操作并不会实际删除角色卡</p>
+                </div>
+             </Modal>
+
+             <Modal
+                isOpen={!!char && modalType === 'friend-request'}
+                title="新的好友申请"
+                onClose={handleRejectFriendRequest}
+                footer={(
+                    <>
+                        <button
+                            type="button"
+                            onClick={handleRejectFriendRequest}
+                            className="flex-1 rounded-2xl bg-slate-100 py-3 text-sm font-bold text-slate-600 active:scale-95 transition-transform"
+                        >
+                            不同意
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleAcceptFriendRequest}
+                            className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-500 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 active:scale-95 transition-transform"
+                        >
+                            同意添加
+                        </button>
+                    </>
+                )}
+             >
+                <div className="py-2 text-center">
+                    <img src={char?.avatar} alt="" className="mx-auto mb-3 h-16 w-16 rounded-full object-cover ring-4 ring-slate-100" />
+                    <p className="text-sm font-bold text-slate-700">{char?.name} 请求添加你为好友</p>
+                    <p className="mt-1 text-xs text-slate-400">同意后将结束临时会话</p>
+                </div>
+             </Modal>
+
              {/* 小剧场播放器：窥视某个日程时段的角色行为演出 */}
              {theaterSlotIdx !== null && scheduleData && createPortal(
                 <TheaterPlayer
@@ -3179,6 +3318,7 @@ const Chat: React.FC = () => {
                 isInstantSending={instantSendingActive}
                 isMemoryPalaceProcessing={!!memoryPalaceStatus}
                 memoryPalaceStatusText={memoryPalaceStatus}
+                statusText={isFriendDeleted ? '临时会话' : undefined}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}

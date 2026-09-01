@@ -2318,6 +2318,12 @@ export interface CharacterProfile {
   memories: MemoryFragment[];
   /** 密会熟人彩蛋的跨 App 连续记忆；每轮覆写，始终注入私聊但不随角色卡外发。 */
   mihuiContinuity?: string;
+  /** 私聊关系状态：deleted 只进入临时会话，不删除角色卡或历史记录。 */
+  privateChatFriendStatus?: 'friend' | 'deleted';
+  /** 最近一次在私聊中执行“删除好友”的时间。 */
+  privateChatFriendDeletedAt?: number;
+  /** 最近一次拒绝该角色重新加回好友的时间，让后续申请能够承接上次结果。 */
+  privateChatFriendRequestRejectedAt?: number;
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
   
