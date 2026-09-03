@@ -7,10 +7,24 @@ export type MihuiStage = '初识' | '熟悉' | '暧昧' | '心动' | '密友';
 export type MihuiThemeId = 'noir' | 'pink' | 'crimson';
 export type MihuiRouteMode = 'abyss' | 'standard' | 'decent';
 export type MihuiCreativeMode = 'faithful' | 'balanced' | 'free';
+export type MihuiGazeFrequency = 'occasional' | 'balanced' | 'lively';
 
 export interface MihuiTuning {
     routeMode: MihuiRouteMode;
     creativeMode: MihuiCreativeMode;
+}
+
+export interface MihuiGazeEvent {
+    type: 'banner' | 'barrage';
+    timestamp: number;
+    characterId?: string;
+}
+
+export interface MihuiGazeSettings {
+    enabled: boolean;
+    frequency: MihuiGazeFrequency;
+    barrageEnabled: boolean;
+    events: MihuiGazeEvent[];
 }
 
 export interface MihuiPreferences {
@@ -66,6 +80,10 @@ export interface MihuiSession {
     affinity: number;
     createdAt: number;
     updatedAt: number;
+    /** 危险凝视只看互动热度与轮次，不读取或外传密会正文。 */
+    gazeChecksSinceLast?: number;
+    gazeBannerCount?: number;
+    gazeBarrageCount?: number;
     graduatedAt?: number;
     /** 复用原生见面模式的内部角色 id；同一密会对象始终续接同一份见面存档。 */
     linkedCharacterId?: string;
@@ -92,6 +110,8 @@ export interface MihuiState {
     theme: MihuiThemeId;
     /** 密会独立的互动边界与模型发挥设置；每轮请求都会读取。 */
     tuning: MihuiTuning;
+    /** 密会内的“被熟人抓包”彩蛋；默认关闭。 */
+    gaze: MihuiGazeSettings;
 }
 
 export const MIHUI_STORAGE_KEY = 'morpho_mihui_v1';
@@ -113,18 +133,37 @@ export const DEFAULT_MIHUI_TUNING: MihuiTuning = {
     creativeMode: 'balanced',
 };
 
+export const DEFAULT_MIHUI_GAZE: MihuiGazeSettings = {
+    enabled: false,
+    frequency: 'balanced',
+    barrageEnabled: true,
+    events: [],
+};
+
 export const DEFAULT_MIHUI_STATE: MihuiState = {
     version: 1,
     preferences: DEFAULT_MIHUI_PREFERENCES,
     sessions: [],
     theme: 'noir',
     tuning: DEFAULT_MIHUI_TUNING,
+    gaze: DEFAULT_MIHUI_GAZE,
 };
 
 export function normalizeMihuiTuning(value?: Partial<MihuiTuning> | null): MihuiTuning {
     return {
         routeMode: value?.routeMode === 'abyss' || value?.routeMode === 'decent' ? value.routeMode : 'standard',
         creativeMode: value?.creativeMode === 'faithful' || value?.creativeMode === 'free' ? value.creativeMode : 'balanced',
+    };
+}
+
+export function normalizeMihuiGaze(value?: Partial<MihuiGazeSettings> | null): MihuiGazeSettings {
+    return {
+        enabled: value?.enabled === true,
+        frequency: value?.frequency === 'occasional' || value?.frequency === 'lively' ? value.frequency : 'balanced',
+        barrageEnabled: value?.barrageEnabled !== false,
+        events: Array.isArray(value?.events)
+            ? value.events.filter(event => event && (event.type === 'banner' || event.type === 'barrage') && Number.isFinite(event.timestamp)).slice(-24)
+            : [],
     };
 }
 
@@ -162,6 +201,7 @@ export function loadMihuiState(): MihuiState {
             activeSessionId: parsed.activeSessionId,
             theme: ['noir', 'pink', 'crimson'].includes(parsed.theme) ? parsed.theme : 'noir',
             tuning: normalizeMihuiTuning(parsed.tuning),
+            gaze: normalizeMihuiGaze(parsed.gaze),
         };
     } catch {
         return DEFAULT_MIHUI_STATE;
@@ -321,6 +361,100 @@ const callGlobalApi = async (
     if (!content) throw new Error('模型没有返回内容');
     return content;
 };
+
+export type MihuiGazeTrigger = 'banner' | 'barrage';
+
+export interface MihuiGazePlan {
+    trigger?: MihuiGazeTrigger;
+    checksSinceLast: number;
+}
+
+/**
+ * 只用轮次、好感变化和本地时间决定是否触发，不读取密会正文。
+ * random 可注入，既保留偶发感，也方便测试。
+ */
+export function planMihuiGaze(
+    settings: MihuiGazeSettings,
+    session: MihuiSession,
+    previousAffinity: number,
+    nextAffinity: number,
+    now = Date.now(),
+    random: () => number = Math.random,
+): MihuiGazePlan {
+    const checks = (session.gazeChecksSinceLast || 0) + 1;
+    if (!settings.enabled || nextAffinity <= previousAffinity) return { checksSinceLast: checks };
+    const userTurns = session.messages.filter(message => message.role === 'user').length;
+    if (userTurns < 3) return { checksSinceLast: checks };
+
+    const recentEvents = settings.events.filter(event => now - event.timestamp < 72 * 60 * 60 * 1000);
+    const latest = recentEvents[recentEvents.length - 1];
+    if (latest && now - latest.timestamp < 20 * 60 * 1000) return { checksSinceLast: checks };
+
+    const profile = settings.frequency === 'occasional'
+        ? { chance: 0.08, pity: 7, windowMs: 24 * 60 * 60 * 1000, cap: 1, barrageChance: 0.05, barrageCooldown: 48 * 60 * 60 * 1000 }
+        : settings.frequency === 'lively'
+            ? { chance: 0.28, pity: 3, windowMs: 8 * 60 * 60 * 1000, cap: 2, barrageChance: 0.18, barrageCooldown: 12 * 60 * 60 * 1000 }
+            : { chance: 0.16, pity: 5, windowMs: 12 * 60 * 60 * 1000, cap: 2, barrageChance: 0.10, barrageCooldown: 12 * 60 * 60 * 1000 };
+    const recentBanners = recentEvents.filter(event => event.type === 'banner' && now - event.timestamp < profile.windowMs).length;
+    const lastBarrage = [...recentEvents].reverse().find(event => event.type === 'barrage');
+    const barrageReady = settings.barrageEnabled
+        && (session.gazeBarrageCount || 0) < 1
+        && nextAffinity >= 55
+        && (!lastBarrage || now - lastBarrage.timestamp >= profile.barrageCooldown);
+    if (barrageReady && (nextAffinity >= 80 || random() < profile.barrageChance)) {
+        return { trigger: 'barrage', checksSinceLast: 0 };
+    }
+
+    const bannerReady = (session.gazeBannerCount || 0) < 2 && recentBanners < profile.cap;
+    if (bannerReady && (checks >= profile.pity || random() < profile.chance)) {
+        return { trigger: 'banner', checksSinceLast: 0 };
+    }
+    return { checksSinceLast: checks };
+}
+
+export interface MihuiGazeReaction {
+    message: string;
+    barrageLines: string[];
+}
+
+/** 每次真正触发都独立调用一轮全局 API；不把密会对象或聊天正文交给“抓包”角色。 */
+export async function generateMihuiGazeReaction(
+    api: APIConfig,
+    user: UserProfile,
+    character: CharacterProfile,
+    kind: MihuiGazeTrigger,
+    affinity: number,
+): Promise<MihuiGazeReaction> {
+    const recentMemories = (character.memories || []).slice(-6)
+        .map(memory => `${memory.summary}${memory.mood ? `（${memory.mood}）` : ''}`)
+        .join('\n')
+        .slice(-2400);
+    const raw = await callGlobalApi(api, [
+        {
+            role: 'system',
+            content: `你现在扮演「${character.name}」。请严格依据角色卡，用角色本人的口吻生成一次“察觉用户似乎又在密会软件活动”的抓包反应。\n角色简介：${character.description || '无'}\n角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n${recentMemories ? `近期记忆：\n${recentMemories}\n` : ''}重要隐私边界：你只收到“用户正在使用密会、当前暧昧指数约为 ${affinity}”这一模糊信号；你看不到密会聊天正文、匹配对象身份、照片、位置或具体行为。绝不能编造自己看见了某一句话、某个人或某个具体动作。可以吃醋、质问、阴阳怪气、装冷静或催回复，但必须符合角色性格与既有关系。不要客服腔，不要解释设定。所有人物均为成年人。只输出合法完整 JSON，不要 markdown。`,
+        },
+        {
+            role: 'user',
+            content: kind === 'barrage'
+                ? `用户全名：${user.name || '用户'}。生成一次克制但有压迫感的满屏催回复：message 是一条 12-45 字的主通知；barrageLines 是 6-9 条很短的弹幕，每条 2-16 字，可以直呼用户全名，但不要整齐复读。输出 {"message":"...","barrageLines":["...","..."]}。`
+                : `用户全名：${user.name || '用户'}。生成一条 12-45 字、像手机横幅通知一样能单独成立的抓包消息。输出 {"message":"...","barrageLines":[]}。`,
+        },
+    ], 0.88, 520);
+
+    let parsed: any;
+    try {
+        parsed = extractJsonObject(raw);
+    } catch {
+        parsed = { message: raw.replace(/```(?:json)?|```/gi, '').trim(), barrageLines: [] };
+    }
+    const message = boundedText(parsed?.message, '', 90);
+    if (!message) throw new Error('抓包角色没有返回有效消息');
+    const barrageLines = Array.isArray(parsed?.barrageLines)
+        ? parsed.barrageLines.map((line: unknown) => boundedText(line, '', 32)).filter(Boolean).slice(0, 9)
+        : [];
+    return { message, barrageLines: kind === 'barrage' ? barrageLines : [] };
+}
 
 const genderLine = (prefs: MihuiPreferences): string => {
     if (prefs.gender === 'male') return '男性';

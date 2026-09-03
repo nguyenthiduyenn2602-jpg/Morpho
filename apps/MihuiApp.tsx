@@ -7,6 +7,8 @@ import {
     ChatsCircle,
     DownloadSimple,
     CurrencyCircleDollar,
+    Eye,
+    EyeSlash,
     Heart,
     ImageSquare,
     MapPin,
@@ -35,13 +37,16 @@ import {
     buildMihuiCharacterCard,
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
+    DEFAULT_MIHUI_GAZE,
     DEFAULT_MIHUI_TUNING,
+    generateMihuiGazeReaction,
     generateMihuiFamiliarPersona,
     generateMihuiPersona,
     generateMihuiReply,
     loadMihuiState,
     mihuiMessageSummary,
     MihuiGender,
+    MihuiGazeSettings,
     MihuiMessage,
     MihuiPreferences,
     MihuiSession,
@@ -49,11 +54,21 @@ import {
     MihuiThemeId,
     MihuiTuning,
     pickMihuiFamiliar,
+    planMihuiGaze,
     removeMihuiMessage,
     saveMihuiState,
 } from '../utils/mihui';
 
 type Screen = 'home' | 'match' | 'chat';
+
+interface MihuiGazeNotice {
+    characterId: string;
+    name: string;
+    avatar?: string;
+    message: string;
+    timestamp: number;
+    lines?: string[];
+}
 
 const fieldClass = 'w-full rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] px-4 py-3 text-sm text-[var(--mh-text)] outline-none transition focus:border-[var(--mh-accent)] focus:ring-4 focus:ring-[var(--mh-soft)] placeholder:text-[var(--mh-muted)]';
 const chipClass = 'rounded-full px-4 py-2 text-xs font-bold transition active:scale-95';
@@ -142,6 +157,10 @@ const MihuiApp: React.FC = () => {
     const [showAppearance, setShowAppearance] = useState(false);
     const [showTuning, setShowTuning] = useState(false);
     const [draftTuning, setDraftTuning] = useState<MihuiTuning>(() => ({ ...(state.tuning || DEFAULT_MIHUI_TUNING) }));
+    const [showGazeSettings, setShowGazeSettings] = useState(false);
+    const [draftGaze, setDraftGaze] = useState<MihuiGazeSettings>(() => ({ ...(state.gaze || DEFAULT_MIHUI_GAZE), events: [...(state.gaze?.events || [])] }));
+    const [gazeBanner, setGazeBanner] = useState<MihuiGazeNotice | null>(null);
+    const [gazeBarrage, setGazeBarrage] = useState<MihuiGazeNotice | null>(null);
     const [locationName, setLocationName] = useState('');
     const [locationAddress, setLocationAddress] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
@@ -177,6 +196,16 @@ const MihuiApp: React.FC = () => {
     };
 
     useEffect(() => saveMihuiState(state), [state]);
+    useEffect(() => {
+        if (!gazeBanner) return;
+        const timer = window.setTimeout(() => setGazeBanner(null), 6500);
+        return () => window.clearTimeout(timer);
+    }, [gazeBanner]);
+    useEffect(() => {
+        if (!gazeBarrage) return;
+        const timer = window.setTimeout(() => setGazeBarrage(null), 9000);
+        return () => window.clearTimeout(timer);
+    }, [gazeBarrage]);
     useEffect(() => {
         if (screen !== 'chat') return;
         requestAnimationFrame(() => scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: 'smooth' }));
@@ -388,6 +417,82 @@ const MihuiApp: React.FC = () => {
         return character.id;
     };
 
+    const maybeTriggerGaze = async (session: MihuiSession, previousAffinity: number, nextAffinity: number) => {
+        const gaze = state.gaze || DEFAULT_MIHUI_GAZE;
+        if (!gaze.enabled) return;
+        const hiddenFamiliarId = session.familiar && !session.familiar.revealedAt ? session.familiar.characterId : undefined;
+        const watcherPool = characters.filter(character =>
+            character.id !== hiddenFamiliarId
+            && (character.activeMsg2Config?.enabled === true || character.proactiveConfig?.enabled === true),
+        );
+        if (!watcherPool.length) return;
+
+        const now = Date.now();
+        const plan = planMihuiGaze(gaze, session, previousAffinity, nextAffinity, now);
+        if (!plan.trigger) {
+            setState(prev => ({
+                ...prev,
+                sessions: prev.sessions.map(item => item.id === session.id
+                    ? { ...item, gazeChecksSinceLast: plan.checksSinceLast }
+                    : item),
+            }));
+            return;
+        }
+
+        const latestWatcherId = [...gaze.events].reverse().find(event => event.characterId)?.characterId;
+        const preferredPool = watcherPool.length > 1 ? watcherPool.filter(character => character.id !== latestWatcherId) : watcherPool;
+        const watcher = preferredPool[Math.floor(Math.random() * preferredPool.length)] || watcherPool[0];
+        try {
+            const reaction = await generateMihuiGazeReaction(apiConfig, userProfile, watcher, plan.trigger, nextAffinity);
+            const timestamp = Date.now();
+            await DB.saveMessage({
+                charId: watcher.id,
+                role: 'assistant',
+                type: 'text',
+                content: reaction.message,
+                timestamp,
+                metadata: { source: 'mihui-gaze', mihuiSessionId: session.id, kind: plan.trigger },
+            });
+            const notice: MihuiGazeNotice = {
+                characterId: watcher.id,
+                name: watcher.name,
+                avatar: watcher.avatar,
+                message: reaction.message,
+                timestamp,
+                lines: reaction.barrageLines,
+            };
+            setState(prev => {
+                const previousGaze = prev.gaze || DEFAULT_MIHUI_GAZE;
+                return {
+                    ...prev,
+                    gaze: {
+                        ...previousGaze,
+                        events: [...previousGaze.events.filter(event => timestamp - event.timestamp < 72 * 60 * 60 * 1000), {
+                            type: plan.trigger!, timestamp, characterId: watcher.id,
+                        }].slice(-24),
+                    },
+                    sessions: prev.sessions.map(item => item.id === session.id ? {
+                        ...item,
+                        gazeChecksSinceLast: 0,
+                        gazeBannerCount: (item.gazeBannerCount || 0) + (plan.trigger === 'banner' ? 1 : 0),
+                        gazeBarrageCount: (item.gazeBarrageCount || 0) + (plan.trigger === 'barrage' ? 1 : 0),
+                    } : item),
+                };
+            });
+            if (plan.trigger === 'barrage') setGazeBarrage(notice);
+            else setGazeBanner(notice);
+        } catch (error) {
+            console.warn('[Mihui] 危险凝视生成失败，本轮不触发彩蛋', error);
+        }
+    };
+
+    const openGazeMessage = (notice: MihuiGazeNotice) => {
+        setGazeBanner(null);
+        setGazeBarrage(null);
+        setActiveCharacterId(notice.characterId);
+        openApp(AppID.Chat);
+    };
+
     const sendUserMessage = async (userMessage: MihuiMessage, affinityText: string) => {
         if (!activeSession || sending || regenerating) return;
         const requestSession = { ...activeSession, messages: [...activeSession.messages, userMessage] };
@@ -449,6 +554,7 @@ const MihuiApp: React.FC = () => {
             } else if (becameFull) {
                 setShowGraduation(true);
             }
+            void maybeTriggerGaze(completedSession, activeSession.affinity, nextAffinity);
         } catch (error: any) {
             addToast(error?.message || '消息发送失败', 'error');
         } finally {
@@ -678,6 +784,7 @@ const MihuiApp: React.FC = () => {
     };
 
     const back = () => {
+        if (showGazeSettings) return setShowGazeSettings(false);
         if (showTuning) return setShowTuning(false);
         if (showAppearance) return setShowAppearance(false);
         if (showProfile) return setShowProfile(false);
@@ -994,6 +1101,63 @@ const MihuiApp: React.FC = () => {
         );
     };
 
+    const renderGazeSettingsSheet = () => {
+        if (!showGazeSettings) return null;
+        const frequencyOptions = [
+            { id: 'occasional' as const, label: '偶尔', note: '更像一次意外撞见' },
+            { id: 'balanced' as const, label: '适中', note: '有存在感，不会催得太紧' },
+            { id: 'lively' as const, label: '热闹', note: '更容易被熟人察觉' },
+        ];
+        const watcherCount = characters.filter(character => character.activeMsg2Config?.enabled === true || character.proactiveConfig?.enabled === true).length;
+        return (
+            <div className="absolute inset-0 z-[69] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setShowGazeSettings(false)}>
+                <div className="w-full max-h-[86%] overflow-y-auto rounded-t-[2.25rem] bg-[var(--mh-bg)] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[var(--mh-soft-2)]" />
+                    <div className="flex items-center justify-between">
+                        <div><p className="text-[10px] font-black tracking-[.28em] text-[var(--mh-accent)]">DANGEROUS GAZE</p><h3 className="mt-1 text-xl font-black text-[var(--mh-text)]">危险凝视</h3></div>
+                        <button onClick={() => setShowGazeSettings(false)} className="grid h-10 w-10 place-items-center rounded-full bg-[var(--mh-panel)] text-[var(--mh-muted)]"><X size={19} /></button>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-[var(--mh-muted)]">让已开启主动消息的角色偶尔察觉你正在使用密会。角色只知道“你上线了”，不会读取这里的聊天正文。</p>
+
+                    <section className="mt-6 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] p-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div><h4 className="text-sm font-black text-[var(--mh-text)]">开启凝视</h4><p className="mt-1 text-[10px] leading-4 text-[var(--mh-muted)]">当前可参与角色 {watcherCount} 位</p></div>
+                            <button type="button" onClick={() => setDraftGaze(prev => ({ ...prev, enabled: !prev.enabled }))} className={`relative h-7 w-12 rounded-full transition ${draftGaze.enabled ? 'bg-[var(--mh-accent)]' : 'bg-slate-300'}`} aria-label={draftGaze.enabled ? '关闭危险凝视' : '开启危险凝视'}>
+                                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${draftGaze.enabled ? 'left-6' : 'left-1'}`} />
+                            </button>
+                        </div>
+                    </section>
+
+                    <section className={`mt-5 transition ${draftGaze.enabled ? '' : 'opacity-45 pointer-events-none'}`}>
+                        <div className="flex items-end justify-between"><h4 className="text-sm font-black text-[var(--mh-text)]">出现频率</h4><span className="text-[10px] text-[var(--mh-muted)]">普通横幅每次密会最多 1-2 次</span></div>
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                            {frequencyOptions.map(option => {
+                                const selected = draftGaze.frequency === option.id;
+                                return <button key={option.id} type="button" onClick={() => setDraftGaze(prev => ({ ...prev, frequency: option.id }))} className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[.98] ${selected ? 'border-[var(--mh-accent)] bg-[var(--mh-soft)] shadow-sm' : 'border-[var(--mh-border)] bg-[var(--mh-panel)]'}`}><strong className="block text-xs text-[var(--mh-text)]">{option.label}</strong><span className="mt-1 block text-[9px] leading-4 text-[var(--mh-muted)]">{option.note}</span></button>;
+                            })}
+                        </div>
+                    </section>
+
+                    <section className={`mt-5 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] p-4 transition ${draftGaze.enabled ? '' : 'opacity-45 pointer-events-none'}`}>
+                        <div className="flex items-center justify-between gap-4">
+                            <div><h4 className="text-sm font-black text-[var(--mh-text)]">催命弹幕</h4><p className="mt-1 text-[10px] leading-4 text-[var(--mh-muted)]">暧昧升高时偶发；默认间隔至少 12 小时</p></div>
+                            <button type="button" onClick={() => setDraftGaze(prev => ({ ...prev, barrageEnabled: !prev.barrageEnabled }))} className={`relative h-7 w-12 rounded-full transition ${draftGaze.barrageEnabled ? 'bg-[var(--mh-accent)]' : 'bg-slate-300'}`} aria-label={draftGaze.barrageEnabled ? '关闭催命弹幕' : '开启催命弹幕'}>
+                                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${draftGaze.barrageEnabled ? 'left-6' : 'left-1'}`} />
+                            </button>
+                        </div>
+                    </section>
+
+                    <div className="mt-5 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] px-4 py-3 text-[11px] leading-5 text-[var(--mh-muted)]">每次真正触发横幅或弹幕，都会额外调用一轮全局 API，让角色按自己的设定临场生成消息；触发判断本身不调用 API。</div>
+                    <button type="button" onClick={() => {
+                        setState(prev => ({ ...prev, gaze: { ...draftGaze, events: prev.gaze?.events || [] } }));
+                        setShowGazeSettings(false);
+                        addToast('危险凝视设置已保存', 'success');
+                    }} className="mt-5 w-full rounded-2xl bg-[var(--mh-accent-strong)] py-4 text-sm font-black text-[var(--mh-on-accent)] shadow-lg active:scale-[.99] transition">保存设置</button>
+                </div>
+            </div>
+        );
+    };
+
     const renderAppearanceSheet = () => {
         if (!showAppearance) return null;
         return (
@@ -1129,6 +1293,7 @@ const MihuiApp: React.FC = () => {
                 <div className="h-12 flex items-center gap-3">
                     <button onClick={back} className="w-10 h-10 rounded-full grid place-items-center text-slate-600 hover:bg-black/5 active:scale-90 transition" aria-label="返回"><ArrowLeft size={24} /></button>
                     <div className="min-w-0 flex-1"><p className="text-[10px] font-bold tracking-[.3em] text-[var(--mh-accent)]">MIHUI</p><p className="font-black text-[var(--mh-text)]">{screen === 'match' ? '偏好设置' : '密会'}</p></div>
+                    {screen === 'home' && <button onClick={() => { const gaze = state.gaze || DEFAULT_MIHUI_GAZE; setDraftGaze({ ...gaze, events: [...gaze.events] }); setShowGazeSettings(true); }} className={`w-10 h-10 rounded-full grid place-items-center transition ${state.gaze?.enabled ? 'bg-[var(--mh-soft)] text-[var(--mh-accent)]' : 'bg-slate-100 text-slate-400'}`} aria-label="危险凝视设置">{state.gaze?.enabled ? <Eye size={20} weight="fill" /> : <EyeSlash size={20} />}</button>}
                     <button onClick={() => setShowAppearance(true)} className="w-10 h-10 rounded-full bg-[var(--mh-soft)] text-[var(--mh-accent)] grid place-items-center" aria-label="密会装扮"><Palette size={20} /></button>
                     {screen === 'home' && <button onClick={() => { setDraftTuning({ ...(state.tuning || DEFAULT_MIHUI_TUNING) }); setShowTuning(true); }} className="w-10 h-10 rounded-full bg-[var(--mh-soft)] text-[var(--mh-accent)] grid place-items-center" aria-label="密会调校"><Wrench size={20} /></button>}
                 </div>
@@ -1147,6 +1312,24 @@ const MihuiApp: React.FC = () => {
             {screen === 'chat' && renderChat()}
             {screen !== 'chat' && renderAppearanceSheet()}
             {screen !== 'chat' && renderTuningSheet()}
+            {renderGazeSettingsSheet()}
+            {gazeBanner && (
+                <button type="button" onClick={() => openGazeMessage(gazeBanner)} className="absolute left-3 right-3 z-[86] flex items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-white shadow-2xl backdrop-blur-xl animate-fade-in" style={{ top: 'calc(var(--safe-top) + .55rem)' }}>
+                    {gazeBanner.avatar ? <img src={gazeBanner.avatar} alt={gazeBanner.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <PlaceholderAvatar size="w-11 h-11" className="!rounded-xl" />}
+                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-white/55">现在</small></span><span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-white/85">{gazeBanner.message}</span></span>
+                </button>
+            )}
+            {gazeBarrage && (
+                <div className="absolute inset-0 z-[85] overflow-hidden bg-black/30 backdrop-blur-[1px]" onClick={() => setGazeBarrage(null)}>
+                    <style>{`@keyframes mihui-barrage-slide { from { transform: translateX(110vw); } to { transform: translateX(-125%); } }`}</style>
+                    {(gazeBarrage.lines?.length ? gazeBarrage.lines : [gazeBarrage.message]).map((line, index) => (
+                        <div key={`${line}-${index}`} className="absolute whitespace-nowrap rounded-full bg-black/75 px-4 py-2 text-sm font-black text-white shadow-lg" style={{ top: `${12 + (index * 10.5) % 68}%`, right: 0, animation: `mihui-barrage-slide ${5.6 + (index % 3) * .7}s linear ${index * .32}s both` }}>{line}</div>
+                    ))}
+                    <button type="button" onClick={event => { event.stopPropagation(); openGazeMessage(gazeBarrage); }} className="absolute bottom-[calc(var(--safe-bottom)+2rem)] left-1/2 -translate-x-1/2 rounded-full bg-[var(--mh-accent-strong)] px-6 py-3 text-sm font-black text-[var(--mh-on-accent)] shadow-2xl">
+                        回 {gazeBarrage.name} 的消息
+                    </button>
+                </div>
+            )}
         </div>
     );
 };
