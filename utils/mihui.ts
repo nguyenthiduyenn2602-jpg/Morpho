@@ -140,7 +140,7 @@ export function buildMihuiTuningInstruction(tuning: MihuiTuning): string {
         ? '【角色发挥：贴合设定】优先保持既有人设、经历、表达习惯与行为逻辑；宁可收敛发挥，也不要为了戏剧性让角色失真。'
         : tuning.creativeMode === 'free'
             ? '【角色发挥：自由发挥】在不违背核心身份和已有事实的前提下，可以主动创造更多生活细节、话题与意外反应。'
-            : '【角色发挥：自然平衡】稳定承接人设和已有经历，同时允许适量补充自然的生活细节与临场反应。';
+            : '【角色发挥：灵活平衡】稳定承接人设和已有经历，同时允许适量补充自然的生活细节与临场反应。';
     return `${route}\n${creative}\n${MIHUI_QUALITY_FLOOR}`;
 }
 

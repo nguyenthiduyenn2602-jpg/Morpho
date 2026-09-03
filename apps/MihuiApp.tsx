@@ -931,14 +931,14 @@ const MihuiApp: React.FC = () => {
     const renderTuningSheet = () => {
         if (!showTuning) return null;
         const routeOptions = [
-            { id: 'abyss' as const, label: '深渊', description: '更大胆直接，关系推进更快' },
-            { id: 'standard' as const, label: '标准', description: '自然暧昧，依据人设推进' },
-            { id: 'decent' as const, label: '体面', description: '克制有分寸，重视交往体验' },
+            { id: 'abyss' as const, label: '深渊' },
+            { id: 'standard' as const, label: '标准' },
+            { id: 'decent' as const, label: '体面' },
         ];
         const creativeOptions = [
-            { id: 'faithful' as const, label: '贴合设定', description: '稳定承接人物性格与经历' },
-            { id: 'balanced' as const, label: '自然平衡', description: '人设稳定，也有临场反应' },
-            { id: 'free' as const, label: '自由发挥', description: '允许创造更多生活细节' },
+            { id: 'faithful' as const, label: '贴合设定' },
+            { id: 'balanced' as const, label: '灵活平衡' },
+            { id: 'free' as const, label: '自由发挥' },
         ];
         const optionClass = (selected: boolean) => `rounded-2xl border px-3 py-3 text-left transition active:scale-[.98] ${selected
             ? 'border-[var(--mh-accent)] bg-[var(--mh-soft)] shadow-sm'
@@ -959,7 +959,6 @@ const MihuiApp: React.FC = () => {
                             {routeOptions.map(option => (
                                 <button key={option.id} type="button" onClick={() => setDraftTuning(prev => ({ ...prev, routeMode: option.id }))} className={optionClass(draftTuning.routeMode === option.id)}>
                                     <strong className="block text-xs text-[var(--mh-text)]">{option.label}</strong>
-                                    <span className="mt-1.5 block text-[10px] leading-4 text-[var(--mh-muted)]">{option.description}</span>
                                 </button>
                             ))}
                         </div>
@@ -971,7 +970,6 @@ const MihuiApp: React.FC = () => {
                             {creativeOptions.map(option => (
                                 <button key={option.id} type="button" onClick={() => setDraftTuning(prev => ({ ...prev, creativeMode: option.id }))} className={optionClass(draftTuning.creativeMode === option.id)}>
                                     <strong className="block text-xs text-[var(--mh-text)]">{option.label}</strong>
-                                    <span className="mt-1.5 block text-[10px] leading-4 text-[var(--mh-muted)]">{option.description}</span>
                                 </button>
                             ))}
                         </div>
