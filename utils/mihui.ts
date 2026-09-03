@@ -437,7 +437,7 @@ export async function generateMihuiGazeReaction(
         {
             role: 'user',
             content: kind === 'barrage'
-                ? `用户全名：${user.name || '用户'}。生成一次克制但有压迫感的满屏催回复：message 是一条 12-45 字的主通知；barrageLines 是 6-9 条很短的弹幕，每条 2-16 字，可以直呼用户全名，但不要整齐复读。输出 {"message":"...","barrageLines":["...","..."]}。`
+                ? `用户全名：${user.name || '用户'}。生成一次有压迫感的满屏催回复：message 是一条 12-45 字的主通知；barrageLines 只提供 1-3 条很短的弹幕原句，每条 2-16 字，可以直呼用户全名。前端会把这些原句大量复制并铺满屏幕，因此原句要适合反复出现，例如“回信息”“${user.name || '用户'}！你在干嘛”“看到回复”。输出 {"message":"...","barrageLines":["...","..."]}。`
                 : `用户全名：${user.name || '用户'}。生成一条 12-45 字、像手机横幅通知一样能单独成立的抓包消息。输出 {"message":"...","barrageLines":[]}。`,
         },
     ], 0.88, 520);
@@ -451,7 +451,7 @@ export async function generateMihuiGazeReaction(
     const message = boundedText(parsed?.message, '', 90);
     if (!message) throw new Error('抓包角色没有返回有效消息');
     const barrageLines = Array.isArray(parsed?.barrageLines)
-        ? parsed.barrageLines.map((line: unknown) => boundedText(line, '', 32)).filter(Boolean).slice(0, 9)
+        ? parsed.barrageLines.map((line: unknown) => boundedText(line, '', 32)).filter(Boolean).slice(0, 3)
         : [];
     return { message, barrageLines: kind === 'barrage' ? barrageLines : [] };
 }

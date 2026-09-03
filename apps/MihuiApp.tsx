@@ -1320,11 +1320,31 @@ const MihuiApp: React.FC = () => {
                 </button>
             )}
             {gazeBarrage && (
-                <div className="absolute inset-0 z-[85] overflow-hidden bg-black/30 backdrop-blur-[1px]" onClick={() => setGazeBarrage(null)}>
-                    <style>{`@keyframes mihui-barrage-slide { from { transform: translateX(110vw); } to { transform: translateX(-125%); } }`}</style>
-                    {(gazeBarrage.lines?.length ? gazeBarrage.lines : [gazeBarrage.message]).map((line, index) => (
-                        <div key={`${line}-${index}`} className="absolute whitespace-nowrap rounded-full bg-black/75 px-4 py-2 text-sm font-black text-white shadow-lg" style={{ top: `${12 + (index * 10.5) % 68}%`, right: 0, animation: `mihui-barrage-slide ${5.6 + (index % 3) * .7}s linear ${index * .32}s both` }}>{line}</div>
-                    ))}
+                <div className="absolute inset-0 z-[85] overflow-hidden bg-black/35 backdrop-blur-[1px]" onClick={() => setGazeBarrage(null)}>
+                    <style>{`@keyframes mihui-barrage-slide { from { transform: translateX(118vw); } to { transform: translateX(-145%); } }`}</style>
+                    {(() => {
+                        const sourceLines = (gazeBarrage.lines?.length ? gazeBarrage.lines : [gazeBarrage.message]).filter(Boolean).slice(0, 3);
+                        return Array.from({ length: 36 }, (_, index) => {
+                            const line = sourceLines[index % sourceLines.length] || gazeBarrage.message;
+                            const lane = (index * 11 + (index % 4) * 3) % 84;
+                            const duration = 6.2 + (index % 7) * .42;
+                            const delay = -((index * .71) % 7.6);
+                            return (
+                                <div
+                                    key={`${index}-${line}`}
+                                    className="pointer-events-none absolute left-0 whitespace-nowrap rounded-full border border-white/15 bg-black/75 px-4 py-2 font-black text-white shadow-lg"
+                                    style={{
+                                        top: `${4 + lane}%`,
+                                        fontSize: `${12 + (index % 4)}px`,
+                                        opacity: .72 + (index % 4) * .08,
+                                        animation: `mihui-barrage-slide ${duration}s linear ${delay}s infinite`,
+                                    }}
+                                >
+                                    {line}
+                                </div>
+                            );
+                        });
+                    })()}
                     <button type="button" onClick={event => { event.stopPropagation(); openGazeMessage(gazeBarrage); }} className="absolute bottom-[calc(var(--safe-bottom)+2rem)] left-1/2 -translate-x-1/2 rounded-full bg-[var(--mh-accent-strong)] px-6 py-3 text-sm font-black text-[var(--mh-on-accent)] shadow-2xl">
                         回 {gazeBarrage.name} 的消息
                     </button>
