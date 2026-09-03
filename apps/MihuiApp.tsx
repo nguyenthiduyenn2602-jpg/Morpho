@@ -1314,9 +1314,9 @@ const MihuiApp: React.FC = () => {
             {screen !== 'chat' && renderTuningSheet()}
             {renderGazeSettingsSheet()}
             {gazeBanner && (
-                <button type="button" onClick={() => openGazeMessage(gazeBanner)} className="absolute left-3 right-3 z-[86] flex items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-white shadow-2xl backdrop-blur-xl animate-fade-in" style={{ top: 'calc(var(--safe-top) + .55rem)' }}>
+                <button type="button" onClick={() => openGazeMessage(gazeBanner)} className="absolute left-3 right-3 z-[86] flex items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-[#303139] shadow-2xl backdrop-blur-xl animate-fade-in" style={{ top: 'calc(var(--safe-top) + .55rem)' }}>
                     {gazeBanner.avatar ? <img src={gazeBanner.avatar} alt={gazeBanner.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <PlaceholderAvatar size="w-11 h-11" className="!rounded-xl" />}
-                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-white/55">现在</small></span><span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-white/85">{gazeBanner.message}</span></span>
+                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-[#666872]">现在</small></span><span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-[#454750]">{gazeBanner.message}</span></span>
                 </button>
             )}
             {gazeBarrage && (
