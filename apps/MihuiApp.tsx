@@ -18,6 +18,7 @@ import {
     Trash,
     UserPlus,
     Users,
+    Wrench,
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
@@ -34,6 +35,7 @@ import {
     buildMihuiCharacterCard,
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
+    DEFAULT_MIHUI_TUNING,
     generateMihuiFamiliarPersona,
     generateMihuiPersona,
     generateMihuiReply,
@@ -45,6 +47,7 @@ import {
     MihuiSession,
     MihuiState,
     MihuiThemeId,
+    MihuiTuning,
     pickMihuiFamiliar,
     removeMihuiMessage,
     saveMihuiState,
@@ -137,6 +140,8 @@ const MihuiApp: React.FC = () => {
     const [showLocation, setShowLocation] = useState(false);
     const [showTransfer, setShowTransfer] = useState(false);
     const [showAppearance, setShowAppearance] = useState(false);
+    const [showTuning, setShowTuning] = useState(false);
+    const [draftTuning, setDraftTuning] = useState<MihuiTuning>(() => ({ ...(state.tuning || DEFAULT_MIHUI_TUNING) }));
     const [locationName, setLocationName] = useState('');
     const [locationAddress, setLocationAddress] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
@@ -281,8 +286,8 @@ const MihuiApp: React.FC = () => {
             const familiar = quick ? pickMihuiFamiliar(characters, state.sessions) : undefined;
             const familiarContinuity = familiar ? await loadFamiliarContinuity(familiar) : '';
             const persona = familiar
-                ? await generateMihuiFamiliarPersona(apiConfig, userProfile, familiar, prefs, familiarContinuity)
-                : await generateMihuiPersona(apiConfig, userProfile, prefs, quick);
+                ? await generateMihuiFamiliarPersona(apiConfig, userProfile, familiar, prefs, familiarContinuity, state.tuning)
+                : await generateMihuiPersona(apiConfig, userProfile, prefs, quick, state.tuning);
             const now = Date.now();
             const session: MihuiSession = {
                 id: sessionId(),
@@ -393,7 +398,7 @@ const MihuiApp: React.FC = () => {
                 ? characters.find(character => character.id === requestSession.familiar?.characterId)
                 : undefined;
             const familiarContinuity = sourceCharacter ? await loadFamiliarContinuity(sourceCharacter) : '';
-            const result = await generateMihuiReply(apiConfig, userProfile, requestSession, sourceCharacter, familiarContinuity);
+            const result = await generateMihuiReply(apiConfig, userProfile, requestSession, sourceCharacter, familiarContinuity, state.tuning);
             const replyTurnId = `mh-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const replyTimestamp = Date.now();
             const assistantMessages: MihuiMessage[] = result.bubbles.map((content, index) => ({
@@ -592,7 +597,7 @@ const MihuiApp: React.FC = () => {
                 ? characters.find(character => character.id === activeSession.familiar?.characterId)
                 : undefined;
             const familiarContinuity = sourceCharacter ? await loadFamiliarContinuity(sourceCharacter) : '';
-            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history }, sourceCharacter, familiarContinuity);
+            const result = await generateMihuiReply(apiConfig, userProfile, { ...activeSession, messages: history }, sourceCharacter, familiarContinuity, state.tuning);
             const replyTurnId = targetTurnId || `mh-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const replyTimestamp = Date.now();
             const replacements: MihuiMessage[] = result.bubbles.map((content, index) => ({
@@ -673,6 +678,7 @@ const MihuiApp: React.FC = () => {
     };
 
     const back = () => {
+        if (showTuning) return setShowTuning(false);
         if (showAppearance) return setShowAppearance(false);
         if (showProfile) return setShowProfile(false);
         if (screen === 'chat' || screen === 'match') return setScreen('home');
@@ -922,6 +928,74 @@ const MihuiApp: React.FC = () => {
         );
     };
 
+    const renderTuningSheet = () => {
+        if (!showTuning) return null;
+        const routeOptions = [
+            { id: 'abyss' as const, label: '深渊', description: '更大胆直接，关系推进更快' },
+            { id: 'standard' as const, label: '标准', description: '自然暧昧，依据人设推进' },
+            { id: 'decent' as const, label: '体面', description: '克制有分寸，重视交往体验' },
+        ];
+        const creativeOptions = [
+            { id: 'faithful' as const, label: '贴合设定', description: '稳定承接人物性格与经历' },
+            { id: 'balanced' as const, label: '自然平衡', description: '人设稳定，也有临场反应' },
+            { id: 'free' as const, label: '自由发挥', description: '允许创造更多生活细节' },
+        ];
+        const optionClass = (selected: boolean) => `rounded-2xl border px-3 py-3 text-left transition active:scale-[.98] ${selected
+            ? 'border-[var(--mh-accent)] bg-[var(--mh-soft)] shadow-sm'
+            : 'border-[var(--mh-border)] bg-[var(--mh-panel)]'}`;
+        return (
+            <div className="absolute inset-0 z-[69] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setShowTuning(false)}>
+                <div className="w-full max-h-[86%] overflow-y-auto rounded-t-[2.25rem] bg-[var(--mh-bg)] p-5 pb-[calc(var(--safe-bottom)+1.25rem)] shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[var(--mh-soft-2)]" />
+                    <div className="flex items-center justify-between">
+                        <div><p className="text-[10px] font-black tracking-[.28em] text-[var(--mh-accent)]">MIHUI TUNING</p><h3 className="mt-1 text-xl font-black text-[var(--mh-text)]">密会调校</h3></div>
+                        <button onClick={() => setShowTuning(false)} className="grid h-10 w-10 place-items-center rounded-full bg-[var(--mh-panel)] text-[var(--mh-muted)]"><X size={19} /></button>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-[var(--mh-muted)]">只影响密会中的人物生成与每轮聊天，不改变全局 API 设置。</p>
+
+                    <section className="mt-6">
+                        <div className="flex items-end justify-between"><h4 className="text-sm font-black text-[var(--mh-text)]">航线模式</h4><span className="text-[10px] text-[var(--mh-muted)]">关系边界与推进方式</span></div>
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                            {routeOptions.map(option => (
+                                <button key={option.id} type="button" onClick={() => setDraftTuning(prev => ({ ...prev, routeMode: option.id }))} className={optionClass(draftTuning.routeMode === option.id)}>
+                                    <strong className="block text-xs text-[var(--mh-text)]">{option.label}</strong>
+                                    <span className="mt-1.5 block text-[10px] leading-4 text-[var(--mh-muted)]">{option.description}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </section>
+
+                    <section className="mt-6">
+                        <div className="flex items-end justify-between"><h4 className="text-sm font-black text-[var(--mh-text)]">角色发挥</h4><span className="text-[10px] text-[var(--mh-muted)]">模型自由度</span></div>
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                            {creativeOptions.map(option => (
+                                <button key={option.id} type="button" onClick={() => setDraftTuning(prev => ({ ...prev, creativeMode: option.id }))} className={optionClass(draftTuning.creativeMode === option.id)}>
+                                    <strong className="block text-xs text-[var(--mh-text)]">{option.label}</strong>
+                                    <span className="mt-1.5 block text-[10px] leading-4 text-[var(--mh-muted)]">{option.description}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </section>
+
+                    <div className="mt-6 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] px-4 py-3 text-[11px] leading-5 text-[var(--mh-muted)]">
+                        无论选择哪条航线，人物都会保留基本体面与约会诚意；消费和付出会遵循年龄、职业与经济能力，不靠虚构财富制造慷慨。
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setState(prev => ({ ...prev, tuning: { ...draftTuning } }));
+                            setShowTuning(false);
+                            addToast('密会调校已保存，将从下一轮聊天生效', 'success');
+                        }}
+                        className="mt-5 w-full rounded-2xl bg-[var(--mh-accent-strong)] py-4 text-sm font-black text-[var(--mh-on-accent)] shadow-lg active:scale-[.99] transition"
+                    >
+                        保存调校
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
     const renderAppearanceSheet = () => {
         if (!showAppearance) return null;
         return (
@@ -1046,6 +1120,7 @@ const MihuiApp: React.FC = () => {
                 {renderLocationSheet()}
                 {renderTransferSheet()}
                 {renderAppearanceSheet()}
+                {renderTuningSheet()}
             </>
         );
     };
@@ -1057,7 +1132,7 @@ const MihuiApp: React.FC = () => {
                     <button onClick={back} className="w-10 h-10 rounded-full grid place-items-center text-slate-600 hover:bg-black/5 active:scale-90 transition" aria-label="返回"><ArrowLeft size={24} /></button>
                     <div className="min-w-0 flex-1"><p className="text-[10px] font-bold tracking-[.3em] text-[var(--mh-accent)]">MIHUI</p><p className="font-black text-[var(--mh-text)]">{screen === 'match' ? '偏好设置' : '密会'}</p></div>
                     <button onClick={() => setShowAppearance(true)} className="w-10 h-10 rounded-full bg-[var(--mh-soft)] text-[var(--mh-accent)] grid place-items-center" aria-label="密会装扮"><Palette size={20} /></button>
-                    {screen === 'home' && <button onClick={() => { setMatchError(''); setScreen('match'); }} className="w-10 h-10 rounded-full bg-[var(--mh-soft)] text-[var(--mh-accent)] grid place-items-center"><Shuffle size={20} /></button>}
+                    {screen === 'home' && <button onClick={() => { setDraftTuning({ ...(state.tuning || DEFAULT_MIHUI_TUNING) }); setShowTuning(true); }} className="w-10 h-10 rounded-full bg-[var(--mh-soft)] text-[var(--mh-accent)] grid place-items-center" aria-label="密会调校"><Wrench size={20} /></button>}
                 </div>
             </header>
             {matching && (
@@ -1073,6 +1148,7 @@ const MihuiApp: React.FC = () => {
             {screen === 'match' && renderMatch()}
             {screen === 'chat' && renderChat()}
             {screen !== 'chat' && renderAppearanceSheet()}
+            {screen !== 'chat' && renderTuningSheet()}
         </div>
     );
 };

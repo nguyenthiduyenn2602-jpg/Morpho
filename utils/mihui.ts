@@ -5,6 +5,13 @@ import { stripSensitiveCardFields } from './characterCard';
 export type MihuiGender = 'male' | 'female' | 'any' | 'custom';
 export type MihuiStage = '初识' | '熟悉' | '暧昧' | '心动' | '密友';
 export type MihuiThemeId = 'noir' | 'pink' | 'crimson';
+export type MihuiRouteMode = 'abyss' | 'standard' | 'decent';
+export type MihuiCreativeMode = 'faithful' | 'balanced' | 'free';
+
+export interface MihuiTuning {
+    routeMode: MihuiRouteMode;
+    creativeMode: MihuiCreativeMode;
+}
 
 export interface MihuiPreferences {
     gender: MihuiGender;
@@ -83,6 +90,8 @@ export interface MihuiState {
     activeSessionId?: string;
     /** 只作用于密会 App，不跟随也不覆盖系统或聊天美化。 */
     theme: MihuiThemeId;
+    /** 密会独立的互动边界与模型发挥设置；每轮请求都会读取。 */
+    tuning: MihuiTuning;
 }
 
 export const MIHUI_STORAGE_KEY = 'morpho_mihui_v1';
@@ -99,12 +108,47 @@ export const DEFAULT_MIHUI_PREFERENCES: MihuiPreferences = {
     custom: '',
 };
 
+export const DEFAULT_MIHUI_TUNING: MihuiTuning = {
+    routeMode: 'standard',
+    creativeMode: 'balanced',
+};
+
 export const DEFAULT_MIHUI_STATE: MihuiState = {
     version: 1,
     preferences: DEFAULT_MIHUI_PREFERENCES,
     sessions: [],
     theme: 'noir',
+    tuning: DEFAULT_MIHUI_TUNING,
 };
+
+export function normalizeMihuiTuning(value?: Partial<MihuiTuning> | null): MihuiTuning {
+    return {
+        routeMode: value?.routeMode === 'abyss' || value?.routeMode === 'decent' ? value.routeMode : 'standard',
+        creativeMode: value?.creativeMode === 'faithful' || value?.creativeMode === 'free' ? value.creativeMode : 'balanced',
+    };
+}
+
+const MIHUI_QUALITY_FLOOR = `【匹配质量底线】角色可以有真实缺点、不同经济条件和鲜明脾气，但不得被塑造成油腻、自恋说教、卫生习惯糟糕、刻意冒犯、习惯性占便宜或把全部约会成本推给用户的人。约会阶段应表现得大方、有诚意：这里的“大方”不是挥金如土，而是结合角色年龄、职业、收入和既定人设，在力所能及范围内主动承担合理支出、照顾用户体验，不斤斤计较、不借机索取，也不让用户为其个人享受持续买单。消费能力必须符合人设；禁止为了表现慷慨，让大学生或普通收入角色随意购买豪宅、豪车、奢侈品或进行巨额转账。慷慨首先体现为态度、行动与合理分担，而不是虚构财富。`;
+
+export function buildMihuiTuningInstruction(tuning: MihuiTuning): string {
+    const route = tuning.routeMode === 'abyss'
+        ? '【航线：深渊】在双方均为成年人且情境自然时，允许角色更大胆、直接，暧昧和亲密关系可以较快推进；仍须尊重用户明确表达的拒绝和边界。'
+        : tuning.routeMode === 'decent'
+            ? '【航线：体面】角色应克制、礼貌并重视确认，不急于推进暧昧或亲密关系，以有分寸的交往和可靠体验为主。'
+            : '【航线：标准】角色可以自然暧昧并依据人设推进关系，既不刻意回避亲密，也不无视情境突然越界。';
+    const creative = tuning.creativeMode === 'faithful'
+        ? '【角色发挥：贴合设定】优先保持既有人设、经历、表达习惯与行为逻辑；宁可收敛发挥，也不要为了戏剧性让角色失真。'
+        : tuning.creativeMode === 'free'
+            ? '【角色发挥：自由发挥】在不违背核心身份和已有事实的前提下，可以主动创造更多生活细节、话题与意外反应。'
+            : '【角色发挥：自然平衡】稳定承接人设和已有经历，同时允许适量补充自然的生活细节与临场反应。';
+    return `${route}\n${creative}\n${MIHUI_QUALITY_FLOOR}`;
+}
+
+export function mihuiReplyTemperature(tuning: MihuiTuning): number {
+    if (tuning.creativeMode === 'faithful') return 0.48;
+    if (tuning.creativeMode === 'free') return 1.08;
+    return 0.82;
+}
 
 export function loadMihuiState(): MihuiState {
     if (typeof window === 'undefined') return DEFAULT_MIHUI_STATE;
@@ -117,6 +161,7 @@ export function loadMihuiState(): MihuiState {
             sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
             activeSessionId: parsed.activeSessionId,
             theme: ['noir', 'pink', 'crimson'].includes(parsed.theme) ? parsed.theme : 'noir',
+            tuning: normalizeMihuiTuning(parsed.tuning),
         };
     } catch {
         return DEFAULT_MIHUI_STATE;
@@ -267,7 +312,7 @@ const callGlobalApi = async (
         body: JSON.stringify({
             model: api.model,
             messages,
-            temperature: api.temperature ?? temperature,
+            temperature,
             max_tokens: maxTokens,
             stream: false,
         }),
@@ -289,18 +334,19 @@ export async function generateMihuiPersona(
     user: UserProfile,
     prefs: MihuiPreferences,
     quickMatch = false,
+    tuning: MihuiTuning = DEFAULT_MIHUI_TUNING,
 ): Promise<MihuiPersona> {
     const preferenceText = `匹配性别：${genderLine(prefs)}\n年龄：${prefs.ageMin}-${prefs.ageMax}\n职业偏好：${prefs.occupations || '不限'}\n外貌偏好：${prefs.appearance || '不限'}\n相处风格：${prefs.style || '不限'}\n关系倾向：${prefs.relationship || '先聊天了解'}\n补充：${prefs.custom || '无'}`;
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你是虚构同城交友软件「密会」的匹配导演。生成一个有生活感、有边界、有缺点的虚构成年人物，禁止未成年人。人物不是服务用户的工具，不要完美迎合，也不要写成夸张霸总。只输出一个合法、完整的 JSON 对象，不要 markdown，不要解释，不要在 JSON 前后添加文字。字段必须且只能为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。除 age 外均为字符串；每个字段用一至两句短句，总输出控制在 1000 个汉字以内，务必闭合最后的花括号。greeting 是这个人物匹配成功后主动发来的第一句话，要自然、短、能接话，不能像客服或人物介绍。`,
+            content: `你是虚构同城交友软件「密会」的匹配导演。生成一个有生活感、有边界、有缺点的虚构成年人物，禁止未成年人。人物不是服务用户的工具，不要完美迎合，也不要写成夸张霸总。\n${buildMihuiTuningInstruction(tuning)}\n只输出一个合法、完整的 JSON 对象，不要 markdown，不要解释，不要在 JSON 前后添加文字。字段必须且只能为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。除 age 外均为字符串；每个字段用一至两句短句，总输出控制在 1000 个汉字以内，务必闭合最后的花括号。greeting 是这个人物匹配成功后主动发来的第一句话，要自然、短、能接话，不能像客服或人物介绍。`,
         },
         {
             role: 'user',
             content: `用户姓名：${user.name || '未命名'}\n用户资料：${user.bio || '没有填写'}\n模式：${quickMatch ? '快速匹配，优先结合用户资料推断合适对象；无法判断时随机' : '按明确偏好匹配'}\n${preferenceText}`,
         },
-    ], 0.95, 1600);
+    ], mihuiReplyTemperature(tuning), 1600);
     return normalizePersona(extractJsonObject(raw), prefs);
 }
 
@@ -347,17 +393,18 @@ export async function generateMihuiFamiliarPersona(
     character: CharacterProfile,
     prefs: MihuiPreferences,
     familiarContinuity = '',
+    tuning: MihuiTuning = DEFAULT_MIHUI_TUNING,
 ): Promise<MihuiPersona> {
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你是虚构同城交友软件「密会」的伪装导演。下面给你的是真实成年角色卡。请保留这个人的核心性格、说话习惯、边界与对用户的既有感情，但替 ta 制作一套不容易被立刻认出的临时交友资料：必须改用新的自然中文化名；职业、城市与背景可做合理模糊或伪装；头像不会展示；开场白要像 ta 故意换了身份来试探用户，允许有极轻微熟悉感，但绝不能直接说出真名、原职业、共同经历或暴露“我是熟人”。只输出合法 JSON，不要 markdown。字段必须为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。所有人物均为成年人。`,
+            content: `你是虚构同城交友软件「密会」的伪装导演。下面给你的是真实成年角色卡。请保留这个人的核心性格、说话习惯、边界与对用户的既有感情，但替 ta 制作一套不容易被立刻认出的临时交友资料：必须改用新的自然中文化名；职业、城市与背景可做合理模糊或伪装；头像不会展示；开场白要像 ta 故意换了身份来试探用户，允许有极轻微熟悉感，但绝不能直接说出真名、原职业、共同经历或暴露“我是熟人”。\n${buildMihuiTuningInstruction(tuning)}\n只输出合法 JSON，不要 markdown。字段必须为：name, age, gender, occupation, city, appearance, personality, socialStyle, relationshipIntent, background, greeting。所有人物均为成年人。`,
         },
         {
             role: 'user',
             content: `用户：${user.name || '用户'}\n用户资料：${user.bio || '未填写'}\n真实角色名（只供后台理解，严禁输出）：${character.name}\n真实角色简介：${character.description || '无'}\n真实角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n${familiarContinuity ? `真实角色与用户的连续记忆（只供后台理解，不能照抄或直接暴露身份）：\n${familiarContinuity}\n` : ''}用户当前快速匹配偏好：${genderLine(prefs)}，${prefs.ageMin}-${prefs.ageMax}岁。`,
         },
-    ], 0.9, 1600);
+    ], mihuiReplyTemperature(tuning), 1600);
     const persona = normalizePersona(extractJsonObject(raw), prefs);
     // 模型偶尔会偷懒沿用真名；本地再清一遍所有可见字段，避免开场白或背景直接穿帮。
     const trueName = character.name.trim();
@@ -437,6 +484,7 @@ export async function generateMihuiReply(
     session: MihuiSession,
     sourceCharacter?: CharacterProfile,
     familiarContinuity = '',
+    tuning: MihuiTuning = DEFAULT_MIHUI_TUNING,
 ): Promise<MihuiReplyResult> {
     const history = session.messages.slice(-24).map(message => {
         if (message.type === 'image' && message.role === 'user') {
@@ -478,10 +526,10 @@ export async function generateMihuiReply(
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}${hiddenFamiliarPrompt}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。每轮必须拆成 1-3 个自然聊天气泡；每个气泡只承载一个连贯意思，不要为了凑数硬拆，也不要把长篇文字塞进一个气泡。所有人物均为成年人。\n你可以在情境自然时主动分享位置卡片，返回 location:{"name":"地点名","address":"可选地址"}；也可以偶尔主动转账，返回 transfer:{"amount":金额,"note":"可选留言"}。不要每轮都发卡片。若历史最后出现用户发来的待处理转账，你必须结合性格决定收下或退回，并返回 transferAction:"accept" 或 "return"。\n可以依据角色性格和当下情绪偶尔自然使用 0-1 个颜文字，不要每轮必用，也不要连续堆叠。可选颜文字：${MIHUI_KAOMOJI.join(' ')}\n只输出 JSON：{"bubbles":["气泡1","气泡2"],"signal":"warm|neutral|cool","location":null,"transfer":null,"transferAction":null}。bubbles 必须有 1-3 项；signal 只表示这一轮互动给你的主观感受，不直接给分。卡片或动作不需要时对应字段写 null。`,
+            content: `你现在扮演「${persona.name}」，${persona.age}岁，${persona.gender}，${persona.occupation}，生活在${persona.city}。\n外貌：${persona.appearance}\n性格：${persona.personality}\n社交方式：${persona.socialStyle}\n关系倾向：${persona.relationshipIntent}\n背景：${persona.background}${hiddenFamiliarPrompt}\n对方叫${user.name || '用户'}，资料：${user.bio || '未填写'}。\n${buildMihuiTuningInstruction(tuning)}\n这是同城交友软件里的私人聊天。像真实的人一样回复：保留边界与主见，承接刚才的话，不复述设定，不写旁白，不替用户行动。每轮必须拆成 1-3 个自然聊天气泡；每个气泡只承载一个连贯意思，不要为了凑数硬拆，也不要把长篇文字塞进一个气泡。所有人物均为成年人。\n你可以在情境自然时主动分享位置卡片，返回 location:{"name":"地点名","address":"可选地址"}；也可以偶尔主动转账，返回 transfer:{"amount":金额,"note":"可选留言"}。不要每轮都发卡片。若历史最后出现用户发来的待处理转账，你必须结合性格决定收下或退回，并返回 transferAction:"accept" 或 "return"。\n可以依据角色性格和当下情绪偶尔自然使用 0-1 个颜文字，不要每轮必用，也不要连续堆叠。可选颜文字：${MIHUI_KAOMOJI.join(' ')}\n只输出 JSON：{"bubbles":["气泡1","气泡2"],"signal":"warm|neutral|cool","location":null,"transfer":null,"transferAction":null}。bubbles 必须有 1-3 项；signal 只表示这一轮互动给你的主观感受，不直接给分。卡片或动作不需要时对应字段写 null。`,
         },
         ...history,
-    ], 0.9, 1400);
+    ], mihuiReplyTemperature(tuning), 1400);
     return normalizeMihuiReply(raw);
 }
 

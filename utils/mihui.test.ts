@@ -6,15 +6,18 @@ import {
     buildMihuiFamiliarMemorySummary,
     buildMihuiRevealLine,
     buildMihuiCharacterCard,
+    buildMihuiTuningInstruction,
     clampAffinity,
     DEFAULT_MIHUI_PREFERENCES,
     extractJsonObject,
     mihuiMessageSummary,
     normalizeMihuiReply,
+    normalizeMihuiTuning,
     normalizePersona,
     pickMihuiFamiliar,
     removeMihuiMessage,
     replaceMihuiMessage,
+    mihuiReplyTemperature,
 } from './mihui';
 
 describe('mihui core', () => {
@@ -38,6 +41,19 @@ describe('mihui core', () => {
         const p = normalizePersona({ name: 'A', age: 12 }, { ...DEFAULT_MIHUI_PREFERENCES, ageMin: 24, ageMax: 32 });
         expect(p.age).toBe(24);
         expect(p.greeting.length).toBeGreaterThan(0);
+    });
+
+    it('normalizes persisted tuning and turns both controls into prompt rules', () => {
+        expect(normalizeMihuiTuning({ routeMode: 'abyss', creativeMode: 'free' })).toEqual({ routeMode: 'abyss', creativeMode: 'free' });
+        expect(normalizeMihuiTuning({ routeMode: 'bad' as any, creativeMode: 'bad' as any })).toEqual({ routeMode: 'standard', creativeMode: 'balanced' });
+        const decent = buildMihuiTuningInstruction({ routeMode: 'decent', creativeMode: 'faithful' });
+        expect(decent).toContain('航线：体面');
+        expect(decent).toContain('角色发挥：贴合设定');
+        expect(decent).toContain('不得被塑造成油腻');
+        expect(decent).toContain('力所能及范围内主动承担合理支出');
+        expect(mihuiReplyTemperature({ routeMode: 'standard', creativeMode: 'faithful' })).toBeLessThan(
+            mihuiReplyTemperature({ routeMode: 'standard', creativeMode: 'free' }),
+        );
     });
 
     it('normalizes new bubble arrays and keeps at most three bubbles', () => {
