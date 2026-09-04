@@ -46,6 +46,7 @@ import {
     loadMihuiState,
     mihuiMessageSummary,
     MihuiGender,
+    MihuiGazeContext,
     MihuiGazeSettings,
     MihuiMessage,
     MihuiPreferences,
@@ -419,7 +420,12 @@ const MihuiApp: React.FC = () => {
         return character.id;
     };
 
-    const maybeTriggerGaze = async (session: MihuiSession, previousAffinity: number, nextAffinity: number) => {
+    const maybeTriggerGaze = async (
+        session: MihuiSession,
+        previousAffinity: number,
+        nextAffinity: number,
+        explicitContext?: MihuiGazeContext,
+    ) => {
         const gaze = state.gaze || DEFAULT_MIHUI_GAZE;
         if (!gaze.enabled) return;
         const hiddenFamiliarId = session.familiar && !session.familiar.revealedAt ? session.familiar.characterId : undefined;
@@ -430,7 +436,10 @@ const MihuiApp: React.FC = () => {
         if (!watcherPool.length) return;
 
         const now = Date.now();
-        const plan = planMihuiGaze(gaze, session, previousAffinity, nextAffinity, now);
+        const plannedByState = planMihuiGaze(gaze, session, previousAffinity, nextAffinity, now);
+        const plan = explicitContext && gaze.barrageEnabled
+            ? { ...plannedByState, trigger: 'barrage' as const, checksSinceLast: 0 }
+            : plannedByState;
         if (!plan.trigger) {
             setState(prev => ({
                 ...prev,
@@ -445,7 +454,17 @@ const MihuiApp: React.FC = () => {
         const preferredPool = watcherPool.length > 1 ? watcherPool.filter(character => character.id !== latestWatcherId) : watcherPool;
         const watcher = preferredPool[Math.floor(Math.random() * preferredPool.length)] || watcherPool[0];
         try {
-            const reaction = await generateMihuiGazeReaction(apiConfig, userProfile, watcher, plan.trigger, nextAffinity);
+            const milestoneContext: MihuiGazeContext | undefined = plan.milestone
+                ? { type: 'affinity', threshold: plan.milestone }
+                : undefined;
+            const reaction = await generateMihuiGazeReaction(
+                apiConfig,
+                userProfile,
+                watcher,
+                plan.trigger,
+                nextAffinity,
+                explicitContext || milestoneContext,
+            );
             const timestamp = Date.now();
             await Promise.all(reaction.messages.map((message, index) => DB.saveMessage({
                 charId: watcher.id,
@@ -479,6 +498,12 @@ const MihuiApp: React.FC = () => {
                         gazeChecksSinceLast: 0,
                         gazeBannerCount: (item.gazeBannerCount || 0) + (plan.trigger === 'banner' ? 1 : 0),
                         gazeBarrageCount: (item.gazeBarrageCount || 0) + (plan.trigger === 'barrage' ? 1 : 0),
+                        gazeAffinityMilestones: plan.milestone
+                            ? Array.from(new Set([
+                                ...(item.gazeAffinityMilestones || []),
+                                ...(plan.milestone === 80 ? [30 as const, 80 as const] : [30 as const]),
+                            ]))
+                            : item.gazeAffinityMilestones,
                     } : item),
                 };
             });
@@ -598,7 +623,12 @@ const MihuiApp: React.FC = () => {
             } else if (becameFull) {
                 setShowGraduation(true);
             }
-            void maybeTriggerGaze(completedSession, activeSession.affinity, nextAffinity);
+            const gazeContext: MihuiGazeContext | undefined = userMessage.type === 'location' && userMessage.location
+                ? { type: 'location', name: userMessage.location.name, address: userMessage.location.address }
+                : userMessage.type === 'transfer' && userMessage.transfer && !userMessage.transfer.receipt
+                    ? { type: 'transfer', amount: userMessage.transfer.amount, note: userMessage.transfer.note }
+                    : undefined;
+            void maybeTriggerGaze(completedSession, activeSession.affinity, nextAffinity, gazeContext);
         } catch (error: any) {
             addToast(error?.message || '消息发送失败', 'error');
         } finally {
@@ -1381,7 +1411,7 @@ const MihuiApp: React.FC = () => {
                     {(gazeBanner.messages?.length ? gazeBanner.messages : [gazeBanner.message]).slice(0, 3).map((message, index) => (
                         <button key={`${gazeBanner.timestamp}-${index}`} type="button" onClick={() => openGazeMessage(gazeBanner)} className="flex w-full min-w-0 items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-[#303139] shadow-2xl backdrop-blur-xl">
                             {gazeBanner.avatar ? <img src={gazeBanner.avatar} alt={gazeBanner.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <PlaceholderAvatar size="w-11 h-11" className="!rounded-xl" />}
-                            <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-[#666872]">现在</small></span><span className="mt-0.5 block truncate whitespace-nowrap text-xs leading-5 text-[#454750]">{message}</span></span>
+                            <span className="w-0 min-w-0 flex-1 overflow-hidden"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-[#666872]">现在</small></span><span className="mt-0.5 block w-full text-xs leading-5 text-[#454750]" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={message}>{message}</span></span>
                         </button>
                     ))}
                 </div>

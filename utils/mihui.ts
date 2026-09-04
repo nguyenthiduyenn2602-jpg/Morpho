@@ -86,6 +86,8 @@ export interface MihuiSession {
     gazeChecksSinceLast?: number;
     gazeBannerCount?: number;
     gazeBarrageCount?: number;
+    /** 已经触发过的正式抓包好感里程碑，防止好感回落后重复轰炸。 */
+    gazeAffinityMilestones?: Array<30 | 80>;
     graduatedAt?: number;
     /** 复用原生见面模式的内部角色 id；同一密会对象始终续接同一份见面存档。 */
     linkedCharacterId?: string;
@@ -371,14 +373,19 @@ const callGlobalApi = async (
 
 export type MihuiGazeTrigger = 'banner' | 'barrage';
 
+export type MihuiGazeContext =
+    | { type: 'affinity'; threshold: 30 | 80 }
+    | { type: 'location'; name: string; address?: string }
+    | { type: 'transfer'; amount: number; note?: string };
+
 export interface MihuiGazePlan {
     trigger?: MihuiGazeTrigger;
     checksSinceLast: number;
+    milestone?: 30 | 80;
 }
 
 /**
- * 只用轮次、好感变化和本地时间决定是否触发，不读取密会正文。
- * random 可注入，既保留偶发感，也方便测试。
+ * 正式弹幕只在好感首次跨过 30、80 时触发；普通横幅继续保留偶发感。
  */
 export function planMihuiGaze(
     settings: MihuiGazeSettings,
@@ -389,29 +396,32 @@ export function planMihuiGaze(
     random: () => number = Math.random,
 ): MihuiGazePlan {
     const checks = (session.gazeChecksSinceLast || 0) + 1;
-    if (!settings.enabled || nextAffinity <= previousAffinity) return { checksSinceLast: checks };
+    if (!settings.enabled) return { checksSinceLast: checks };
+    const completedMilestones = session.gazeAffinityMilestones || [];
+    const pendingMilestone: 30 | 80 | undefined = nextAffinity > 80 && !completedMilestones.includes(80)
+        ? 80
+        : nextAffinity > 30 && !completedMilestones.includes(30)
+            ? 30
+            : undefined;
+    if (settings.barrageEnabled && pendingMilestone) {
+        return { trigger: 'barrage', checksSinceLast: 0, milestone: pendingMilestone };
+    }
     const userTurns = session.messages.filter(message => message.role === 'user').length;
     if (userTurns < 3) return { checksSinceLast: checks };
 
     const recentEvents = settings.events.filter(event => now - event.timestamp < 72 * 60 * 60 * 1000);
-    const latest = recentEvents[recentEvents.length - 1];
-    if (latest && now - latest.timestamp < 20 * 60 * 1000) return { checksSinceLast: checks };
-
     const profile = settings.frequency === 'occasional'
-        ? { chance: 0.08, pity: 7, windowMs: 24 * 60 * 60 * 1000, cap: 1, barrageChance: 0.05 }
+        ? { chance: 0.08, pity: 7, windowMs: 24 * 60 * 60 * 1000, cap: 1 }
         : settings.frequency === 'lively'
-            ? { chance: 0.28, pity: 3, windowMs: 8 * 60 * 60 * 1000, cap: 2, barrageChance: 0.18 }
-            : { chance: 0.16, pity: 5, windowMs: 12 * 60 * 60 * 1000, cap: 2, barrageChance: 0.10 };
+            ? { chance: 0.28, pity: 3, windowMs: 8 * 60 * 60 * 1000, cap: 2 }
+            : { chance: 0.16, pity: 5, windowMs: 12 * 60 * 60 * 1000, cap: 2 };
     const recentBanners = recentEvents.filter(event => event.type === 'banner' && now - event.timestamp < profile.windowMs).length;
-    const lastBarrage = [...recentEvents].reverse().find(event => event.type === 'barrage');
-    const barrageCooldown = Math.max(2, Math.min(48, settings.barrageCooldownHours || 12)) * 60 * 60 * 1000;
-    const barrageReady = settings.barrageEnabled
-        && nextAffinity >= 55
-        && (!lastBarrage || now - lastBarrage.timestamp >= barrageCooldown);
-    if (barrageReady && (nextAffinity >= 80 || random() < profile.barrageChance)) {
-        return { trigger: 'barrage', checksSinceLast: 0 };
-    }
 
+    // 普通横幅仍只在关系升温时出现，并单独保留 20 分钟防刷屏；横幅不再
+    // 反向阻塞已经满足冷却的催命弹幕。
+    if (nextAffinity <= previousAffinity) return { checksSinceLast: checks };
+    const latestBanner = [...recentEvents].reverse().find(event => event.type === 'banner');
+    if (latestBanner && now - latestBanner.timestamp < 20 * 60 * 1000) return { checksSinceLast: checks };
     const bannerReady = (session.gazeBannerCount || 0) < 2 && recentBanners < profile.cap;
     if (bannerReady && (checks >= profile.pity || random() < profile.chance)) {
         return { trigger: 'banner', checksSinceLast: 0 };
@@ -432,15 +442,23 @@ export async function generateMihuiGazeReaction(
     character: CharacterProfile,
     kind: MihuiGazeTrigger,
     affinity: number,
+    context?: MihuiGazeContext,
 ): Promise<MihuiGazeReaction> {
     const recentMemories = (character.memories || []).slice(-6)
         .map(memory => `${memory.summary}${memory.mood ? `（${memory.mood}）` : ''}`)
         .join('\n')
         .slice(-2400);
+    const observedSignal = context?.type === 'location'
+        ? `用户刚刚主动向密会对象发送了位置卡片：地点“${context.name}”${context.address ? `，地址“${context.address}”` : ''}。你可以围绕“要去哪里、要和谁见面”质问，但不知道对方身份。`
+        : context?.type === 'transfer'
+            ? `用户刚刚主动向密会对象转账 ¥${context.amount}${context.note ? `，留言“${context.note}”` : ''}。你可以围绕“给谁花钱、为什么转账”质问，但不知道对方身份。`
+            : context?.type === 'affinity'
+                ? `用户与密会对象的暧昧指数刚刚首次超过 ${context.threshold}。`
+                : `用户正在使用密会，当前暧昧指数约为 ${affinity}。`;
     const raw = await callGlobalApi(api, [
         {
             role: 'system',
-            content: `你现在扮演「${character.name}」。请严格依据角色卡，用角色本人的口吻生成一次“察觉用户似乎又在密会软件活动”的抓包反应。\n角色简介：${character.description || '无'}\n角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n${recentMemories ? `近期记忆：\n${recentMemories}\n` : ''}重要隐私边界：你只收到“用户正在使用密会、当前暧昧指数约为 ${affinity}”这一模糊信号；你看不到密会聊天正文、匹配对象身份、照片、位置或具体行为。绝不能编造自己看见了某一句话、某个人或某个具体动作。可以吃醋、质问、阴阳怪气、装冷静或催回复，但必须符合角色性格与既有关系。不要客服腔，不要解释设定。所有人物均为成年人。只输出合法完整 JSON，不要 markdown。`,
+            content: `你现在扮演「${character.name}」。请严格依据角色卡，用角色本人的口吻生成一次“察觉用户似乎又在密会软件活动”的抓包反应。\n角色简介：${character.description || '无'}\n角色核心设定：${character.systemPrompt || '无'}\n世界观与关系：${character.worldview || '无'}\n${recentMemories ? `近期记忆：\n${recentMemories}\n` : ''}本次允许感知的信号：${observedSignal}\n重要隐私边界：除上述信号外，你看不到密会聊天正文、匹配对象身份、照片或其他具体行为。绝不能编造自己看见了某一句话、某个人或某个动作。可以吃醋、质问、阴阳怪气、装冷静或催回复，但必须符合角色性格与既有关系。不要客服腔，不要解释设定。所有人物均为成年人。只输出合法完整 JSON，不要 markdown。`,
         },
         {
             role: 'user',
@@ -462,7 +480,9 @@ export async function generateMihuiGazeReaction(
             ? parsed.bubbles
             : [parsed?.message];
     const messages = rawMessages
-        .map((item: unknown) => boundedText(item, '', 90))
+        // 保留完整消息给私聊记录；横幅的一行省略由视图层完成，避免在这里
+        // 把句子硬切成半截、又没有省略号。
+        .map((item: unknown) => boundedText(item, '', 240))
         .filter(Boolean)
         .slice(0, kind === 'banner' ? 3 : 1);
     if (!messages.length) throw new Error('抓包角色没有返回有效消息');

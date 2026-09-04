@@ -64,17 +64,18 @@ describe('mihui core', () => {
         expect(normalizeMihuiGaze({}).barrageCooldownHours).toBe(12);
     });
 
-    it('allows another barrage after the configured two-hour cooldown', () => {
+    it('triggers barrage exactly when affinity first crosses 30 or 80', () => {
         const now = 10 * 60 * 60 * 1000;
         const session = {
-            id: 's1', affinity: 79, createdAt: 1, updatedAt: 2, gazeBarrageCount: 3,
+            id: 's1', affinity: 29, createdAt: 1, updatedAt: 2,
             persona: { name: '林岑', age: 29, gender: '男性', occupation: '编辑', city: '北京', appearance: '', personality: '', socialStyle: '', relationshipIntent: '', background: '', greeting: '' },
             messages: [1, 2, 3].map(index => ({ id: `u${index}`, role: 'user' as const, content: '在吗', timestamp: index })),
         };
-        const blocked = planMihuiGaze({ enabled: true, frequency: 'balanced', barrageEnabled: true, barrageCooldownHours: 2, events: [{ type: 'barrage', timestamp: now - 60 * 60 * 1000 }] }, session, 79, 80, now, () => 1);
-        expect(blocked.trigger).not.toBe('barrage');
-        const ready = planMihuiGaze({ enabled: true, frequency: 'balanced', barrageEnabled: true, barrageCooldownHours: 2, events: [{ type: 'barrage', timestamp: now - 3 * 60 * 60 * 1000 }] }, session, 79, 80, now, () => 1);
-        expect(ready.trigger).toBe('barrage');
+        const settings = { enabled: true, frequency: 'balanced' as const, barrageEnabled: true, barrageCooldownHours: 12, events: [] };
+        expect(planMihuiGaze(settings, session, 30, 31, now, () => 1)).toMatchObject({ trigger: 'barrage', milestone: 30 });
+        expect(planMihuiGaze(settings, { ...session, affinity: 79, gazeAffinityMilestones: [30] as Array<30 | 80> }, 80, 81, now, () => 1)).toMatchObject({ trigger: 'barrage', milestone: 80 });
+        expect(planMihuiGaze(settings, { ...session, affinity: 60, gazeAffinityMilestones: [30] as Array<30 | 80> }, 60, 61, now, () => 1).trigger).not.toBe('barrage');
+        expect(planMihuiGaze(settings, { ...session, affinity: 88, gazeAffinityMilestones: [30, 80] as Array<30 | 80> }, 88, 88, now, () => 1).trigger).not.toBe('barrage');
     });
 
     it('normalizes new bubble arrays and keeps at most three bubbles', () => {
