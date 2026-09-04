@@ -24,6 +24,8 @@ export interface MihuiGazeSettings {
     enabled: boolean;
     frequency: MihuiGazeFrequency;
     barrageEnabled: boolean;
+    /** 正式催命弹幕的最短冷却；调试按钮不受它影响。 */
+    barrageCooldownHours: number;
     events: MihuiGazeEvent[];
 }
 
@@ -137,6 +139,7 @@ export const DEFAULT_MIHUI_GAZE: MihuiGazeSettings = {
     enabled: false,
     frequency: 'balanced',
     barrageEnabled: true,
+    barrageCooldownHours: 12,
     events: [],
 };
 
@@ -157,10 +160,14 @@ export function normalizeMihuiTuning(value?: Partial<MihuiTuning> | null): Mihui
 }
 
 export function normalizeMihuiGaze(value?: Partial<MihuiGazeSettings> | null): MihuiGazeSettings {
+    const barrageCooldownHours = Number(value?.barrageCooldownHours);
     return {
         enabled: value?.enabled === true,
         frequency: value?.frequency === 'occasional' || value?.frequency === 'lively' ? value.frequency : 'balanced',
         barrageEnabled: value?.barrageEnabled !== false,
+        barrageCooldownHours: Number.isFinite(barrageCooldownHours)
+            ? Math.max(2, Math.min(48, Math.round(barrageCooldownHours)))
+            : DEFAULT_MIHUI_GAZE.barrageCooldownHours,
         events: Array.isArray(value?.events)
             ? value.events.filter(event => event && (event.type === 'banner' || event.type === 'barrage') && Number.isFinite(event.timestamp)).slice(-24)
             : [],
@@ -391,16 +398,16 @@ export function planMihuiGaze(
     if (latest && now - latest.timestamp < 20 * 60 * 1000) return { checksSinceLast: checks };
 
     const profile = settings.frequency === 'occasional'
-        ? { chance: 0.08, pity: 7, windowMs: 24 * 60 * 60 * 1000, cap: 1, barrageChance: 0.05, barrageCooldown: 48 * 60 * 60 * 1000 }
+        ? { chance: 0.08, pity: 7, windowMs: 24 * 60 * 60 * 1000, cap: 1, barrageChance: 0.05 }
         : settings.frequency === 'lively'
-            ? { chance: 0.28, pity: 3, windowMs: 8 * 60 * 60 * 1000, cap: 2, barrageChance: 0.18, barrageCooldown: 12 * 60 * 60 * 1000 }
-            : { chance: 0.16, pity: 5, windowMs: 12 * 60 * 60 * 1000, cap: 2, barrageChance: 0.10, barrageCooldown: 12 * 60 * 60 * 1000 };
+            ? { chance: 0.28, pity: 3, windowMs: 8 * 60 * 60 * 1000, cap: 2, barrageChance: 0.18 }
+            : { chance: 0.16, pity: 5, windowMs: 12 * 60 * 60 * 1000, cap: 2, barrageChance: 0.10 };
     const recentBanners = recentEvents.filter(event => event.type === 'banner' && now - event.timestamp < profile.windowMs).length;
     const lastBarrage = [...recentEvents].reverse().find(event => event.type === 'barrage');
+    const barrageCooldown = Math.max(2, Math.min(48, settings.barrageCooldownHours || 12)) * 60 * 60 * 1000;
     const barrageReady = settings.barrageEnabled
-        && (session.gazeBarrageCount || 0) < 1
         && nextAffinity >= 55
-        && (!lastBarrage || now - lastBarrage.timestamp >= profile.barrageCooldown);
+        && (!lastBarrage || now - lastBarrage.timestamp >= barrageCooldown);
     if (barrageReady && (nextAffinity >= 80 || random() < profile.barrageChance)) {
         return { trigger: 'barrage', checksSinceLast: 0 };
     }
@@ -414,6 +421,7 @@ export function planMihuiGaze(
 
 export interface MihuiGazeReaction {
     message: string;
+    messages: string[];
     barrageLines: string[];
 }
 
@@ -438,7 +446,7 @@ export async function generateMihuiGazeReaction(
             role: 'user',
             content: kind === 'barrage'
                 ? `用户全名：${user.name || '用户'}。生成一次有压迫感的满屏催回复：message 是一条 12-45 字的主通知；barrageLines 只提供 1-3 条很短的弹幕原句，每条 2-16 字，可以直呼用户全名。前端会把这些原句大量复制并铺满屏幕，因此原句要适合反复出现，例如“回信息”“${user.name || '用户'}！你在干嘛”“看到回复”。输出 {"message":"...","barrageLines":["...","..."]}。`
-                : `用户全名：${user.name || '用户'}。生成一条 12-45 字、像手机横幅通知一样能单独成立的抓包消息。输出 {"message":"...","barrageLines":[]}。`,
+                : `用户全名：${user.name || '用户'}。生成 1-3 条连续的抓包消息，像角色在手机聊天里接连发来的短气泡。每条 8-45 字、能单独成立，条数和语气由角色性格与当下情绪决定，不要为了凑数重复同义句。前端会把每一条分别显示成一张 iOS 通知横幅。输出 {"messages":["第一条","第二条"],"barrageLines":[]}。`,
         },
     ], 0.88, 520);
 
@@ -448,12 +456,21 @@ export async function generateMihuiGazeReaction(
     } catch {
         parsed = { message: raw.replace(/```(?:json)?|```/gi, '').trim(), barrageLines: [] };
     }
-    const message = boundedText(parsed?.message, '', 90);
-    if (!message) throw new Error('抓包角色没有返回有效消息');
+    const rawMessages = Array.isArray(parsed?.messages)
+        ? parsed.messages
+        : Array.isArray(parsed?.bubbles)
+            ? parsed.bubbles
+            : [parsed?.message];
+    const messages = rawMessages
+        .map((item: unknown) => boundedText(item, '', 90))
+        .filter(Boolean)
+        .slice(0, kind === 'banner' ? 3 : 1);
+    if (!messages.length) throw new Error('抓包角色没有返回有效消息');
+    const message = messages[0];
     const barrageLines = Array.isArray(parsed?.barrageLines)
         ? parsed.barrageLines.map((line: unknown) => boundedText(line, '', 32)).filter(Boolean).slice(0, 3)
         : [];
-    return { message, barrageLines: kind === 'barrage' ? barrageLines : [] };
+    return { message, messages, barrageLines: kind === 'barrage' ? barrageLines : [] };
 }
 
 const genderLine = (prefs: MihuiPreferences): string => {

@@ -12,9 +12,11 @@ import {
     extractJsonObject,
     mihuiMessageSummary,
     normalizeMihuiReply,
+    normalizeMihuiGaze,
     normalizeMihuiTuning,
     normalizePersona,
     pickMihuiFamiliar,
+    planMihuiGaze,
     removeMihuiMessage,
     replaceMihuiMessage,
     mihuiReplyTemperature,
@@ -54,6 +56,25 @@ describe('mihui core', () => {
         expect(mihuiReplyTemperature({ routeMode: 'standard', creativeMode: 'faithful' })).toBeLessThan(
             mihuiReplyTemperature({ routeMode: 'standard', creativeMode: 'free' }),
         );
+    });
+
+    it('keeps barrage cooldown between two and forty-eight hours', () => {
+        expect(normalizeMihuiGaze({ barrageCooldownHours: 1 }).barrageCooldownHours).toBe(2);
+        expect(normalizeMihuiGaze({ barrageCooldownHours: 72 }).barrageCooldownHours).toBe(48);
+        expect(normalizeMihuiGaze({}).barrageCooldownHours).toBe(12);
+    });
+
+    it('allows another barrage after the configured two-hour cooldown', () => {
+        const now = 10 * 60 * 60 * 1000;
+        const session = {
+            id: 's1', affinity: 79, createdAt: 1, updatedAt: 2, gazeBarrageCount: 3,
+            persona: { name: '林岑', age: 29, gender: '男性', occupation: '编辑', city: '北京', appearance: '', personality: '', socialStyle: '', relationshipIntent: '', background: '', greeting: '' },
+            messages: [1, 2, 3].map(index => ({ id: `u${index}`, role: 'user' as const, content: '在吗', timestamp: index })),
+        };
+        const blocked = planMihuiGaze({ enabled: true, frequency: 'balanced', barrageEnabled: true, barrageCooldownHours: 2, events: [{ type: 'barrage', timestamp: now - 60 * 60 * 1000 }] }, session, 79, 80, now, () => 1);
+        expect(blocked.trigger).not.toBe('barrage');
+        const ready = planMihuiGaze({ enabled: true, frequency: 'balanced', barrageEnabled: true, barrageCooldownHours: 2, events: [{ type: 'barrage', timestamp: now - 3 * 60 * 60 * 1000 }] }, session, 79, 80, now, () => 1);
+        expect(ready.trigger).toBe('barrage');
     });
 
     it('normalizes new bubble arrays and keeps at most three bubbles', () => {

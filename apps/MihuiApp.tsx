@@ -66,6 +66,7 @@ interface MihuiGazeNotice {
     name: string;
     avatar?: string;
     message: string;
+    messages?: string[];
     timestamp: number;
     lines?: string[];
 }
@@ -161,6 +162,7 @@ const MihuiApp: React.FC = () => {
     const [draftGaze, setDraftGaze] = useState<MihuiGazeSettings>(() => ({ ...(state.gaze || DEFAULT_MIHUI_GAZE), events: [...(state.gaze?.events || [])] }));
     const [gazeBanner, setGazeBanner] = useState<MihuiGazeNotice | null>(null);
     const [gazeBarrage, setGazeBarrage] = useState<MihuiGazeNotice | null>(null);
+    const [testingGazeBarrage, setTestingGazeBarrage] = useState(false);
     const [locationName, setLocationName] = useState('');
     const [locationAddress, setLocationAddress] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
@@ -445,19 +447,20 @@ const MihuiApp: React.FC = () => {
         try {
             const reaction = await generateMihuiGazeReaction(apiConfig, userProfile, watcher, plan.trigger, nextAffinity);
             const timestamp = Date.now();
-            await DB.saveMessage({
+            await Promise.all(reaction.messages.map((message, index) => DB.saveMessage({
                 charId: watcher.id,
                 role: 'assistant',
                 type: 'text',
-                content: reaction.message,
-                timestamp,
+                content: message,
+                timestamp: timestamp + index,
                 metadata: { source: 'mihui-gaze', mihuiSessionId: session.id, kind: plan.trigger },
-            });
+            })));
             const notice: MihuiGazeNotice = {
                 characterId: watcher.id,
                 name: watcher.name,
                 avatar: watcher.avatar,
                 message: reaction.message,
+                messages: reaction.messages,
                 timestamp,
                 lines: reaction.barrageLines,
             };
@@ -483,6 +486,47 @@ const MihuiApp: React.FC = () => {
             else setGazeBanner(notice);
         } catch (error) {
             console.warn('[Mihui] 危险凝视生成失败，本轮不触发彩蛋', error);
+        }
+    };
+
+    const testGazeBarrage = async () => {
+        if (testingGazeBarrage) return;
+        const hiddenFamiliarId = activeSession?.familiar && !activeSession.familiar.revealedAt
+            ? activeSession.familiar.characterId
+            : undefined;
+        const watcherPool = characters.filter(character =>
+            character.id !== hiddenFamiliarId
+            && (character.activeMsg2Config?.enabled === true || character.proactiveConfig?.enabled === true),
+        );
+        if (!watcherPool.length) {
+            addToast('没有可参与测试的主动消息角色', 'error');
+            return;
+        }
+        setTestingGazeBarrage(true);
+        try {
+            const watcher = watcherPool[Math.floor(Math.random() * watcherPool.length)] || watcherPool[0];
+            const reaction = await generateMihuiGazeReaction(
+                apiConfig,
+                userProfile,
+                watcher,
+                'barrage',
+                activeSession?.affinity || 60,
+            );
+            setShowGazeSettings(false);
+            setGazeBarrage({
+                characterId: watcher.id,
+                name: watcher.name,
+                avatar: watcher.avatar,
+                message: reaction.message,
+                messages: reaction.messages,
+                timestamp: Date.now(),
+                lines: reaction.barrageLines,
+            });
+        } catch (error) {
+            console.warn('[Mihui] 催命弹幕调试失败', error);
+            addToast(error instanceof Error ? error.message : '催命弹幕调试失败', 'error');
+        } finally {
+            setTestingGazeBarrage(false);
         }
     };
 
@@ -1108,6 +1152,7 @@ const MihuiApp: React.FC = () => {
             { id: 'balanced' as const, label: '适中', note: '有存在感，不会催得太紧' },
             { id: 'lively' as const, label: '热闹', note: '更容易被熟人察觉' },
         ];
+        const barrageCooldownOptions = [2, 6, 12, 24];
         const watcherCount = characters.filter(character => character.activeMsg2Config?.enabled === true || character.proactiveConfig?.enabled === true).length;
         return (
             <div className="absolute inset-0 z-[69] flex items-end bg-black/45 backdrop-blur-sm" onClick={() => setShowGazeSettings(false)}>
@@ -1140,10 +1185,28 @@ const MihuiApp: React.FC = () => {
 
                     <section className={`mt-5 rounded-2xl border border-[var(--mh-border)] bg-[var(--mh-panel)] p-4 transition ${draftGaze.enabled ? '' : 'opacity-45 pointer-events-none'}`}>
                         <div className="flex items-center justify-between gap-4">
-                            <div><h4 className="text-sm font-black text-[var(--mh-text)]">催命弹幕</h4><p className="mt-1 text-[10px] leading-4 text-[var(--mh-muted)]">暧昧升高时偶发；默认间隔至少 12 小时</p></div>
+                            <div><h4 className="text-sm font-black text-[var(--mh-text)]">催命弹幕</h4><p className="mt-1 text-[10px] leading-4 text-[var(--mh-muted)]">暧昧升高时偶发；同一冷却期内最多一次</p></div>
                             <button type="button" onClick={() => setDraftGaze(prev => ({ ...prev, barrageEnabled: !prev.barrageEnabled }))} className={`relative h-7 w-12 rounded-full transition ${draftGaze.barrageEnabled ? 'bg-[var(--mh-accent)]' : 'bg-slate-300'}`} aria-label={draftGaze.barrageEnabled ? '关闭催命弹幕' : '开启催命弹幕'}>
                                 <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${draftGaze.barrageEnabled ? 'left-6' : 'left-1'}`} />
                             </button>
+                        </div>
+                        <div className={`mt-4 transition ${draftGaze.barrageEnabled ? '' : 'opacity-45 pointer-events-none'}`}>
+                            <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--mh-text)]">轰炸冷却</span><span className="text-[10px] text-[var(--mh-muted)]">最低 2 小时</span></div>
+                            <div className="mt-2 grid grid-cols-4 gap-2">
+                                {barrageCooldownOptions.map(hours => {
+                                    const selected = draftGaze.barrageCooldownHours === hours;
+                                    return <button key={hours} type="button" onClick={() => setDraftGaze(prev => ({ ...prev, barrageCooldownHours: hours }))} className={`rounded-xl border py-2 text-xs font-black transition active:scale-95 ${selected ? 'border-[var(--mh-accent)] bg-[var(--mh-soft)] text-[var(--mh-accent)]' : 'border-[var(--mh-border)] bg-[var(--mh-bg)] text-[var(--mh-muted)]'}`}>{hours} 小时</button>;
+                                })}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={testGazeBarrage}
+                                disabled={testingGazeBarrage || watcherCount === 0}
+                                className="mt-3 w-full rounded-xl border border-dashed border-[var(--mh-accent)] bg-[var(--mh-soft)] py-2.5 text-xs font-black text-[var(--mh-accent)] transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                                {testingGazeBarrage ? '正在呼叫抓包角色…' : '立即试放催命弹幕'}
+                            </button>
+                            <p className="mt-2 text-[9px] leading-4 text-[var(--mh-muted)]">调试会调用一轮全局 API，但不写入私聊、不占正式触发次数，也不重置冷却。</p>
                         </div>
                     </section>
 
@@ -1314,10 +1377,14 @@ const MihuiApp: React.FC = () => {
             {screen !== 'chat' && renderTuningSheet()}
             {renderGazeSettingsSheet()}
             {gazeBanner && (
-                <button type="button" onClick={() => openGazeMessage(gazeBanner)} className="absolute left-3 right-3 z-[86] flex items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-[#303139] shadow-2xl backdrop-blur-xl animate-fade-in" style={{ top: 'calc(var(--safe-top) + .55rem)' }}>
-                    {gazeBanner.avatar ? <img src={gazeBanner.avatar} alt={gazeBanner.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <PlaceholderAvatar size="w-11 h-11" className="!rounded-xl" />}
-                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-[#666872]">现在</small></span><span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-[#454750]">{gazeBanner.message}</span></span>
-                </button>
+                <div className="absolute left-3 right-3 z-[86] flex flex-col gap-2 animate-fade-in" style={{ top: 'calc(var(--safe-top) + .55rem)' }}>
+                    {(gazeBanner.messages?.length ? gazeBanner.messages : [gazeBanner.message]).slice(0, 3).map((message, index) => (
+                        <button key={`${gazeBanner.timestamp}-${index}`} type="button" onClick={() => openGazeMessage(gazeBanner)} className="flex w-full min-w-0 items-center gap-3 rounded-[1.35rem] border border-white/60 bg-slate-950/88 px-4 py-3 text-left text-[#303139] shadow-2xl backdrop-blur-xl">
+                            {gazeBanner.avatar ? <img src={gazeBanner.avatar} alt={gazeBanner.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <PlaceholderAvatar size="w-11 h-11" className="!rounded-xl" />}
+                            <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{gazeBanner.name}</strong><small className="shrink-0 text-[10px] text-[#666872]">现在</small></span><span className="mt-0.5 block truncate whitespace-nowrap text-xs leading-5 text-[#454750]">{message}</span></span>
+                        </button>
+                    ))}
+                </div>
             )}
             {gazeBarrage && (
                 <div className="absolute inset-0 z-[85] overflow-hidden bg-black/35 backdrop-blur-[1px]" onClick={() => setGazeBarrage(null)}>
