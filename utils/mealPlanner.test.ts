@@ -10,7 +10,9 @@ describe('mealPlanner', () => {
         expect(prompt).toContain('优先消耗现有存货');
         expect(prompt).toContain('不要默认牛排、三文鱼');
         expect(prompt).toContain('不要佛跳墙、锅包肉');
-        expect(prompt).toContain('严格 2 餐');
+        expect(prompt).toContain('安排 2 餐');
+        expect(prompt).toContain('库存ID：egg');
+        expect(prompt).toContain('ingredients');
     });
 
     it('按偏好只保留指定餐数，并可整理成私聊文本', () => {
@@ -43,5 +45,27 @@ describe('mealPlanner', () => {
         }, '2026-09-07');
         expect(plan.totalKcal).toBe(1350);
         expect(plan.meals).toHaveLength(3);
+    });
+
+    it('模型少返回餐次时也先落下可用的一餐', () => {
+        const plan = normalizeMealPlan({
+            meals: [{ type: '早餐', dishes: [{ name: '鸡蛋面', portion: '一碗', kcal: 420 }] }],
+        }, '2026-09-07', 3);
+        expect(plan.meals).toHaveLength(1);
+        expect(plan.meals[0].type).toBe('早餐');
+    });
+
+    it('保留结构化食材用量并匹配库存ID', () => {
+        const plan = normalizeMealPlan({
+            meals: [{
+                type: '一餐',
+                dishes: [{
+                    name: '番茄炒蛋', portion: '一盘', kcal: 380,
+                    ingredients: [{ name: '鸡蛋', quantity: 2, unit: '个', inventoryId: 'egg', fromStock: true }],
+                }],
+            }],
+        }, '2026-09-07', 1, [{ id: 'egg', name: '鸡蛋', quantity: 4, unit: '个', category: '肉蛋' }]);
+        expect(plan.meals[0].dishes[0].ingredients[0]).toMatchObject({ inventoryId: 'egg', quantity: 2, fromStock: true });
+        expect(plan.meals[0].dishes[0].stockUsed).toEqual(['鸡蛋']);
     });
 });

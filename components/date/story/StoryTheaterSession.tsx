@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, Database, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Trash, X } from '@phosphor-icons/react';
+import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, Database, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, ImageSquare, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset } from '../../../types';
 import { DB } from '../../../utils/db';
@@ -295,11 +295,14 @@ const StoryRoundVisuals: React.FC<{
     message: Message;
     busyKey: string;
     onRegenerate: (frameIndex: number) => void;
-}> = ({ message, busyKey, onRegenerate }) => {
+    onGenerate: () => void;
+}> = ({ message, busyKey, onRegenerate, onGenerate }) => {
     const state = message.metadata?.theaterImageState as StoryImageState | undefined;
     const frames = Array.isArray(message.metadata?.theaterImageFrames)
         ? message.metadata.theaterImageFrames as StoredStoryImageFrame[]
         : [];
+    const legacyImageRef = message.metadata?.theaterImageRef;
+    const generateBusy = busyKey === `${message.id}:generate`;
     return <>
         <StoryImageStateCard state={state} />
         {frames.map((frame, frameIndex) => <StoryFrameImage
@@ -308,7 +311,13 @@ const StoryRoundVisuals: React.FC<{
             busy={busyKey === `${message.id}:${frameIndex}`}
             onRegenerate={() => onRegenerate(frameIndex)}
         />)}
-        {frames.length === 0 && <LegacyStoryRoundImage value={message.metadata?.theaterImageRef} />}
+        {frames.length === 0 && <LegacyStoryRoundImage value={legacyImageRef} />}
+        {frames.length === 0 && !legacyImageRef && <div className='mt-4 flex justify-end'>
+            <button type='button' disabled={Boolean(busyKey)} onClick={onGenerate} className='inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-2 text-[9px] font-bold text-violet-700 shadow-sm disabled:opacity-40'>
+                {generateBusy ? <SpinnerGap size={13} className='animate-spin' /> : <ImageSquare size={13} weight='fill' />}
+                {generateBusy ? '正在生成配图…' : '生成本轮配图'}
+            </button>
+        </div>}
     </>;
 };
 
@@ -389,6 +398,64 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setRegeneratingFrameKey('');
         }
     }, [addToast, apiConfig, entry, loadMessages, regeneratingFrameKey]);
+
+    const generateStoryImagesForMessage = useCallback(async (message: Message) => {
+        if (regeneratingFrameKey || message.role !== 'assistant') return;
+        const busyKey = `${message.id}:generate`;
+        setRegeneratingFrameKey(busyKey);
+        try {
+            const historyThroughRound = messages
+                .filter(item => item.id <= message.id && item.metadata?.source === 'story_theater')
+                .filter(item => item.role === 'user' || item.role === 'assistant');
+            const previousImageState = [...historyThroughRound]
+                .reverse()
+                .filter(item => item.id < message.id)
+                .map(item => item.metadata?.theaterImageState as StoryImageState | undefined)
+                .find(Boolean);
+            const manualImageEntry: StoryTheaterEntry = {
+                ...entry,
+                imageGeneration: {
+                    enabled: true,
+                    styleTags: entry.imageGeneration?.styleTags || '',
+                    negativeTags: entry.imageGeneration?.negativeTags || '',
+                    imageCount: 1,
+                    width: entry.imageGeneration?.width || 1216,
+                    height: entry.imageGeneration?.height || 832,
+                    userAnchor: entry.imageGeneration?.userAnchor || '',
+                    characterAnchors: entry.imageGeneration?.characterAnchors || {},
+                },
+            };
+            const imageResult = await generateStoryTheaterImages({
+                apiConfig,
+                entry: manualImageEntry,
+                actors,
+                userName: promptIdentityName,
+                previousState: previousImageState,
+                history: historyThroughRound.slice(-8).map(item => ({
+                    role: item.role as 'user' | 'assistant',
+                    content: item.content,
+                })),
+            });
+            const storedFrames: StoredStoryImageFrame[] = [];
+            for (const frame of imageResult.frames) {
+                const imageRef = typeof frame.image === 'string' ? frame.image : await putImageBlob(frame.image);
+                const { image: _image, ...plan } = frame;
+                storedFrames.push({ ...plan, imageRef });
+            }
+            await DB.updateMessageMetadata(message.id, previous => ({
+                ...previous,
+                theaterImageState: imageResult.state,
+                theaterImageFrames: storedFrames,
+            }));
+            await loadMessages();
+            addToast('本轮配图已经补上', 'success');
+        } catch (error: any) {
+            console.error('[StoryTheater] manual image generation failed', error);
+            addToast(`生成本轮配图失败：${error?.message || error}`, 'error');
+        } finally {
+            setRegeneratingFrameKey('');
+        }
+    }, [actors, addToast, apiConfig, entry, loadMessages, messages, promptIdentityName, regeneratingFrameKey]);
 
     useEffect(() => {
         setContextTokens(0);
@@ -896,13 +963,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 <div className='pb-5 pl-7'>
                                     {message.role === 'user'
                                         ? <p className='text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p>
-                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} /></>}
+                                        : <><StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} /></>}
                                 </div>
                             </details>;
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} /><StoryRoundVisuals message={message} busyKey={regeneratingFrameKey} onRegenerate={frameIndex => void regenerateStoryFrame(message, frameIndex)} onGenerate={() => void generateStoryImagesForMessage(message)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}

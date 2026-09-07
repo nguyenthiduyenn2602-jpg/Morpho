@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
     BowlFood,
@@ -72,6 +72,8 @@ const EatApp: React.FC = () => {
     const [draftItem, setDraftItem] = useState(newItem);
     const [expandedMeal, setExpandedMeal] = useState<string>('早餐');
     const [selectedItemId, setSelectedItemId] = useState<string>('');
+    const [mealActionType, setMealActionType] = useState<string>('');
+    const mealPressTimer = useRef<number | null>(null);
 
     useEffect(() => { saveMealPlannerState(state); }, [state]);
 
@@ -136,6 +138,73 @@ const EatApp: React.FC = () => {
         setShowAdd(true);
     };
     const selectedItem = state.inventory.find(item => item.id === selectedItemId);
+
+    const cancelMealPress = () => {
+        if (mealPressTimer.current !== null) window.clearTimeout(mealPressTimer.current);
+        mealPressTimer.current = null;
+    };
+    const startMealPress = (type: string) => {
+        cancelMealPress();
+        mealPressTimer.current = window.setTimeout(() => {
+            setMealActionType(type);
+            mealPressTimer.current = null;
+            if ('vibrate' in navigator) navigator.vibrate(25);
+        }, 520);
+    };
+
+    const completeMeal = (type: string) => {
+        const plan = state.plans.find(item => item.date === date);
+        const meal = plan?.meals.find(item => item.type === type);
+        if (!plan || !meal || plan.completedMeals?.includes(type)) { setMealActionType(''); return; }
+        const usage = new Map<string, number>();
+        meal.dishes.forEach(dish => {
+            const structured = dish.ingredients?.filter(item => item.fromStock && item.quantity > 0) || [];
+            if (structured.length) {
+                structured.forEach(ingredient => {
+                    const matched = state.inventory.find(item => item.id === ingredient.inventoryId)
+                        || state.inventory.find(item => item.name.trim() === ingredient.name.trim());
+                    if (matched && (!ingredient.unit || ingredient.unit === matched.unit)) {
+                        usage.set(matched.id, (usage.get(matched.id) || 0) + ingredient.quantity);
+                    }
+                });
+            } else {
+                dish.stockUsed?.forEach(name => {
+                    const matched = state.inventory.find(item => item.name.trim() === name.trim());
+                    if (matched) usage.set(matched.id, (usage.get(matched.id) || 0) + 1);
+                });
+            }
+        });
+        setState(prev => ({
+            ...prev,
+            inventory: prev.inventory.map(item => usage.has(item.id)
+                ? { ...item, quantity: Math.max(0, Math.round((item.quantity - (usage.get(item.id) || 0)) * 10) / 10) }
+                : item),
+            plans: prev.plans.map(item => item.id === plan.id
+                ? { ...item, completedMeals: [...(item.completedMeals || []), type] }
+                : item),
+        }));
+        setMealActionType('');
+        addToast(usage.size ? `${type}完成，已扣除用掉的存货` : `${type}已标记完成`, 'success');
+    };
+
+    const deleteMeal = (type: string) => {
+        setState(prev => ({
+            ...prev,
+            plans: prev.plans.flatMap(plan => {
+                if (plan.date !== date) return [plan];
+                const meals = plan.meals.filter(meal => meal.type !== type);
+                if (!meals.length) return [];
+                return [{
+                    ...plan,
+                    meals,
+                    totalKcal: meals.reduce((sum, meal) => sum + meal.kcal, 0),
+                    completedMeals: (plan.completedMeals || []).filter(item => item !== type),
+                }];
+            }),
+        }));
+        setMealActionType('');
+        addToast(`已删除${type}，冰箱存货没有变化`, 'success');
+    };
 
     return (
         <div className="h-full w-full flex flex-col bg-[#f8f5ed] text-[#344038] animate-fade-in" style={{ paddingTop: 'var(--safe-top)' }}>
@@ -206,11 +275,22 @@ const EatApp: React.FC = () => {
                             </section>
                         ) : null}
 
-                        {currentPlan?.meals.map(meal => (
-                            <section key={meal.type} className="rounded-[1.6rem] bg-white border border-[#e7e2d5] overflow-hidden shadow-[0_10px_30px_-24px_rgba(57,70,55,.6)]">
+                        {currentPlan?.meals.map(meal => {
+                            const completed = currentPlan.completedMeals?.includes(meal.type);
+                            return (
+                            <section
+                                key={meal.type}
+                                onPointerDown={() => startMealPress(meal.type)}
+                                onPointerUp={cancelMealPress}
+                                onPointerCancel={cancelMealPress}
+                                onPointerLeave={cancelMealPress}
+                                onContextMenu={event => { event.preventDefault(); cancelMealPress(); setMealActionType(meal.type); }}
+                                className={`rounded-[1.6rem] bg-white border overflow-hidden shadow-[0_10px_30px_-24px_rgba(57,70,55,.6)] ${completed ? 'border-[#9fb19b] opacity-75' : 'border-[#e7e2d5]'}`}
+                            >
                                 <button onClick={() => setExpandedMeal(expandedMeal === meal.type ? '' : meal.type)} className="w-full p-4 flex items-center gap-3 text-left">
-                                    <span className="w-10 h-10 rounded-2xl bg-[#edf1e8] text-[#63765f] grid place-items-center"><ForkKnife size={20} weight="duotone" /></span>
+                                    <span className="w-10 h-10 rounded-2xl bg-[#edf1e8] text-[#63765f] grid place-items-center">{completed ? <Check size={20} weight="bold" /> : <ForkKnife size={20} weight="duotone" />}</span>
                                     <span className="flex-1"><b className="text-base">{meal.type}</b><small className="block text-[#9aa197] mt-0.5">约 {meal.kcal} kcal · {meal.prepMinutes} 分钟</small></span>
+                                    {completed && <span className="text-[10px] font-bold text-[#71866e]">已完成</span>}
                                     <CaretDown size={18} className={`transition ${expandedMeal === meal.type ? 'rotate-180' : ''}`} />
                                 </button>
                                 {expandedMeal === meal.type && <div className="px-4 pb-4 space-y-3 border-t border-[#f0ede5] pt-3">
@@ -220,6 +300,7 @@ const EatApp: React.FC = () => {
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex justify-between gap-3"><b className="text-sm">{dish.name}</b><span className="text-xs text-[#8b9388] shrink-0">{dish.kcal} kcal</span></div>
                                                 <p className="text-xs text-[#8b9388] mt-1">{dish.portion}</p>
+                                                {!!dish.ingredients?.length && <p className="text-[10px] text-[#7d837a] mt-1">食材：{dish.ingredients.map(item => `${item.name}${item.quantity}${item.unit}`).join('、')}</p>}
                                                 {!!dish.stockUsed.length && <p className="text-[10px] text-[#6f856b] mt-1">用现有：{dish.stockUsed.join('、')}</p>}
                                             </div>
                                         </div>
@@ -227,7 +308,7 @@ const EatApp: React.FC = () => {
                                     {meal.tip && <p className="rounded-xl bg-[#f7f5ed] px-3 py-2 text-xs text-[#7d837a] leading-relaxed">{meal.tip}</p>}
                                 </div>}
                             </section>
-                        ))}
+                        );})}
 
                         {currentPlan?.shoppingList?.length ? <section className="rounded-[1.6rem] bg-white border border-[#e7e2d5] p-4">
                             <div className="flex items-center gap-2 font-black"><ShoppingBag size={20} weight="duotone" className="text-[#b57942]" />顺手补一点</div>
@@ -325,6 +406,18 @@ const EatApp: React.FC = () => {
                         <label className="block"><span className="text-xs font-bold">大约什么时候到期（可不填）</span><input type="date" value={draftItem.expiresAt || ''} onChange={event => setDraftItem(prev => ({ ...prev, expiresAt: event.target.value }))} className="mt-2 w-full rounded-2xl bg-white border border-[#e6e1d4] px-4 py-3 outline-none" /></label>
                         <label className="block"><span className="text-xs font-bold">备注（可不填）</span><input value={draftItem.note || ''} onChange={event => setDraftItem(prev => ({ ...prev, note: event.target.value }))} placeholder="例如：已经切开、今晚最好吃掉" className="mt-2 w-full rounded-2xl bg-white border border-[#e6e1d4] px-4 py-3 outline-none" /></label>
                         <button onClick={addInventory} className="w-full py-3.5 rounded-2xl bg-[#52684f] text-white font-black flex items-center justify-center gap-2"><Check size={19} weight="bold" />放进冰箱</button>
+                    </div>
+                </div>
+            </div>}
+
+            {mealActionType && <div className="absolute inset-0 z-[60] bg-black/35 flex items-end" onClick={() => setMealActionType('')}>
+                <div className="w-full rounded-t-[2rem] bg-[#fbf9f3] p-5 pb-[calc(var(--safe-bottom)+22px)]" onClick={event => event.stopPropagation()}>
+                    <div className="w-10 h-1 rounded-full bg-[#d8d3c8] mx-auto" />
+                    <div className="mt-5"><p className="text-[9px] tracking-[.25em] text-[#7c9078] font-bold">MEAL ACTION</p><h2 className="text-xl font-black mt-1">{mealActionType}怎么处理？</h2><p className="text-xs text-[#969c93] mt-1">标记完成会扣除对应存货；仅删除不会改动冰箱数量。</p></div>
+                    <div className="mt-5 space-y-2">
+                        {!currentPlan?.completedMeals?.includes(mealActionType) && <button onClick={() => completeMeal(mealActionType)} className="w-full py-3.5 rounded-2xl bg-[#52684f] text-white font-black flex items-center justify-center gap-2"><Check size={19} weight="bold" />完成并扣除食材</button>}
+                        <button onClick={() => deleteMeal(mealActionType)} className="w-full py-3.5 rounded-2xl bg-rose-50 text-rose-600 font-black flex items-center justify-center gap-2"><Trash size={18} />仅删除这餐</button>
+                        <button onClick={() => setMealActionType('')} className="w-full py-3 text-xs text-[#8a9188]">取消</button>
                     </div>
                 </div>
             </div>}

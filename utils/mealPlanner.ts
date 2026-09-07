@@ -18,6 +18,15 @@ export interface MealDish {
     portion: string;
     kcal: number;
     stockUsed: string[];
+    ingredients: MealIngredient[];
+}
+
+export interface MealIngredient {
+    name: string;
+    quantity: number;
+    unit: string;
+    inventoryId?: string;
+    fromStock: boolean;
 }
 
 export interface PlannedMeal {
@@ -38,6 +47,7 @@ export interface DailyMealPlan {
     stockPriority: string[];
     note: string;
     createdAt: number;
+    completedMeals?: string[];
 }
 
 export interface MealPlannerSettings {
@@ -145,26 +155,55 @@ export const buildMealPlannerPrompt = (
     date: string,
 ): string => {
     const stock = inventory.length
-        ? inventory.map(item => `- ${item.name}：${item.quantity}${item.unit}（${item.category}${item.expiresAt ? `，${item.expiresAt}到期` : ''}${item.note ? `，${item.note}` : ''}）`).join('\n')
+        ? inventory.map(item => `- ${item.name}：${item.quantity}${item.unit}（库存ID：${item.id}；${item.category}${item.expiresAt ? `，${item.expiresAt}到期` : ''}${item.note ? `，${item.note}` : ''}）`).join('\n')
         : '- 冰箱暂未录入存货';
     const mealTypes = settings.mealsPerDay === 1
         ? ['一餐']
         : settings.mealsPerDay === 2
             ? ['第一餐', '第二餐']
             : ['早餐', '午餐', '晚餐'];
-    return `请为一位中国普通家庭用户安排 ${date} 的一天饮食。\n\n冰箱存货：\n${stock}\n\n人数：${settings.diners} 人\n每日餐数：严格 ${settings.mealsPerDay} 餐（${mealTypes.join('、')}）\n全天目标：约 ${settings.targetKcal} 千卡\n饮食方向：${settings.goal}\n不吃/忌口：${settings.dislikes || '无'}\n厨房条件：${settings.kitchenNote || '普通家庭厨房'}\n\n硬性要求：\n1. 优先消耗现有存货和临期食材，缺少的只补常见、平价、容易买到的食材。\n2. 菜谱必须符合中国人的日常饮食：粥、面、米饭、馒头、鸡蛋、豆腐、时令蔬菜、常见猪牛羊鸡肉等均可。\n3. 不要默认牛排、三文鱼、牛油果、羽衣甘蓝、藜麦、昂贵进口食材或健身博主式水煮餐。\n4. 不要佛跳墙、锅包肉、松鼠桂鱼等宴席菜或费时费油、普通家庭很少做的复杂菜。单餐尽量 35 分钟内完成。\n5. 不要为了减脂让人挨饿；热量是生活化估算，不得宣称医学精确。\n6. meals 数组必须恰好包含 ${settings.mealsPerDay} 餐，按 ${mealTypes.join('、')} 排列，不要额外添加加餐。菜名要具体自然，不写“优质蛋白套餐”之类营销词。\n7. 只输出一个合法 JSON 对象，不要 markdown、注释和额外文字。\n\nJSON 格式：\n{"title":"今天吃得踏实一点","meals":[{"type":"${mealTypes[0]}","dishes":[{"name":"菜名","portion":"一人份用量","kcal":300,"stockUsed":["用到的现有存货"]}],"kcal":300,"prepMinutes":15,"tip":"一句简短做法或替换建议"}],"shoppingList":["需要补买的食材与大致数量"],"stockPriority":["应优先消耗的存货"],"note":"一句生活化提醒"}`;
+    return `请为一位中国普通家庭用户安排 ${date} 的一天饮食。\n\n冰箱存货：\n${stock}\n\n人数：${settings.diners} 人\n每日餐数：安排 ${settings.mealsPerDay} 餐（${mealTypes.join('、')}）\n全天目标：约 ${settings.targetKcal} 千卡\n饮食方向：${settings.goal}\n不吃/忌口：${settings.dislikes || '无'}\n厨房条件：${settings.kitchenNote || '普通家庭厨房'}\n\n硬性要求：\n1. 优先消耗现有存货和临期食材，缺少的只补常见、平价、容易买到的食材。\n2. 菜谱必须符合中国人的日常饮食：粥、面、米饭、馒头、鸡蛋、豆腐、时令蔬菜、常见猪牛羊鸡肉等均可。\n3. 不要默认牛排、三文鱼、牛油果、羽衣甘蓝、藜麦、昂贵进口食材或健身博主式水煮餐。\n4. 不要佛跳墙、锅包肉、松鼠桂鱼等宴席菜或费时费油、普通家庭很少做的复杂菜。单餐尽量 35 分钟内完成。\n5. 不要为了减脂让人挨饿；热量是生活化估算，不得宣称医学精确。\n6. meals 数组按 ${mealTypes.join('、')} 排列，不要额外添加加餐。菜名要具体自然，不写“优质蛋白套餐”之类营销词。\n7. 每道菜列出 ingredients。使用现有食材时 inventoryId 必须照抄库存ID，fromStock 为 true，并给出会消耗的 quantity 和与库存一致的 unit；另买的食材 fromStock 为 false，inventoryId 留空。\n8. 只输出一个合法 JSON 对象，不要 markdown、注释和额外文字。\n\nJSON 格式：\n{"title":"今天吃得踏实一点","meals":[{"type":"${mealTypes[0]}","dishes":[{"name":"菜名","portion":"一人份用量","kcal":300,"ingredients":[{"name":"鸡蛋","quantity":2,"unit":"个","inventoryId":"food-123","fromStock":true}],"stockUsed":["鸡蛋"]}],"kcal":300,"prepMinutes":15,"tip":"一句简短做法或替换建议"}],"shoppingList":["需要补买的食材与大致数量"],"stockPriority":["应优先消耗的存货"],"note":"一句生活化提醒"}`;
 };
 
-export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3 = 3): DailyMealPlan => {
+const normalizedName = (value: unknown): string => text(value, '', 80).replace(/[\s·，,。]/g, '').toLowerCase();
+
+export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3 = 3, inventory: PantryItem[] = []): DailyMealPlan => {
     const expectedTypes = mealsPerDay === 1 ? ['一餐'] : mealsPerDay === 2 ? ['第一餐', '第二餐'] : ['早餐', '午餐', '晚餐'];
-    const meals: PlannedMeal[] = (Array.isArray(raw?.meals) ? raw.meals : []).map((meal: any, index: number) => {
+    const rawMeals = raw?.meals ?? raw?.mealPlan ?? raw?.['餐次'];
+    const meals: PlannedMeal[] = (Array.isArray(rawMeals) ? rawMeals : []).map((meal: any, index: number) => {
         const type = expectedTypes[index] || String(meal?.type || `第${index + 1}餐`);
-        const dishes = (Array.isArray(meal?.dishes) ? meal.dishes : []).slice(0, 4).map((dish: any) => ({
-            name: text(dish?.name, '家常菜', 40),
-            portion: text(dish?.portion, '一人份', 60),
-            kcal: clampNumber(dish?.kcal, 0, 2000, 0),
-            stockUsed: (Array.isArray(dish?.stockUsed) ? dish.stockUsed : []).map((item: unknown) => text(item, '', 30)).filter(Boolean).slice(0, 8),
-        }));
+        const rawDishes = meal?.dishes ?? meal?.['菜品'];
+        const dishes = (Array.isArray(rawDishes) ? rawDishes : []).slice(0, 4).map((dish: any) => {
+            let ingredients: MealIngredient[] = (Array.isArray(dish?.ingredients) ? dish.ingredients : []).map((ingredient: any) => {
+                const name = text(typeof ingredient === 'string' ? ingredient : (ingredient?.name ?? ingredient?.['食材']), '', 30);
+                const requestedId = text(ingredient?.inventoryId, '', 100) || undefined;
+                const matched = inventory.find(item => item.id === requestedId)
+                    || inventory.find(item => normalizedName(item.name) === normalizedName(name));
+                return {
+                    name: name || matched?.name || '食材',
+                    quantity: Math.max(0, Number(ingredient?.quantity ?? ingredient?.['数量']) || (typeof ingredient === 'string' ? 1 : 0)),
+                    unit: text(ingredient?.unit ?? ingredient?.['单位'], matched?.unit || '份', 12),
+                    inventoryId: matched?.id,
+                    fromStock: Boolean(ingredient?.fromStock ?? ingredient?.['使用库存'] ?? matched),
+                };
+            }).filter((ingredient: MealIngredient) => ingredient.name && ingredient.quantity > 0).slice(0, 12);
+            const stockUsed = (Array.isArray(dish?.stockUsed) ? dish.stockUsed : [])
+                .map((item: unknown) => text(typeof item === 'object' ? (item as any)?.name : item, '', 30)).filter(Boolean).slice(0, 8);
+            if (!ingredients.length && stockUsed.length) {
+                ingredients = stockUsed.map(name => {
+                    const key = normalizedName(name);
+                    const matched = inventory.find(item => key.includes(normalizedName(item.name)) || normalizedName(item.name).includes(key));
+                    return { name: matched?.name || name, quantity: 1, unit: matched?.unit || '份', inventoryId: matched?.id, fromStock: Boolean(matched) };
+                });
+            }
+            return {
+                name: text(dish?.name ?? dish?.['菜名'], '家常菜', 40),
+                portion: text(dish?.portion ?? dish?.['份量'], '一人份', 60),
+                kcal: clampNumber(dish?.kcal ?? dish?.['热量'], 0, 2000, 0),
+                stockUsed: stockUsed.length ? stockUsed : ingredients.filter(item => item.fromStock).map(item => item.name),
+                ingredients,
+            };
+        });
         const dishKcal = dishes.reduce((sum, dish) => sum + dish.kcal, 0);
         return {
             type,
@@ -174,7 +213,7 @@ export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3
             tip: text(meal?.tip, '', 120),
         } as PlannedMeal;
     }).filter(meal => meal.dishes.length > 0).slice(0, mealsPerDay);
-    if (meals.length !== mealsPerDay) throw new Error(`模型没有返回完整的 ${mealsPerDay} 餐安排，请再试一次`);
+    if (!meals.length) throw new Error('模型没有返回可用的一餐，请再试一次');
     const calculatedTotal = meals.reduce((sum, meal) => sum + meal.kcal, 0);
     return {
         id: `meal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -218,11 +257,11 @@ export const generateDailyMealPlan = async (
                 { role: 'user', content: buildMealPlannerPrompt(inventory, settings, date) },
             ],
             temperature: 0.72,
-            max_tokens: 2600,
+            max_tokens: 4096,
             stream: false,
         }),
     }, 0, 60000, { appId: 'eat', appName: '吃了吗', purpose: '生成家常饮食安排' });
     const content = extractContent(data).trim();
     if (!content) throw new Error('模型没有返回饮食安排');
-    return normalizeMealPlan(extractJsonObject(content), date, settings.mealsPerDay);
+    return normalizeMealPlan(extractJsonObject(content), date, settings.mealsPerDay, inventory);
 };
