@@ -26,6 +26,7 @@
 | 💬 **Message** | 跟角色聊天，支持文字 / 图片 / 表情包 |
 | 📞 **电话** | 语音通话 + TTS（MiniMax / Fish Audio 音色），听得到角色的声音 |
 | 👥 **群聊** | 拉一群角色互相唠嗑，看它们修罗场 |
+| 🍚 **吃了吗** | 记录冰箱存货，优先消耗现有食材安排家常三餐，并估算每餐与全天热量 |
 | 🏠 **小小窝** | 布置房间放角色进去挂机；内含**像素家园**和**记忆潜行**（3DS 双屏像素 RPG，潜进角色的记忆里逛一圈）|
 | 🔍 **查手机** | 检查角色手机里的秘密，发现它们背着你干什么 |
 | 🗓️ **见面** | 和角色"线下见面"，配合 TTS 做约会模拟 |
@@ -175,6 +176,8 @@ A: 就是我也不知道什么意思。系统正在哈我。
 3. 在 `constants.tsx` 的 `INSTALLED_APPS` 数组里注册（图标、名字、颜色）
 4. 在 `App.tsx` 的 `renderApp()` 里加 case
 5. 完事。UI 风格参考现有的用 Tailwind + glassmorphism。
+
+「吃了吗」是一个可参考的新 App 接入实例：`apps/EatApp.tsx` 负责界面，`utils/mealPlanner.ts` 负责 localStorage 持久化、家常菜约束、模型 JSON 解析与热量汇总。它复用全局 API，但库存和饮食安排只保存在本机；新增桌面 App 时仍需同步登记 `components/PhoneShell.tsx`、`components/os/appPreload.ts` 与 `utils/safeAreaApps.ts`。
 
 ### 数据流
 
