@@ -22,6 +22,7 @@ import { DB } from '../utils/db';
 import fridgeImageUrl from '../assets/eat/fridge-open.png';
 import {
     DEFAULT_MEAL_SETTINGS,
+    formatMealCompletionForChat,
     formatMealPlanForChat,
     generateDailyMealPlan,
     loadMealPlannerState,
@@ -63,7 +64,7 @@ const localDate = () => {
 const newItem = (): Omit<PantryItem, 'id'> => ({ name: '', quantity: 1, unit: '份', category: '其他', expiresAt: '', note: '' });
 
 const EatApp: React.FC = () => {
-    const { closeApp, apiConfig, addToast, characters } = useOS();
+    const { closeApp, apiConfig, addToast, characters, userProfile } = useOS();
     const [state, setState] = useState<MealPlannerState>(() => loadMealPlannerState());
     const [tab, setTab] = useState<Tab>('today');
     const [date, setDate] = useState(localDate);
@@ -90,17 +91,31 @@ const EatApp: React.FC = () => {
         try {
             const plan = await generateDailyMealPlan(apiConfig, state.inventory, state.settings, date);
             setState(prev => ({ ...prev, plans: [plan, ...prev.plans.filter(item => item.date !== date)].slice(0, 14) }));
-            const pushCharacter = characters.find(character => character.id === state.settings.pushCharacterId);
-            if (pushCharacter) {
-                await DB.saveMessage({
-                    charId: pushCharacter.id,
-                    role: 'user',
-                    type: 'text',
-                    content: formatMealPlanForChat(plan),
-                    metadata: { source: 'eat', mealPlanId: plan.id, mealPlanDate: plan.date },
-                });
-                window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: pushCharacter.id } }));
-                addToast(`今天的饭安排好了，也发给了${pushCharacter.name}`, 'success');
+            const selectedCharacterIds = new Set(state.settings.pushCharacterIds || (state.settings.pushCharacterId ? [state.settings.pushCharacterId] : []));
+            const pushCharacters = characters.filter(character => selectedCharacterIds.has(character.id));
+            if (pushCharacters.length) {
+                const mealUserName = userProfile?.name?.trim() || '你';
+                const content = formatMealPlanForChat(plan, mealUserName);
+                await Promise.all(pushCharacters.map(async character => {
+                    await DB.saveMessage({
+                        charId: character.id,
+                        role: 'user',
+                        type: 'meal_card',
+                        content,
+                        metadata: {
+                            source: 'eat',
+                            mealPlanId: plan.id,
+                            mealPlanDate: plan.date,
+                            mealPlan: plan,
+                            mealUserName,
+                        },
+                    });
+                    window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: character.id } }));
+                }));
+                const recipientText = pushCharacters.length <= 2
+                    ? pushCharacters.map(character => character.name).join('、')
+                    : `${pushCharacters.length}位角色`;
+                addToast(`今天的饭安排好了，也发给了${recipientText}`, 'success');
             } else {
                 addToast('今天的饭安排好了', 'success');
             }
@@ -152,7 +167,7 @@ const EatApp: React.FC = () => {
         }, 520);
     };
 
-    const completeMeal = (type: string) => {
+    const completeMeal = async (type: string) => {
         const plan = state.plans.find(item => item.date === date);
         const meal = plan?.meals.find(item => item.type === type);
         if (!plan || !meal || plan.completedMeals?.includes(type)) { setMealActionType(''); return; }
@@ -184,6 +199,37 @@ const EatApp: React.FC = () => {
                 : item),
         }));
         setMealActionType('');
+        const selectedCharacterIds = new Set(state.settings.pushCharacterIds || (state.settings.pushCharacterId ? [state.settings.pushCharacterId] : []));
+        const pushCharacters = characters.filter(character => selectedCharacterIds.has(character.id));
+        if (pushCharacters.length) {
+            try {
+                const completedAt = Date.now();
+                const mealUserName = userProfile?.name?.trim() || '你';
+                const content = formatMealCompletionForChat(plan, type, mealUserName);
+                await Promise.all(pushCharacters.map(async character => {
+                    await DB.saveMessage({
+                        charId: character.id,
+                        role: 'user',
+                        type: 'meal_card',
+                        content,
+                        metadata: {
+                            source: 'eat',
+                            mealPlanId: plan.id,
+                            mealPlanDate: plan.date,
+                            mealPlan: plan,
+                            mealReceiptType: 'completed',
+                            completedMealType: type,
+                            completedAt,
+                            mealUserName,
+                        },
+                    });
+                    window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: character.id } }));
+                }));
+            } catch {
+                addToast('这餐已经记下了，但完成回执没发出去', 'error');
+                return;
+            }
+        }
         addToast(usage.size ? `${type}完成，已扣除用掉的存货` : `${type}已标记完成`, 'success');
     };
 
@@ -378,10 +424,16 @@ const EatApp: React.FC = () => {
                                 <span className="text-xs font-bold">生成后同步给谁</span>
                                 <p className="text-[10px] text-[#969c93] mt-1">今日饮食会写进所选角色的私聊，角色下次聊天时也能看见。</p>
                                 <div className="mt-3 grid grid-cols-2 gap-2">
-                                    <button onClick={() => setState(prev => ({ ...prev, settings: { ...prev.settings, pushCharacterId: '' } }))} className={`p-2.5 rounded-xl border text-xs font-black ${!state.settings.pushCharacterId ? 'bg-[#71866e] text-white border-[#71866e]' : 'bg-white border-[#dfded5]'}`}>不同步</button>
+                                    <button onClick={() => setState(prev => ({ ...prev, settings: { ...prev.settings, pushCharacterIds: [] } }))} className={`p-2.5 rounded-xl border text-xs font-black ${(state.settings.pushCharacterIds || []).length === 0 ? 'bg-[#71866e] text-white border-[#71866e]' : 'bg-white border-[#dfded5]'}`}>不同步</button>
                                     {characters.map(character => {
-                                        const selected = state.settings.pushCharacterId === character.id;
-                                        return <button key={character.id} onClick={() => setState(prev => ({ ...prev, settings: { ...prev.settings, pushCharacterId: character.id } }))} className={`p-2 rounded-xl border flex items-center gap-2 min-w-0 text-left ${selected ? 'bg-[#edf1e8] border-[#71866e] text-[#52664f]' : 'bg-white border-[#dfded5]'}`}>
+                                        const selected = (state.settings.pushCharacterIds || []).includes(character.id);
+                                        return <button key={character.id} onClick={() => setState(prev => {
+                                            const selectedIds = prev.settings.pushCharacterIds || [];
+                                            const pushCharacterIds = selectedIds.includes(character.id)
+                                                ? selectedIds.filter(id => id !== character.id)
+                                                : [...selectedIds, character.id];
+                                            return { ...prev, settings: { ...prev.settings, pushCharacterIds } };
+                                        })} className={`p-2 rounded-xl border flex items-center gap-2 min-w-0 text-left ${selected ? 'bg-[#edf1e8] border-[#71866e] text-[#52664f]' : 'bg-white border-[#dfded5]'}`}>
                                             <TokenImg value={character.avatar} className="w-8 h-8 rounded-full object-cover bg-[#eef0e8] shrink-0" alt={character.name} />
                                             <span className="text-xs font-black truncate">{character.name}</span>
                                             {selected && <Check size={15} weight="bold" className="ml-auto shrink-0" />}

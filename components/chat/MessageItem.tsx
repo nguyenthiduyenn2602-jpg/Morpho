@@ -2896,6 +2896,72 @@ const MessageItem = React.memo(({
         return commonLayout(card);
     }
 
+    if (m.type === 'meal_card' && m.metadata?.mealPlan) {
+        const plan: any = m.metadata.mealPlan;
+        const isCompletionReceipt = m.metadata?.mealReceiptType === 'completed';
+        const mealUserName = String(m.metadata?.mealUserName || '').trim() || '你';
+        const completedMealType = String(m.metadata?.completedMealType || '');
+        const allMeals: any[] = Array.isArray(plan.meals) ? plan.meals : [];
+        const meals = isCompletionReceipt ? allMeals.filter(meal => meal?.type === completedMealType) : allMeals;
+        const ingredients = meals.flatMap(meal => Array.isArray(meal?.dishes)
+            ? meal.dishes.flatMap((dish: any) => Array.isArray(dish?.ingredients) ? dish.ingredients : [])
+            : []);
+        const ingredientLabels = Array.from(new Set(ingredients.map((item: any) => {
+            const name = String(item?.name || '').trim();
+            if (!name) return '';
+            const amount = Number(item?.quantity);
+            const quantity = Number.isFinite(amount) && amount > 0 ? `${amount}${item?.unit || ''}` : '';
+            return `${name}${quantity ? ` ${quantity}` : ''}`;
+        }).filter(Boolean))) as string[];
+        const shoppingList: string[] = Array.isArray(plan.shoppingList) ? plan.shoppingList.filter(Boolean) : [];
+        const card = (
+            <div className="w-64 overflow-hidden rounded-[1.1rem] border border-[#d8d2bf] bg-[#fffdf5] text-[#30352f] shadow-[0_5px_18px_rgba(73,77,63,0.14)]" style={{ fontFamily: `'Noto Sans SC','PingFang SC',sans-serif` }}>
+                <div className="px-4 pt-3 pb-2 text-center border-b border-dashed border-[#c8c1aa]">
+                    <div className="text-[8px] tracking-[.34em] font-bold text-[#788573]">MORPHO KITCHEN</div>
+                    <div className="mt-1 text-[15px] font-black tracking-[.08em]">{isCompletionReceipt ? '用餐完成回执' : `${mealUserName}今日饮食小票`}</div>
+                    <div className="mt-0.5 text-[9px] text-[#979587]">{plan.date || m.metadata?.mealPlanDate || '今天'}</div>
+                </div>
+                <div className="px-4 py-3">
+                    {isCompletionReceipt && (
+                        <div className="mb-2 text-[11px] font-bold text-center text-[#687563]">✓ {mealUserName}这顿已经好好吃完啦</div>
+                    )}
+                    <div className="space-y-2.5">
+                        {meals.map((meal, index) => (
+                            <div key={`${meal?.type || 'meal'}-${index}`}>
+                                <div className="flex items-baseline justify-between gap-2">
+                                    <span className="text-[11px] font-black">{meal?.type || `第${index + 1}餐`}</span>
+                                    <span className="text-[9px] tabular-nums text-[#8c8e82]">约 {Number(meal?.kcal) || 0} kcal</span>
+                                </div>
+                                <div className="mt-0.5 text-[11px] leading-relaxed text-[#555b52]">
+                                    {(Array.isArray(meal?.dishes) ? meal.dishes : []).map((dish: any) => dish?.name).filter(Boolean).join(' · ') || '家常便饭'}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="my-3 border-t border-dashed border-[#c8c1aa]" />
+                    {ingredientLabels.length > 0 && (
+                        <div className="mb-2">
+                            <div className="text-[9px] font-black tracking-wide text-[#7a8274]">需要食材</div>
+                            <div className="mt-1 text-[10px] leading-relaxed text-[#666b62]">{ingredientLabels.slice(0, 12).join('、')}</div>
+                        </div>
+                    )}
+                    {shoppingList.length > 0 && (
+                        <div className="mb-2">
+                            <div className="text-[9px] font-black tracking-wide text-[#a27155]">顺手补买</div>
+                            <div className="mt-1 text-[10px] leading-relaxed text-[#77665a]">{shoppingList.join('、')}</div>
+                        </div>
+                    )}
+                    <div className="pt-2 border-t border-dashed border-[#c8c1aa] flex items-center justify-between">
+                        <span className="text-[10px] font-bold">{isCompletionReceipt ? '本餐合计' : '全天合计'}</span>
+                        <span className="text-[13px] font-black tabular-nums text-[#60725d]">{isCompletionReceipt ? (Number(meals[0]?.kcal) || 0) : (Number(plan.totalKcal) || 0)} kcal</span>
+                    </div>
+                </div>
+                <div className="px-4 py-2 text-center text-[9px] tracking-wide text-[#99998e] bg-[#f6f3e7]">{isCompletionReceipt ? '今日好好吃饭任务 +1' : '再忙也要记得好好吃饭'}</div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'news_card') {
         const md: any = m.metadata || {};
         const title: string = md.title || '热点';

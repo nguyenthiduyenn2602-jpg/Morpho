@@ -54,7 +54,9 @@ export interface MealPlannerSettings {
     targetKcal: number;
     diners: number;
     mealsPerDay: 1 | 2 | 3;
-    pushCharacterId: string;
+    pushCharacterIds: string[];
+    /** 旧版单选字段，仅用于迁移已有设置。 */
+    pushCharacterId?: string;
     goal: '正常吃' | '清淡点' | '控热量';
     dislikes: string;
     kitchenNote: string;
@@ -73,7 +75,7 @@ export const DEFAULT_MEAL_SETTINGS: MealPlannerSettings = {
     targetKcal: 1600,
     diners: 1,
     mealsPerDay: 3,
-    pushCharacterId: '',
+    pushCharacterIds: [],
     goal: '正常吃',
     dislikes: '',
     kitchenNote: '普通家庭厨房，优先使用炒锅、电饭煲和蒸锅',
@@ -91,11 +93,18 @@ export const loadMealPlannerState = (): MealPlannerState => {
         const raw = localStorage.getItem(MEAL_PLANNER_STORAGE_KEY);
         if (!raw) return emptyMealPlannerState();
         const parsed = JSON.parse(raw);
+        const savedSettings = parsed?.settings || {};
+        const legacyCharacterId = typeof savedSettings.pushCharacterId === 'string'
+            ? savedSettings.pushCharacterId.trim()
+            : '';
+        const pushCharacterIds = Array.isArray(savedSettings.pushCharacterIds)
+            ? Array.from(new Set(savedSettings.pushCharacterIds.filter((id: unknown): id is string => typeof id === 'string' && !!id.trim())))
+            : (legacyCharacterId ? [legacyCharacterId] : []);
         return {
             version: 1,
             inventory: Array.isArray(parsed?.inventory) ? parsed.inventory : [],
             plans: Array.isArray(parsed?.plans) ? parsed.plans.slice(0, 14) : [],
-            settings: { ...DEFAULT_MEAL_SETTINGS, ...(parsed?.settings || {}) },
+            settings: { ...DEFAULT_MEAL_SETTINGS, ...savedSettings, pushCharacterIds },
         };
     } catch {
         return emptyMealPlannerState();
@@ -228,13 +237,20 @@ export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3
     };
 };
 
-export const formatMealPlanForChat = (plan: DailyMealPlan): string => {
+export const formatMealPlanForChat = (plan: DailyMealPlan, userName = '你'): string => {
     const meals = plan.meals.map(meal => {
         const dishes = meal.dishes.map(dish => `${dish.name}（${dish.portion}，约${dish.kcal} kcal）`).join('、');
         return `${meal.type}：${dishes}`;
     }).join('\n');
     const shopping = plan.shoppingList.length ? `\n顺手补买：${plan.shoppingList.join('、')}` : '';
-    return `【吃了吗 · ${plan.date}】\n${plan.title}\n${meals}\n全天约 ${plan.totalKcal} kcal${shopping}\n${plan.note}`;
+    return `【${userName}今日饮食小票 · ${plan.date}】\n${meals}\n全天约 ${plan.totalKcal} kcal${shopping}\n${plan.note}`;
+};
+
+export const formatMealCompletionForChat = (plan: DailyMealPlan, mealType: string, userName = '你'): string => {
+    const meal = plan.meals.find(item => item.type === mealType);
+    if (!meal) return `【吃了吗 · ${plan.date}】${userName}已经吃完了${mealType}。`;
+    const dishes = meal.dishes.map(dish => `${dish.name}（${dish.portion}，约${dish.kcal} kcal）`).join('、');
+    return `【吃了吗 · 用餐完成】\n${userName}这顿已经好好吃完啦：${dishes}\n本餐约 ${meal.kcal} kcal。无需再担心或催促${userName}吃这一餐。`;
 };
 
 export const generateDailyMealPlan = async (

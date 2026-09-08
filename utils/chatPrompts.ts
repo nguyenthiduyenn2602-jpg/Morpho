@@ -52,6 +52,7 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'mcd_card': return '[麦当劳点餐]';
         case 'html_card': return '[HTML卡片]';
         case 'news_card': return '[新闻卡片]';
+        case 'meal_card': return `[今日饮食清单${meta.mealPlan?.date ? '：' + meta.mealPlan.date : ''}] ${m.content || ''}`;
         case 'trpg_card': return `[TRPG游戏片段${meta.trpg?.gameTitle ? '：《' + meta.trpg.gameTitle + '》' : ''}]`;
         case 'novel_card': return `[笔友会小说章节${meta.novel?.bookTitle ? '：《' + meta.novel.bookTitle + '》' : ''}]`;
         case 'world_card': return `[家园生活记录${meta.worldName ? '：' + meta.worldName : ''}]`;
