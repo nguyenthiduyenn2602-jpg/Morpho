@@ -61,6 +61,7 @@ const GroupChat = lazyApp(() => import('../apps/GroupChat'));
 const MomentsApp = lazyApp(() => import('../apps/MomentsApp'));
 const MihuiApp = lazyApp(() => import('../apps/MihuiApp'));
 const EatApp = lazyApp(() => import('../apps/EatApp'));
+const FarawayApp = lazyApp(() => import('../apps/FarawayApp'));
 const Appearance = lazyApp(() => import('../apps/Appearance'));
 const ThemeMaker = lazyApp(() => import('../apps/ThemeMaker'));
 const Gallery = lazyApp(() => import('../apps/Gallery'));
@@ -76,7 +77,7 @@ const QQBridge = lazyApp(() => import('../apps/QQBridge'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
 const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, MomentsApp, MihuiApp, EatApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, Appearance, ThemeMaker, QQBridge,
+  Chat, Character, GroupChat, MomentsApp, MihuiApp, EatApp, FarawayApp, Settings, UserApp, CallApp, DateApp, Gallery, WorldbookApp, MemoryPalaceApp, HandbookApp, FAQApp, BrowserApp, VoiceDesignerApp, Appearance, ThemeMaker, QQBridge,
 ];
 
 const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
@@ -88,7 +89,7 @@ const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.Eat]: EatApp, [AppID.Handbook]: HandbookApp, [AppID.Appearance]: Appearance,
+  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.Eat]: EatApp, [AppID.Faraway]: FarawayApp, [AppID.Handbook]: HandbookApp, [AppID.Appearance]: Appearance,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -110,6 +111,7 @@ import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp, isStatusBarHidden } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import MomentsScheduler from './MomentsScheduler';
+import FarawayScheduler from './FarawayScheduler';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
@@ -783,6 +785,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Moments: return <MomentsApp />;
       case AppID.Mihui: return <MihuiApp />;
       case AppID.Eat: return <EatApp />;
+      case AppID.Faraway: return <FarawayApp />;
       case AppID.Appearance: return <Appearance />;
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Gallery: return <Gallery />;
@@ -838,6 +841,7 @@ const PhoneShell: React.FC = () => {
         }
       >
         <MomentsScheduler />
+        <FarawayScheduler />
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>

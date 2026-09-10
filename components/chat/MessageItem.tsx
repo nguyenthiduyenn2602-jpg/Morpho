@@ -2896,6 +2896,44 @@ const MessageItem = React.memo(({
         return commonLayout(card);
     }
 
+    if (m.type === 'travel_card' && m.metadata?.travelCard) {
+        const travel: any = m.metadata.travelCard;
+        const kind = travel.kind === 'departure' ? '出发前' : travel.kind === 'return' ? '归来' : '途中来信';
+        const items: string[] = Array.isArray(travel.items) ? travel.items.filter(Boolean).slice(0, 8) : [];
+        const card = (
+            <div className="w-64 overflow-hidden rounded-[1.15rem] border border-[#b9ab98]/70 bg-[#f2eadc] text-[#29241f] shadow-[0_7px_22px_rgba(44,34,24,0.2)]" style={{ fontFamily: `'Noto Serif SC','Songti SC',serif` }}>
+                <div className="relative overflow-hidden bg-[#292521] px-4 py-3 text-[#f3eadb]">
+                    <div className="absolute -right-5 -top-8 h-24 w-24 rounded-full border border-white/10" />
+                    <div className="text-[8px] font-bold tracking-[.3em] text-[#d4c2a9]">MORPHO · ELSEWHERE</div>
+                    <div className="mt-1 flex items-end justify-between gap-3">
+                        <div className="truncate text-[17px] font-black">{travel.destination || '远方'}</div>
+                        <span className="shrink-0 text-[9px] tracking-wider text-[#cdbda8]">{kind}</span>
+                    </div>
+                </div>
+                <div className="px-4 py-3.5">
+                    <div className="text-[13px] font-bold leading-relaxed">{travel.title || '从远方捎来的消息'}</div>
+                    <p className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-[#554b42]">{travel.body || m.content}</p>
+                    {travel.kind === 'departure' && travel.purpose && (
+                        <div className="mt-3 border-t border-dashed border-[#baa991] pt-2.5">
+                            <div className="text-[8px] font-bold tracking-[.2em] text-[#907c66]">此行</div>
+                            <div className="mt-1 text-[10px] leading-5">{travel.purpose}</div>
+                        </div>
+                    )}
+                    {travel.kind === 'departure' && items.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            {items.map(item => <span key={item} className="rounded-full bg-[#dfd2bf] px-2 py-1 text-[9px] text-[#54483c]">{item}</span>)}
+                        </div>
+                    )}
+                    <div className="mt-3 flex items-center justify-between border-t border-[#cfc1ad] pt-2 text-[8px] tracking-wider text-[#8b7b69]">
+                        <span>{travel.location || travel.destination || '途中'}</span>
+                        <span>{new Date(m.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'meal_card' && m.metadata?.mealPlan) {
         const plan: any = m.metadata.mealPlan;
         const isCompletionReceipt = m.metadata?.mealReceiptType === 'completed';
