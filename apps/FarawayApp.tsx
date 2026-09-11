@@ -99,8 +99,7 @@ const FarawayApp: React.FC = () => {
             <button onClick={() => setPanel('settings')} className="absolute right-5 top-[calc(var(--chrome-top,0px)+18px)] z-20 grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/35 backdrop-blur"><GearSix size={21} /></button>
             <div className="absolute left-6 top-[calc(var(--chrome-top,0px)+74px)] z-10">
                 <div className="text-[10px] tracking-[.34em] text-white/65">MORPHO · ELSEWHERE</div>
-                <div className="mt-1 font-serif text-3xl font-semibold">走了没</div>
-                {displayChar && <div className="mt-4 inline-flex items-center gap-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-2 backdrop-blur"><img src={displayChar.avatar} className="h-9 w-9 rounded-full object-cover" /><div><b className="text-sm">{displayChar.name}</b><div className="text-[10px] text-white/65">{activeJourney ? `外出中 · ${activeJourney.destination}` : '房间安静着'}</div></div></div>}
+                {displayChar && <div className="mt-2 inline-flex items-center gap-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-2 backdrop-blur"><img src={displayChar.avatar} className="h-9 w-9 rounded-full object-cover" /><div><b className="text-sm">{displayChar.name}</b><div className="text-[10px] text-white/65">{activeJourney ? `外出中 · ${activeJourney.destination}` : '房间安静着'}</div></div></div>}
             </div>
 
             <RoomButton label="照片与明信片" icon={<Camera size={17} />} className="right-[17%] top-[29%]" onClick={() => setPanel('photos')} />
