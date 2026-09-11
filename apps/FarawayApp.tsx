@@ -97,10 +97,8 @@ const FarawayApp: React.FC = () => {
             <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/45" />
             <button onClick={closeApp} className="absolute left-5 top-[calc(var(--chrome-top,0px)+18px)] z-20 grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/35 backdrop-blur"><ArrowLeft size={22} /></button>
             <button onClick={() => setPanel('settings')} className="absolute right-5 top-[calc(var(--chrome-top,0px)+18px)] z-20 grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/35 backdrop-blur"><GearSix size={21} /></button>
-            <div className="absolute left-6 top-[calc(var(--chrome-top,0px)+74px)] z-10">
-                <div className="text-[10px] tracking-[.34em] text-white/65">MORPHO · ELSEWHERE</div>
-                {displayChar && <div className="mt-2 inline-flex items-center gap-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-2 backdrop-blur"><img src={displayChar.avatar} className="h-9 w-9 rounded-full object-cover" /><div><b className="text-sm">{displayChar.name}</b><div className="text-[10px] text-white/65">{activeJourney ? `外出中 · ${activeJourney.destination}` : '房间安静着'}</div></div></div>}
-            </div>
+            <div className="absolute left-1/2 top-[calc(var(--chrome-top,0px)+29px)] z-10 -translate-x-1/2 whitespace-nowrap text-[10px] tracking-[.34em] text-white/65">MORPHO · ELSEWHERE</div>
+            {displayChar && <div className="absolute left-6 top-[calc(var(--chrome-top,0px)+76px)] z-10 inline-flex items-center gap-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-2 backdrop-blur"><img src={displayChar.avatar} className="h-9 w-9 rounded-full object-cover" /><div><b className="text-sm">{displayChar.name}</b><div className="text-[10px] text-white/65">{activeJourney ? `外出中 · ${activeJourney.destination}` : '房间安静着'}</div></div></div>}
 
             <RoomButton label="照片与明信片" icon={<Camera size={17} />} className="right-[17%] top-[29%]" onClick={() => setPanel('photos')} />
             {!activeJourney && <>
