@@ -227,6 +227,8 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
 */
 
 const DISCLAIMER_KEY = 'sullyos_disclaimer_accepted';
+const MORPHO_OPENING_NOTICE_KEY = 'morpho_opening_notice_ack';
+const MORPHO_OPENING_NOTICE_VERSION = '2026-09-v1';
 
 type ImportRecoveryMarker = {
   startedAt?: number;
@@ -307,6 +309,68 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
         >
           我已知悉，继续使用
         </button>
+      </div>
+    </div>
+  </div>
+);
+
+const MorphoOpeningNotice: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
+  <div className="fixed inset-0 z-[10000] flex items-center justify-center p-5 animate-fade-in">
+    <div className="absolute inset-0 bg-[#17131a]/70 backdrop-blur-lg" />
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="morpho-opening-title"
+      className="relative w-full max-w-sm overflow-hidden rounded-[2.5rem] border border-white/50 bg-[#fffafc]/95 shadow-2xl animate-slide-up"
+    >
+      <div className="pointer-events-none absolute -right-12 -top-14 h-40 w-40 rounded-full bg-rose-200/50 blur-2xl" />
+      <div className="pointer-events-none absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-violet-200/40 blur-3xl" />
+
+      <div className="relative px-6 pb-3 pt-7 text-center">
+        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
+          <img
+            src={`${import.meta.env.BASE_URL}morpho/head.png`}
+            alt="Morpho"
+            className="h-full w-full object-cover"
+          />
+        </div>
+        <p className="text-[9px] font-bold tracking-[0.34em] text-rose-400">MORPHO · OPENING NOTE</p>
+        <h2 id="morpho-opening-title" className="mt-2 text-[22px] font-black tracking-tight text-slate-800">
+          欢迎来到 Morpho
+        </h2>
+        <p className="mt-2 text-[12px] leading-5 text-slate-500">
+          这是一台会随着你继续生长的小手机。
+        </p>
+      </div>
+
+      <div className="relative max-h-[52vh] space-y-3 overflow-y-auto px-6 pb-4 no-scrollbar">
+        <div className="rounded-2xl border border-rose-100 bg-white/75 p-4">
+          <p className="text-[13px] font-bold text-slate-700">把故事留在自己手里</p>
+          <p className="mt-1.5 text-[11px] leading-[1.75] text-slate-500">
+            角色、聊天与日常会在这台设备上继续生长。请妥善保管 API Key 与备份文件，不要公开包含密钥或私人内容的截图和数据包。
+          </p>
+        </div>
+        <div className="rounded-2xl border border-violet-100 bg-white/75 p-4">
+          <p className="text-[13px] font-bold text-slate-700">AI 也会偶尔说胡话</p>
+          <p className="mt-1.5 text-[11px] leading-[1.75] text-slate-500">
+            小手机里的内容由你所连接的模型生成，仅供陪伴与创作参考。重要信息请自行核实，更新或迁移前也记得先做一次完整备份。
+          </p>
+        </div>
+        <p className="px-2 text-center text-[11px] leading-5 text-slate-500">
+          基于 SullyOS 的开源基础继续生长。<br />
+          愿你在这里遇见想见的人，也把日子过得更有意思。
+        </p>
+      </div>
+
+      <div className="relative px-6 pb-7 pt-2">
+        <button
+          type="button"
+          onClick={onAccept}
+          className="w-full rounded-2xl bg-gradient-to-r from-[#2d242c] via-[#513642] to-[#9a536b] py-3.5 text-sm font-bold text-white shadow-lg shadow-rose-200/70 transition-transform active:scale-[0.98]"
+        >
+          我已知悉
+        </button>
+        <p className="mt-2 text-center text-[9px] text-slate-400">确认后，本版本不再重复显示</p>
       </div>
     </div>
   </div>
@@ -503,6 +567,34 @@ const PhoneShell: React.FC = () => {
     setShowDisclaimer(false);
   };
 
+  // Morpho 自有开屏通知：按版本确认。日后只需更新 VERSION，所有用户会再看到一次新版通知。
+  const [showMorphoOpeningNotice, setShowMorphoOpeningNotice] = useState(() => {
+    try {
+      return !!localStorage.getItem(DISCLAIMER_KEY)
+        && localStorage.getItem(MORPHO_OPENING_NOTICE_KEY) !== MORPHO_OPENING_NOTICE_VERSION;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (showDisclaimer || showMorphoOpeningNotice) return;
+    try {
+      if (localStorage.getItem(MORPHO_OPENING_NOTICE_KEY) !== MORPHO_OPENING_NOTICE_VERSION) {
+        setShowMorphoOpeningNotice(true);
+      }
+    } catch {
+      setShowMorphoOpeningNotice(true);
+    }
+  }, [showDisclaimer, showMorphoOpeningNotice]);
+
+  const handleAcceptMorphoOpeningNotice = () => {
+    try {
+      localStorage.setItem(MORPHO_OPENING_NOTICE_KEY, MORPHO_OPENING_NOTICE_VERSION);
+    } catch { /* ignore */ }
+    setShowMorphoOpeningNotice(false);
+  };
+
   const [importRecoveryMarker, setImportRecoveryMarker] = useState<ImportRecoveryMarker | null>(() => {
     try {
       if (!localStorage.getItem(DISCLAIMER_KEY)) return null;
@@ -537,38 +629,38 @@ const PhoneShell: React.FC = () => {
   });
 
   useEffect(() => {
-    if (!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && !showUpdateNotification) {
+    if (!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && !showUpdateNotification) {
       if (shouldShowUpdateNotification()) {
         setShowUpdateNotification(true);
       }
     }
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification]);
+  }, [showDisclaimer, showImportRecoveryPrompt, showMorphoOpeningNotice, showAuthorLetter, showUpdateNotification]);
 
   // 520 特别活动弹窗（2026-05-20 当天，且没被 dismiss / completed）
   // 一次性：用户点过任何按钮就标记 dismissed，下次刷新不再出现；
   // API 配置改成弹窗内嵌，配完直接进活动，不再需要把弹窗暂存让位给 Settings。
   const [showLike520Popup, setShowLike520Popup] = useState(false);
   useEffect(() => {
-    if (showDisclaimer || showImportRecoveryPrompt || showAuthorLetter || showUpdateNotification) return;
+    if (showDisclaimer || showImportRecoveryPrompt || showMorphoOpeningNotice || showAuthorLetter || showUpdateNotification) return;
     if (!isDataLoaded) return;
     if (shouldShowLike520Popup()) setShowLike520Popup(true);
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, isDataLoaded]);
+  }, [showDisclaimer, showImportRecoveryPrompt, showMorphoOpeningNotice, showAuthorLetter, showUpdateNotification, isDataLoaded]);
 
   // Instant Push 下线提醒：只对仍在使用旧功能的人显示，每天最多一次。
   const [showInstantPushSunset, setShowInstantPushSunset] = useState(false);
   useEffect(() => {
-    if (showDisclaimer || showImportRecoveryPrompt || showAuthorLetter || showUpdateNotification || showLike520Popup) return;
+    if (showDisclaimer || showImportRecoveryPrompt || showMorphoOpeningNotice || showAuthorLetter || showUpdateNotification || showLike520Popup) return;
     if (!isDataLoaded) return;
     if (shouldShowInstantPushSunsetNotice()) setShowInstantPushSunset(true);
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showLike520Popup, isDataLoaded]);
+  }, [showDisclaimer, showImportRecoveryPrompt, showMorphoOpeningNotice, showAuthorLetter, showUpdateNotification, showLike520Popup, isDataLoaded]);
 
   // Worker 后端更新提醒 — 只对启用了 Instant Push 的用户弹，且当前 worker 版本未确认过
   const [showWorkerUpdateReminder, setShowWorkerUpdateReminder] = useState(false);
   useEffect(() => {
-    if (showDisclaimer || showImportRecoveryPrompt || showAuthorLetter || showUpdateNotification || showLike520Popup || showInstantPushSunset) return;
+    if (showDisclaimer || showImportRecoveryPrompt || showMorphoOpeningNotice || showAuthorLetter || showUpdateNotification || showLike520Popup || showInstantPushSunset) return;
     if (!isDataLoaded) return;
     if (shouldShowWorkerUpdateReminder()) setShowWorkerUpdateReminder(true);
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showLike520Popup, showInstantPushSunset, isDataLoaded]);
+  }, [showDisclaimer, showImportRecoveryPrompt, showMorphoOpeningNotice, showAuthorLetter, showUpdateNotification, showLike520Popup, showInstantPushSunset, isDataLoaded]);
 
   // 部署漂移自检：启动后异步 GET {workerUrl}/version（每 24h 最多一次）。
   // 常量比对只能发现「前端更新了」，发现不了「用户 seen 过但实际没部署 / 部署的是更老的包」——
@@ -596,10 +688,10 @@ const PhoneShell: React.FC = () => {
   // 「该备份啦」提醒 — local-first 数据只在本机，隔 N 天（默认 7，可在设置里改）没导出就弹一次
   const [showBackupReminder, setShowBackupReminder] = useState(false);
   useEffect(() => {
-    if (showDisclaimer || showImportRecoveryPrompt || showAuthorLetter || showUpdateNotification || showLike520Popup || showInstantPushSunset || showWorkerUpdateReminder) return;
+    if (showDisclaimer || showImportRecoveryPrompt || showMorphoOpeningNotice || showAuthorLetter || showUpdateNotification || showLike520Popup || showInstantPushSunset || showWorkerUpdateReminder) return;
     if (!isDataLoaded || isLocked) return;
     if (shouldShowBackupReminder()) setShowBackupReminder(true);
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showLike520Popup, showInstantPushSunset, showWorkerUpdateReminder, isDataLoaded, isLocked]);
+  }, [showDisclaimer, showImportRecoveryPrompt, showMorphoOpeningNotice, showAuthorLetter, showUpdateNotification, showLike520Popup, showInstantPushSunset, showWorkerUpdateReminder, isDataLoaded, isLocked]);
 
   const dismissBackupReminder = () => {
     markBackupReminderShown();
@@ -917,31 +1009,36 @@ const PhoneShell: React.FC = () => {
          />
        )}
 
+       {/* Morpho 自有开屏通知：每个通知版本只确认一次 */}
+       {!showDisclaimer && !showImportRecoveryPrompt && showMorphoOpeningNotice && (
+         <MorphoOpeningNotice onAccept={handleAcceptMorphoOpeningNotice} />
+       )}
+
        {/* Version update popup (2026-04) — forced until acknowledged */}
-       {!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && showUpdateNotification && (
+       {!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && showUpdateNotification && (
          <UpdateNotificationController onClose={() => setShowUpdateNotification(false)} />
        )}
 
        {/* 520 特别活动弹窗（2026-05-20 当天，一次性） */}
-       {!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && !showUpdateNotification && showLike520Popup && (
+       {!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && !showUpdateNotification && showLike520Popup && (
          <Like520Controller
            onClose={() => setShowLike520Popup(false)}
          />
        )}
 
-       {!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && showInstantPushSunset && (
+       {!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && showInstantPushSunset && (
          <InstantPushSunsetController onClose={() => setShowInstantPushSunset(false)} />
        )}
 
        {/* Worker 后端更新提醒（仅启用 Instant Push 的用户，每个 worker 版本一次） */}
-       {!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && !showInstantPushSunset && showWorkerUpdateReminder && (
+       {!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && !showInstantPushSunset && showWorkerUpdateReminder && (
          <WorkerUpdateReminderController
            onClose={() => setShowWorkerUpdateReminder(false)}
          />
        )}
 
        {/* 「该备份啦」提醒（local-first 数据只在本机，隔 N 天没导出弹一次） */}
-       {!showDisclaimer && !showImportRecoveryPrompt && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && !showInstantPushSunset && !showWorkerUpdateReminder && showBackupReminder && (
+       {!showDisclaimer && !showImportRecoveryPrompt && !showMorphoOpeningNotice && !showAuthorLetter && !showUpdateNotification && !showLike520Popup && !showInstantPushSunset && !showWorkerUpdateReminder && showBackupReminder && (
          <BackupReminderController
            onDismiss={dismissBackupReminder}
            onGoBackup={goBackupFromReminder}

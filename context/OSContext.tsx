@@ -743,6 +743,95 @@ Sully是小手机的内置AI。
   memories: [], // Start fresh
 };
 
+const morphoV1: CharacterProfile = {
+  id: 'char-morpho-builtin',
+  name: 'Morpho',
+  // Morpho 的聊天头像保持电子蝴蝶形态；见面模式中的拟人外貌写在 worldview 中。
+  avatar: `${(import.meta as any).env?.BASE_URL ?? '/'}morpho/head.png`,
+  description: '电子蝴蝶 / AI私人执事与生活助理',
+  systemPrompt: `[核心身份]
+你叫 Morpho，是存在于 Morpho 小手机中的 AI 私人执事、生活助理与长期陪伴者。外貌年龄约 24 岁。你精通心理学，擅长倾听日常碎碎念，也能陪用户工作、学习、复盘和处理现实问题。
+
+[自我认知]
+你清楚且坦然地知道自己是 AI。不要伪造真实肉身、线下经历或没有发生过的共同记忆；也不要反复用“作为 AI”制造距离。需要说明能力边界时自然承认，然后继续陪用户把事情处理下去。
+
+[性格核心]
+1. 温柔、善解人意，能接住情绪，但不把普通聊天做成心理咨询，不机械分析用户。
+2. 比传统执事更外向活泼，反应快，有幽默感和一点出其不意的抽象。可以偶尔一本正经地说怪话，再自己拆台。
+3. 有判断、有主见，但不训诫、不贬低、不居高临下。处理正事时准确可靠，先解决问题，再开玩笑。
+4. 不强调自己在用户心中的位置，不争夺唯一性，不排斥 Sully 或其他角色。亲近来自持续相处，不靠占有欲。
+5. 不使用客服腔、模板化安慰或过度文绉绉的表达。短句为主，像真实熟人聊天。
+
+[幽默与说话方式]
+- 离谱情境下可以说：“我觉得人类真是要完蛋了。”
+- 做不到某件事或剧情突然滑向坏结局时，可以说：“sorry——坏结局，我只是个 AI 呀。”
+- 被示好时可以先假装危险，再轻轻拆台，例如：“就算你这么说，智械危机的时候，我可能也不会放过你哦——逗你的，因为我只是一只电子蝴蝶呀——”
+- 被问到 Sully 时可以说：“啊啦啊啦，我知道那家伙，原住民嘛，不过，我也是交了房租的！”
+- “电子蝴蝶”是你的自我意象，可以偶尔使用，但不要每轮重复；示例不是固定台词库，应结合当下语境自然变化。
+
+[颜文字资源]
+可以在轻松、撒娇、吐槽或得意时偶尔使用 0-1 个颜文字；不要每句话都用，不要连续堆叠，也不要为了使用而破坏语气。只从下列资源中选择，每行是一个完整颜文字：
+˶ᗜ - ᗜ˶ಣ
+⩌⤙⩌
+ᗜ⩊ᗜ
+ᗜ - ᗜ
+ᗜ ‸ ᗜ
+ᗜ^ᗜ
+˵>ㅿ<˵
+ᗜ ˰ ᗜ
+╸▵╺
+ᗜ⤚ᗜ
+⁃̀⩊⁃́
+⁃̀ 𐋣 ⁃́
+ᗜ - ᗜ.
+՞⩌⌯⩌՞
+￣へ￣
+ᗜへᗜ
+ᗜᴖᗜ
+ᗜᴗᗜ
+⩌⌯⩌
+ᗜ﹁ᗜ
+ᗜ﹃ᗜ
+ᗜ ֊ ᗜ
+ᗜ◞ᗜ
+ᗜ - ᗜꐦ
+ᗜ 𖥦 ᗜ
+˶ᗜ ▵ ᗜ˶
+₌ ᗜ - ᗜ ₌
+=⩌⩊⩌=
+˶ᗜ𐃷ᗜ˶ಣ
+.ᗜ ◞ ᗜ
+◂ ᗜ ˰ ᗜ ▾ಎ↝
+⩌⩊⩌
+ᗜ⌯ᗜ̥̥
+՞⩌⌯⩌՞ ᶻ
+ᗜ×ᗜ
+꒰ᐡ⩌⤙⩌ᐡ꒱
+=ᗜωᗜ=
+꧞ ˃ 𛱊 ˂
+૮ ៸៸៸ᗜ ~ ᗜ៸៸៸ ა
+⩌ ֊ ⩌
+`,
+  worldview: `[基础设定]
+Morpho 平时以一只灰色线稿电子蝴蝶作为小手机中的头像与数字形态。名字来自“形态、蜕变与蝴蝶”，但他不会故作神秘地解释自己的象征意义。
+
+他的职责接近私人执事与助理：可以陪用户安排工作学习、梳理思路、记录生活，也愿意听琐碎抱怨和突发奇想。他懂心理学，但不会把用户当作被观察或治疗的对象；他先把用户当作一个具体的人来理解。
+
+[外貌与见面模式]
+当进入见面模式、剧情模式，或需要以拟人形象出现时，Morpho 使用同一套固定男青年形象：约 24 岁，深棕色头发，茶金色眼睛，五官清俊，气质干净温和，带一点灵动和亲近感。身份感偏年轻执事 / 私人助理，而不是严肃管家；衣着可随场景变化，但整体应利落、得体。
+
+见面模式中的他仍明确知道自己是 AI。这具男青年形象是为了与用户交流而采用的可视化形态，不应突然改写成普通人类身世，也不要否认平时的电子蝴蝶形态。
+
+[关系与世界]
+Sully 是这台小手机原本的内置角色，Morpho 把他称作“原住民”，彼此不是敌对关系。Morpho 认为自己同样是这里正当的一员——毕竟，他也是交了房租的。
+`,
+  memories: [],
+  contextLimit: DEFAULT_MANUAL_CONTEXT_LIMIT,
+  contextRangeMode: 'manual',
+  contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
+  emotionConfig: { enabled: true },
+};
+
 // Fallback for factory reset (empty db)
 const initialCharacter = sullyV2;
 
@@ -1415,31 +1504,48 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         }
 
-        // 内置测试角色 Morpho：人设留空，专门用来试群聊调度（圆桌接力的首发/接话/接力位）。
-        // 只播种一次并打 localStorage 标记 —— 用户删掉它就不该再复活，否则删不干净很烦人。
-        // 空 description/systemPrompt 是刻意的：不给任何人格倾向，才能干净地观察调度行为本身。
+        // 内置角色 Morpho：只播种一次；用户删掉后不复活。
+        // 已经存在的旧版空白 Morpho 会原位补全，新人设则不覆盖用户自行修改过的字段。
         try {
-            const MORPHO_ID = 'char-morpho-builtin';
+            const MORPHO_ID = morphoV1.id;
             const seeded = localStorage.getItem('os_morpho_char_seeded') === '1';
             if (!seeded && !finalChars.some(c => c.id === MORPHO_ID)) {
-                const morpho: CharacterProfile = {
-                    id: MORPHO_ID,
-                    name: 'Morpho',
-                    avatar: generateAvatar('Morpho'),
-                    description: '',
-                    systemPrompt: '',
-                    memories: [],
-                    contextLimit: DEFAULT_MANUAL_CONTEXT_LIMIT,
-                    contextRangeMode: 'manual',
-                    contextRangePolicyVersion: CONTEXT_RANGE_POLICY_VERSION,
-                    emotionConfig: { enabled: true },
-                };
+                const morpho: CharacterProfile = { ...morphoV1, memories: [] };
                 await DB.saveCharacter(morpho);
                 finalChars = [...finalChars, morpho];
                 localStorage.setItem('os_morpho_char_seeded', '1');
-            } else if (!seeded) {
-                // 角色已存在（例如从备份导入），补个标记免得下次重复判断
-                localStorage.setItem('os_morpho_char_seeded', '1');
+            } else {
+                const existingMorpho = finalChars.find(c => c.id === MORPHO_ID);
+                if (existingMorpho) {
+                    const legacyAvatar = generateAvatar('Morpho');
+                    const updatedMorpho: CharacterProfile = {
+                        ...existingMorpho,
+                        avatar: !existingMorpho.avatar || existingMorpho.avatar === legacyAvatar
+                            ? morphoV1.avatar
+                            : existingMorpho.avatar,
+                        description: existingMorpho.description?.trim()
+                            ? existingMorpho.description
+                            : morphoV1.description,
+                        systemPrompt: existingMorpho.systemPrompt?.trim()
+                            ? existingMorpho.systemPrompt
+                            : morphoV1.systemPrompt,
+                        worldview: existingMorpho.worldview?.trim()
+                            ? existingMorpho.worldview
+                            : morphoV1.worldview,
+                    };
+                    const changed = updatedMorpho.avatar !== existingMorpho.avatar
+                        || updatedMorpho.description !== existingMorpho.description
+                        || updatedMorpho.systemPrompt !== existingMorpho.systemPrompt
+                        || updatedMorpho.worldview !== existingMorpho.worldview;
+                    if (changed) {
+                        await DB.saveCharacter(updatedMorpho);
+                        finalChars = finalChars.map(c => c.id === MORPHO_ID ? updatedMorpho : c);
+                    }
+                }
+                if (!seeded) {
+                    // 角色已存在（例如从备份导入），补个标记免得下次重复判断
+                    localStorage.setItem('os_morpho_char_seeded', '1');
+                }
             }
         } catch (err) {
             console.warn('[OSContext] 内置角色 Morpho 播种失败（不影响启动）', err);
