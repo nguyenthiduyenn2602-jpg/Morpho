@@ -1,6 +1,6 @@
 import type { APIConfig, CharacterProfile, UserProfile } from '../types';
 import { DB } from './db';
-import { extractContent, safeFetchJson } from './safeApi';
+import { extractContent, extractJson as extractSafeJson, safeFetchJson } from './safeApi';
 
 export type FarawayRouteClass = 'nearby' | 'distant';
 export type FarawayEventKind = 'departure' | 'mid' | 'return';
@@ -49,12 +49,32 @@ export const isBusinessEligible = (char: CharacterProfile): boolean => {
     return !clearlyStudent && hasJob && (age === undefined || age >= 22);
 };
 
-const extractJson = (text: string): any => {
-    const cleaned = text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start < 0 || end <= start) throw new Error('旅行规划没有返回完整内容');
-    return JSON.parse(cleaned.slice(start, end + 1));
+const extractQuotedField = (text: string, key: string) => {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`, 'i'));
+    if (!match) return '';
+    try { return JSON.parse(`"${match[1].replace(/"$/, '')}"`); } catch { return match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'); }
+};
+
+const extractStringArray = (text: string, key: string): string[] => {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*\\[([\\s\\S]*?)(?:\\]|$)`, 'i'));
+    if (!match) return [];
+    return [...match[1].matchAll(/"((?:\\.|[^"\\])*)"/g)].map(item => item[1].replace(/\\"/g, '"')).filter(Boolean);
+};
+
+/** 模型偶尔在 JSON 尾部被截断；能恢复前置规划字段时继续行程，其余使用本地兜底。 */
+export const parseFarawayPlan = (text: string): any => {
+    const parsed = extractSafeJson(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    const salvaged = {
+        routeClass: extractQuotedField(text, 'routeClass'), destination: extractQuotedField(text, 'destination'),
+        purposeType: extractQuotedField(text, 'purposeType'), purpose: extractQuotedField(text, 'purpose'),
+        summary: extractQuotedField(text, 'summary'), packItems: extractStringArray(text, 'packItems'),
+        outfitNote: extractQuotedField(text, 'outfitNote'), itinerary: extractStringArray(text, 'itinerary'),
+        diary: extractQuotedField(text, 'diary'), photos: [],
+    };
+    if (!salvaged.destination && !salvaged.purpose && !salvaged.summary) throw new Error('旅行规划没有返回可用内容，请重试一次');
+    console.warn('[Faraway] 旅行规划 JSON 不完整，已使用可恢复字段继续生成', text.slice(0, 240));
+    return salvaged;
 };
 
 const recentChat = async (charId: string) => {
@@ -69,9 +89,9 @@ export const createFarawayJourney = async (char: CharacterProfile, user: UserPro
     const prompt = `你是生活旅行策划器。请根据人物设定，为角色安排一次自然、克制、有生活感的国内外出。\n\n人物：${profileText(char)}\n用户：${user.name || '用户'}；${user.bio || ''}\n近期聊天：\n${chat || '暂无'}\n常带物品：${shelf.carryItems.join('、') || '无'}\n衣橱参考：${shelf.wardrobeUrls.length ? shelf.wardrobeUrls.join('、') : '无'}\n\n硬规则：\n1. 原则上在中国国内。近郊或邻近城市用 nearby；从北京到西安、云南这类跨省远行用 distant。\n2. nearby 只安排近郊、邻近城市、短程探访；distant 才安排明显跨省远行。\n3. ${businessEligible ? '该角色符合出差条件，purposeType 可以是 business 或 travel。' : '该角色不符合出差条件，purposeType 必须是 travel，禁止写工作、开会、客户、项目、出差。'}\n4. 理由要符合人设，可以旅行、探亲访友、临时散心、办私事；不要硬煽情。\n5. 不要写旅行天数和返程倒计时。\n6. 日记和照片文字要像本人随手留下的，简短自然。\n\n只返回 JSON：{"routeClass":"nearby或distant","destination":"地点","purposeType":"business或travel","purpose":"目的","summary":"出发小记，40字内","packItems":["物品"],"outfitNote":"穿着，25字内","itinerary":["安排1","安排2"],"diary":"80字内见闻","photos":[{"front":"照片正面叙述，35字内","back":"照片背面的留言，45字内"}]}`;
     const data = await safeFetchJson(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
-        body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: prompt }], temperature: Math.min(0.9, Math.max(0.55, api.temperature ?? 0.75)), max_tokens: 900, stream: false }),
+        body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: `${prompt}\n\n补充：整个 JSON 请控制在 650 个中文字符以内，必须优先保证闭合完整。` }], temperature: Math.min(0.9, Math.max(0.55, api.temperature ?? 0.75)), max_tokens: 1800, stream: false }),
     }, 0);
-    const parsed = extractJson(extractContent(data));
+    const parsed = parseFarawayPlan(extractContent(data));
     const routeClass: FarawayRouteClass = parsed.routeClass === 'distant' ? 'distant' : 'nearby';
     const days = routeClass === 'distant' ? 3 + Math.floor(Math.random() * 3) : 1 + Math.floor(Math.random() * 2);
     const purposeType: 'business' | 'travel' = businessEligible && parsed.purposeType === 'business' ? 'business' : 'travel';
