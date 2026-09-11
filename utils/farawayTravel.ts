@@ -82,11 +82,25 @@ const recentChat = async (charId: string) => {
     return messages.slice(-18).map(message => `${message.role === 'user' ? '用户' : '角色'}：${String(message.content || '').slice(0, 260)}`).join('\n');
 };
 
+const userWasMadeACompanion = (value: unknown, userName: string) => {
+    const text = Array.isArray(value) ? value.join('\n') : String(value || '');
+    const escapedName = userName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns = [
+        /(?:和|跟|带着|陪着|约上)用户(?:一起|一同)?(?:去|出发|旅行|游玩|同行)/,
+        /(?:你们|两个人|二人)(?:一起|一同)?(?:去|出发|旅行|游玩|同行)/,
+        /(?:带你|陪你|和你一起|跟你一起|与你一起|与你同行)(?:去|出发|旅行|游玩|看看)?/,
+    ];
+    if (userName && userName !== '用户') {
+        patterns.push(new RegExp(`(?:和|跟|带着|陪着|约上)${escapedName}(?:一起|一同)?(?:去|出发|旅行|游玩|同行)`));
+    }
+    return patterns.some(pattern => pattern.test(text));
+};
+
 export const createFarawayJourney = async (char: CharacterProfile, user: UserProfile, api: APIConfig, shelf: FarawayShelf): Promise<FarawayJourney> => {
     if (!api.baseUrl || !api.apiKey || !api.model) throw new Error('请先配置全局 API');
     const businessEligible = isBusinessEligible(char);
     const chat = await recentChat(char.id);
-    const prompt = `你是生活旅行策划器。请根据人物设定，为角色安排一次自然、克制、有生活感的国内外出。\n\n人物：${profileText(char)}\n用户：${user.name || '用户'}；${user.bio || ''}\n近期聊天：\n${chat || '暂无'}\n常带物品：${shelf.carryItems.join('、') || '无'}\n衣橱参考：${shelf.wardrobeUrls.length ? shelf.wardrobeUrls.join('、') : '无'}\n\n硬规则：\n1. 原则上在中国国内。近郊或邻近城市用 nearby；从北京到西安、云南这类跨省远行用 distant。\n2. nearby 只安排近郊、邻近城市、短程探访；distant 才安排明显跨省远行。\n3. ${businessEligible ? '该角色符合出差条件，purposeType 可以是 business 或 travel。' : '该角色不符合出差条件，purposeType 必须是 travel，禁止写工作、开会、客户、项目、出差。'}\n4. 理由要符合人设，可以旅行、探亲访友、临时散心、办私事；不要硬煽情。\n5. 不要写旅行天数和返程倒计时。\n6. 日记和照片文字要像本人随手留下的，简短自然。\n\n只返回 JSON：{"routeClass":"nearby或distant","destination":"地点","purposeType":"business或travel","purpose":"目的","summary":"出发小记，40字内","packItems":["物品"],"outfitNote":"穿着，25字内","itinerary":["安排1","安排2"],"diary":"80字内见闻","photos":[{"front":"照片正面叙述，35字内","back":"照片背面的留言，45字内"}]}`;
+    const prompt = `你是生活旅行策划器。请根据人物设定，为角色安排一次自然、克制、有生活感的国内外出。\n\n人物：${profileText(char)}\n用户：${user.name || '用户'}；${user.bio || ''}\n近期聊天：\n${chat || '暂无'}\n常带物品：${shelf.carryItems.join('、') || '无'}\n衣橱参考：${shelf.wardrobeUrls.length ? shelf.wardrobeUrls.join('、') : '无'}\n\n硬规则：\n1. 这是角色独自离开、用户留在原地的外出。绝对不能安排用户同行、陪同、偶遇或一起出发；用户资料和近期聊天只用于判断角色会怎样向用户报备、分享旅途。所有行程、日记和照片中实际出行的人只有该角色。\n2. 原则上在中国国内。近郊或邻近城市用 nearby；从北京到西安、云南这类跨省远行用 distant。\n3. nearby 只安排近郊、邻近城市、短程探访；distant 才安排明显跨省远行。\n4. ${businessEligible ? '该角色符合出差条件，purposeType 可以是 business 或 travel。' : '该角色不符合出差条件，purposeType 必须是 travel，禁止写工作、开会、客户、项目、出差。'}\n5. 理由要符合人设，可以旅行、探亲访友、临时散心、办私事；不要硬煽情。\n6. 不要写旅行天数和返程倒计时。\n7. 日记和照片文字要像本人随手留下的，简短自然。\n\n只返回 JSON：{"routeClass":"nearby或distant","destination":"地点","purposeType":"business或travel","purpose":"目的","summary":"出发小记，40字内","packItems":["物品"],"outfitNote":"穿着，25字内","itinerary":["安排1","安排2"],"diary":"80字内见闻","photos":[{"front":"照片正面叙述，35字内","back":"照片背面的留言，45字内"}]}`;
     const data = await safeFetchJson(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
         body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: `${prompt}\n\n补充：整个 JSON 请控制在 650 个中文字符以内，必须优先保证闭合完整。` }], temperature: Math.min(0.9, Math.max(0.55, api.temperature ?? 0.75)), max_tokens: 1800, stream: false }),
@@ -102,16 +116,24 @@ export const createFarawayJourney = async (char: CharacterProfile, user: UserPro
     const packItems = Array.isArray(parsed.packItems) ? parsed.packItems.map(String).filter(Boolean).slice(0, 8) : shelf.carryItems;
     const photos: FarawayPhoto[] = (Array.isArray(parsed.photos) ? parsed.photos : []).slice(0, 4).map((item: any, index: number) => ({ id: `${id}-photo-${index}`, front: String(item?.front || '途中随手拍下的一幕'), back: String(item?.back || '等回来再慢慢说。'), createdAt: now }));
     const midAt = now + Math.round((endsAt - now) * (0.38 + Math.random() * 0.24));
-    const purpose = purposeType === 'business' ? String(parsed.purpose || '临时出差') : String(parsed.purpose || '出去走走');
-    const summary = String(parsed.summary || `${char.name}收拾好东西，准备去${destination}。`);
+    const userName = user.name || '用户';
+    const companionLeak = [parsed.purpose, parsed.summary, parsed.itinerary, parsed.diary, ...(Array.isArray(parsed.photos) ? parsed.photos.flatMap((item: any) => [item?.front, item?.back]) : [])]
+        .some(value => userWasMadeACompanion(value, userName));
+    const purpose = companionLeak
+        ? (purposeType === 'business' ? '独自临时出差' : '独自出去走走')
+        : (purposeType === 'business' ? String(parsed.purpose || '临时出差') : String(parsed.purpose || '出去走走'));
+    const summary = companionLeak ? `${char.name}收拾好东西，独自去了${destination}。` : String(parsed.summary || `${char.name}收拾好东西，准备去${destination}。`);
+    const safeItinerary = companionLeak ? [`抵达${destination}`, '按自己的节奏四处走走'] : (Array.isArray(parsed.itinerary) ? parsed.itinerary.map(String).filter(Boolean).slice(0, 5) : []);
+    const safeDiary = companionLeak ? `一个人在${destination}走了走，记下几件想回来讲给你听的小事。` : String(parsed.diary || `在${destination}走了走，看到了一些平时不会留意的东西。`);
+    const safePhotos = companionLeak ? [{ id: `${id}-photo-0`, front: `${destination}途中随手拍下的一幕`, back: '等我回来，再慢慢讲给你听。', createdAt: now }] : photos;
     return {
         id, charId: char.id, charName: char.name, startedAt: now, endsAt, status: 'away', routeClass, days, destination, purposeType, purpose,
         summary, packItems, outfitNote: String(parsed.outfitNote || '轻便的日常穿着'),
-        itinerary: Array.isArray(parsed.itinerary) ? parsed.itinerary.map(String).filter(Boolean).slice(0, 5) : [],
-        diary: String(parsed.diary || `在${destination}走了走，看到了一些平时不会留意的东西。`), photos,
+        itinerary: safeItinerary,
+        diary: safeDiary, photos: safePhotos,
         events: [
             { id: `${id}-departure`, kind: 'departure', dueAt: now, title: '出发前的消息', body: summary, location: destination },
-            { id: `${id}-mid`, kind: 'mid', dueAt: midAt, title: `${destination}来信`, body: String(parsed.diary || summary), location: destination },
+            { id: `${id}-mid`, kind: 'mid', dueAt: midAt, title: `${destination}来信`, body: safeDiary || summary, location: destination },
             { id: `${id}-return`, kind: 'return', dueAt: endsAt, title: '已经回来了', body: `${char.name}结束了这次外出，带回了一些见闻。`, location: destination },
         ],
     };

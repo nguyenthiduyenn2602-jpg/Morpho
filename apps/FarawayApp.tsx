@@ -49,7 +49,7 @@ const FarawayApp: React.FC = () => {
                 char, config: char.activeMsg2Config,
                 task: {
                     mode: 'prompted', firstSendTime: new Date(mid.dueAt).toISOString(), recurrenceType: 'none', expirePolicy: 'force',
-                    promptHint: `你正在${journey.destination}${journey.purposeType === 'business' ? '出差' : '外出'}。结合你的人设和你与用户的关系，自然发一两句旅途消息。地点是${journey.destination}，本次目的：${journey.purpose}。不要写成景点导游词，不要解释系统设定。`,
+                    promptHint: `你独自在${journey.destination}${journey.purposeType === 'business' ? '出差' : '外出'}，用户没有同行、仍在原地。结合你的人设和你与用户的关系，像从远方发消息一样自然说一两句。地点是${journey.destination}，本次目的：${journey.purpose}。不要声称用户在你身边，不要写成景点导游词，不要解释系统设定。`,
                 }, userProfile, groups, realtimeConfig, apiConfig,
             });
             const record: any = {
