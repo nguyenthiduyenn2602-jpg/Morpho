@@ -12,6 +12,7 @@ import { DB } from './db';
 import { ContextBuilder } from './context';
 import { extractContent, safeResponseJson } from './safeApi';
 import { resolveRefToDataUrl } from './blobRef';
+import { loadFarawayState, type FarawayJourney } from './farawayTravel';
 
 const SETTINGS_ASSET_ID = 'morpho_moments_settings_v1';
 const MEMORY_ASSET_ID = 'morpho_moments_memory_v1';
@@ -136,12 +137,28 @@ const cleanMessage = (content: string): string => content
     .trim()
     .slice(0, 260);
 
+export const formatMomentsRecentMessage = (message: { role: string; type: string; content: string; metadata?: any }): string => {
+    if (message.role === 'system') return '';
+    if (message.type === 'text') {
+        return `${message.role === 'user' ? '用户' : '角色'}：${cleanMessage(message.content)}`;
+    }
+    if (message.type === 'travel_card') {
+        const card = message.metadata?.travelCard || {};
+        const location = String(card.destination || card.location || '').trim();
+        const title = String(card.title || '').trim();
+        const body = cleanMessage(String(card.body || message.content || ''));
+        return `【走了没·旅行小卡】${location ? `地点：${location}；` : ''}${title ? `${title}；` : ''}${body}`;
+    }
+    return '';
+};
+
 async function recentChatFor(charId: string, limit = 10): Promise<string> {
-    const rows = await DB.getRecentMessagesByCharId(charId, limit, true);
+    // 卡片类消息可能夹在聊天中，先多取一些，再保留最近 limit 条有效文字/旅行小卡。
+    const rows = await DB.getRecentMessagesByCharId(charId, Math.max(limit * 3, 18), true);
     return rows
-        .filter(m => m.type === 'text' && m.role !== 'system')
-        .map(m => `${m.role === 'user' ? '用户' : '角色'}：${cleanMessage(m.content)}`)
+        .map(formatMomentsRecentMessage)
         .filter(line => line.length > 4)
+        .slice(-limit)
         .join('\n');
 }
 
@@ -280,6 +297,24 @@ const participantBriefs = async (chars: CharacterProfile[], user: UserProfile): 
 
 const identityList = (chars: CharacterProfile[]): string => chars.map(c => `${c.id}=${c.name}`).join('；');
 
+const activeFarawayJourney = (chars: CharacterProfile[], posts: SocialPost[]): { journey: FarawayJourney; needsTravelMoment: boolean } | undefined => {
+    if (typeof localStorage === 'undefined') return undefined;
+    const journey = loadFarawayState().journey;
+    if (!journey || journey.status !== 'away' || journey.endsAt <= Date.now()) return undefined;
+    if (!chars.some(char => char.id === journey.charId)) return undefined;
+    const marker = `faraway:${journey.id}`;
+    return { journey, needsTravelMoment: !posts.some(post => post.tags?.includes(marker)) };
+};
+
+const farawayPromptBlock = (journey: FarawayJourney): string => `
+【当前最高优先级生活状态：正在外出】
+${journey.charName}此刻独自在${journey.destination}，此行目的：${journey.purpose}。
+出发小记：${journey.summary}
+途中见闻：${journey.diary}
+随身物品：${journey.packItems.join('、') || '未记录'}
+本条动态必须自然取材于这趟正在发生的行程，地点须与${journey.destination}一致；不要退回很久以前的聊天话题，也不要写成行程总结或旅游攻略。用户没有同行。
+`;
+
 export interface GenerateRoleMomentOptions {
     characters: CharacterProfile[];
     userProfile: UserProfile;
@@ -295,8 +330,15 @@ export async function generateRoleMoment(options: GenerateRoleMomentOptions): Pr
     const invited = options.characters.filter(c => options.settings.invitedCharIds.includes(c.id));
     if (!invited.length) throw new Error('请先在朋友圈设置里邀请角色');
     const posts = await loadMomentPosts();
-    const author = pickAuthor(invited, posts, options.forceAuthorId);
-    const createdAt = options.createdAt || Date.now();
+    const faraway = activeFarawayJourney(invited, posts);
+    const preferredAuthorId = options.forceAuthorId || (faraway?.needsTravelMoment ? faraway.journey.charId : undefined);
+    const author = pickAuthor(invited, posts, preferredAuthorId);
+    const authorJourney = faraway?.journey.charId === author.id ? faraway.journey : undefined;
+    const requestedCreatedAt = options.createdAt || Date.now();
+    // 自动补发可能带着早于出发的历史时间；旅行动态不能倒挂到出发之前。
+    const createdAt = authorJourney && requestedCreatedAt < authorJourney.startedAt
+        ? Math.min(Date.now(), authorJourney.startedAt + 1000)
+        : requestedCreatedAt;
     const memory = await compactMomentsHistory(posts);
     const recentMoments = posts.slice(0, 24).map(p => `${p.authorName}：${p.content}${p.location?.label ? ` @${p.location.label}` : ''}`).join('\n');
     const digest = memory.roles[author.id];
@@ -308,6 +350,8 @@ export async function generateRoleMoment(options: GenerateRoleMomentOptions): Pr
 其他受邀角色可随机点赞、评论；发布者可以回复 0—2 条。评论最多二层，只允许出现一次“别人回复别人”的插话，禁止继续套娃。
 参与者：${identityList(invited)}
 当前时间：${new Date(createdAt).toLocaleString('zh-CN')}
+
+${authorJourney ? farawayPromptBlock(authorJourney) : ''}
 
 ${author.name} 的较早朋友圈压缩记忆：
 ${digest?.summary || '（暂无）'}
@@ -340,7 +384,7 @@ ${recentMoments || '（暂无）'}
         authorAvatar: author.avatar,
         authorType: 'character',
         authorCharId: author.id,
-        title: '', content, images: [], tags: [], bgStyle: '',
+        title: '', content, images: [], tags: authorJourney ? ['faraway', `faraway:${authorJourney.id}`] : [], bgStyle: '',
         likes: likedBy.length, likedBy, isCollected: false, isLiked: false,
         comments,
         timestamp: createdAt,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backfillCount, buildMomentsUserContent, DEFAULT_MOMENTS_SETTINGS, momentSimilarity } from './moments';
+import { backfillCount, buildMomentsUserContent, DEFAULT_MOMENTS_SETTINGS, formatMomentsRecentMessage, momentSimilarity } from './moments';
 
 describe('朋友圈去重与补发策略', () => {
     it('能识别近似换词重发，也不会误伤不同生活片段', () => {
@@ -22,5 +22,15 @@ describe('朋友圈去重与补发策略', () => {
             { type: 'text', text: '看看今天的云' },
             { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
         ]);
+    });
+
+    it('朋友圈近期上下文会保留走了没的旅行小卡', () => {
+        expect(formatMomentsRecentMessage({
+            role: 'assistant',
+            type: 'travel_card',
+            content: '西安来信\n城墙下的风很大。',
+            metadata: { travelCard: { title: '西安来信', body: '城墙下的风很大。', destination: '西安' } },
+        })).toContain('【走了没·旅行小卡】地点：西安；西安来信；城墙下的风很大。');
+        expect(formatMomentsRecentMessage({ role: 'assistant', type: 'social_card', content: '旧朋友圈' })).toBe('');
     });
 });
