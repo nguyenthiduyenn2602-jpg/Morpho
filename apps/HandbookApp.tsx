@@ -5,6 +5,7 @@ import { CharacterProfile } from '../types';
 import { useBlobRefUrl } from '../utils/blobRef';
 import {
     type CharacterHandbookEntry,
+    type CharacterHandbookParagraph,
     type CharacterHandbookRun,
     type HandbookChibiPreset,
     type HandbookChibiSettings,
@@ -137,6 +138,70 @@ const DiaryCopy: React.FC<{ entry: CharacterHandbookEntry }> = ({ entry }) => (
     </div>
 );
 
+type DiarySheet =
+    | { kind: 'decorated'; entry: CharacterHandbookEntry; paragraphs: CharacterHandbookParagraph[] }
+    | { kind: 'continuation'; entry: CharacterHandbookEntry; paragraphs: CharacterHandbookParagraph[]; continuationIndex: number };
+
+const splitDiaryParagraphs = (
+    paragraphs: CharacterHandbookParagraph[],
+    firstPageLimit = 170,
+    continuationLimit = 380,
+): CharacterHandbookParagraph[][] => {
+    const pages: CharacterHandbookParagraph[][] = [];
+    let paragraphIndex = 0;
+    let runIndex = 0;
+    let characterOffset = 0;
+
+    const takePage = (limit: number): CharacterHandbookParagraph[] => {
+        const page: CharacterHandbookParagraph[] = [];
+        let remaining = limit;
+        while (paragraphIndex < paragraphs.length && remaining > 0) {
+            const sourceParagraph = paragraphs[paragraphIndex];
+            const pageRuns: CharacterHandbookRun[] = [];
+            while (runIndex < (sourceParagraph.runs || []).length && remaining > 0) {
+                const sourceRun = sourceParagraph.runs[runIndex];
+                const characters = Array.from(sourceRun.text || '');
+                if (characterOffset >= characters.length) {
+                    runIndex += 1;
+                    characterOffset = 0;
+                    continue;
+                }
+                const taken = characters.slice(characterOffset, characterOffset + remaining);
+                if (taken.length) pageRuns.push({ ...sourceRun, text: taken.join('') });
+                characterOffset += taken.length;
+                remaining -= taken.length;
+                if (characterOffset >= characters.length) {
+                    runIndex += 1;
+                    characterOffset = 0;
+                }
+            }
+            if (pageRuns.length) page.push({ runs: pageRuns });
+            if (runIndex >= (sourceParagraph.runs || []).length) {
+                paragraphIndex += 1;
+                runIndex = 0;
+                characterOffset = 0;
+            }
+        }
+        return page;
+    };
+
+    const first = takePage(firstPageLimit);
+    if (first.length) pages.push(first);
+    while (paragraphIndex < paragraphs.length) {
+        const continuation = takePage(continuationLimit);
+        if (!continuation.length) break;
+        pages.push(continuation);
+    }
+    return pages.length ? pages : [[]];
+};
+
+const buildDiarySheets = (entries: CharacterHandbookEntry[]): DiarySheet[] => entries.flatMap(entry => {
+    const pages = splitDiaryParagraphs(entry.paragraphs || []);
+    return pages.map((paragraphs, index): DiarySheet => index === 0
+        ? { kind: 'decorated', entry, paragraphs }
+        : { kind: 'continuation', entry, paragraphs, continuationIndex: index });
+});
+
 const BookCover: React.FC<{
     character: CharacterProfile;
     config: CoverConfig;
@@ -234,7 +299,7 @@ const HandbookDiaryPage: React.FC<{
     const stillUrl = useBlobRefUrl(entry.stillImage);
     const dateParts = entry.date.split('-');
     return (
-        <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-7 pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
+        <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-[76px] pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
             <div className="absolute left-7 top-0 h-7 w-16 -rotate-2 bg-[#f6d88c]/70" />
             <header className="relative z-10 grid grid-cols-[.92fr_1.08fr] items-start gap-3">
                 <div className={`pt-1 transition-all duration-700 ${revealStep >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
@@ -247,14 +312,14 @@ const HandbookDiaryPage: React.FC<{
                     {stillUrl ? <img src={stillUrl} alt="手账静物横图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
                 </div>
             </header>
-            <div className={`relative z-10 mt-4 transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
+            <div className={`relative z-10 mt-4 max-h-[270px] overflow-hidden transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
                 <div className="float-right -mr-3 ml-3 h-[360px] w-[42%]" style={{ shapeOutside: 'polygon(0 62%, 100% 62%, 100% 100%, 0 100%)' }}>
                     <div className={`relative top-[62%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
                 </div>
                 <DiaryCopy entry={entry} />
             </div>
-            <div className="absolute bottom-12 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
-            <div className="absolute bottom-3 left-4 z-30 flex gap-1">
+            <div className="absolute bottom-11 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
+            <div className="absolute inset-x-0 bottom-0 z-30 flex h-9 items-center gap-1 border-t border-[#eadfce] bg-[#fffaf0]/95 px-4">
                 {([['text', '文字'], ['still', '图片1'], ['chibi', '图片2']] as const).map(([kind, label]) => (
                     <button key={kind} type="button" disabled={Boolean(regeneratingPart) || generating} onClick={() => onRegenerate(kind)} className="flex items-center gap-0.5 rounded-full border border-[#ded3c4] bg-[#fffaf0]/90 px-2 py-1 text-[8px] text-[#82776c] shadow-sm backdrop-blur disabled:opacity-45" aria-label={`重新生成${label}`}>
                         <ArrowClockwise size={9} className={regeneratingPart === kind ? 'animate-spin' : ''} />{regeneratingPart === kind ? '生成中' : label}
@@ -266,6 +331,34 @@ const HandbookDiaryPage: React.FC<{
                     <div className="flex items-center gap-2 rounded-full bg-[#575f50] px-5 py-2.5 text-[10px] tracking-[0.08em] text-white shadow-[0_8px_22px_rgba(70,78,64,.24)]"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />{entry.imageStatus === 'generating' ? '正在绘制手账贴图' : '正在生成今日手账'}</div>
                 </div>
             )}
+        </article>
+    );
+};
+
+const HandbookContinuationPage: React.FC<{
+    character: CharacterProfile;
+    entry: CharacterHandbookEntry;
+    paragraphs: CharacterHandbookParagraph[];
+    continuationIndex: number;
+}> = ({ character, entry, paragraphs, continuationIndex }) => {
+    const dateParts = entry.date.split('-');
+    const continuationEntry = { ...entry, paragraphs };
+    return (
+        <article className="handbook-paper relative flex h-full flex-col overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-8 pb-12 pt-9 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
+            <div className="absolute right-8 top-0 h-7 w-14 rotate-2 bg-[#d9e1c8]/70" />
+            <header className="shrink-0 border-b border-dashed border-[#d9cdbd] pb-4">
+                <div className="flex items-end justify-between gap-3">
+                    <div>
+                        <div className="text-[20px] font-semibold tracking-tight">{Number(dateParts[1])}月{Number(dateParts[2])}日</div>
+                        <div className="mt-1 text-[10px] tracking-[0.16em] text-[#9a8f83]">日常随笔 · 续页 {continuationIndex}</div>
+                    </div>
+                    <div className="rounded-full bg-[#efd7df] px-3 py-1 text-[9px] text-[#7c5463]">心情 · {entry.mood}</div>
+                </div>
+            </header>
+            <div className="min-h-0 flex-1 pt-5">
+                <DiaryCopy entry={continuationEntry} />
+            </div>
+            <div className="absolute bottom-6 right-8 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
         </article>
     );
 };
@@ -408,7 +501,8 @@ const HandbookApp: React.FC = () => {
     const openNotebook = notebooks.find(item => item.character.id === openCharacterId) ?? null;
     const today = localDiaryDate();
     const hasGeneratingSlot = generationState === 'generating' && !entries.some(entry => entry.date === today);
-    const pageCount = entries.length + 2 + (hasGeneratingSlot ? 1 : 0);
+    const diarySheets = useMemo(() => buildDiarySheets(entries), [entries]);
+    const pageCount = diarySheets.length + 2 + (hasGeneratingSlot ? 1 : 0);
 
     useEffect(() => {
         try { localStorage.setItem(COVER_STORAGE_KEY, JSON.stringify(coverConfigs)); } catch { /* ignore */ }
@@ -477,7 +571,8 @@ const HandbookApp: React.FC = () => {
         if (!openNotebook || generationState === 'generating') return;
         const existingIndex = entries.findIndex(entry => entry.date === today);
         if (!regenerate && existingIndex >= 0) {
-            goToPage(existingIndex + 1);
+            const existingSheetIndex = diarySheets.findIndex(sheet => sheet.entry.id === entries[existingIndex].id);
+            goToPage(Math.max(0, existingSheetIndex) + 1);
             return;
         }
 
@@ -486,7 +581,7 @@ const HandbookApp: React.FC = () => {
         setGenerationState('generating');
         setRevealStep(0);
         setDirection('next');
-        setPageIndex(remaining.length + 1);
+        setPageIndex(buildDiarySheets(remaining).length + 1);
         try {
             const entry = await generateCharacterHandbookText({
                 char: openNotebook.character,
@@ -516,7 +611,7 @@ const HandbookApp: React.FC = () => {
             const details = error instanceof Error ? error.message : String(error);
             showError('手账生成失败', details);
             setEntries(remaining);
-            setPageIndex(remaining.length + 1);
+            setPageIndex(buildDiarySheets(remaining).length + 1);
         } finally {
             setGenerationState('idle');
         }
@@ -550,8 +645,8 @@ const HandbookApp: React.FC = () => {
 
     if (openNotebook) {
         const activeCover = draftCover ?? openNotebook.config;
-        const visibleEntry = pageIndex >= 1 && pageIndex <= entries.length ? entries[pageIndex - 1] : null;
-        const blankGeneratingPage = hasGeneratingSlot && pageIndex === entries.length + 1;
+        const visibleSheet = pageIndex >= 1 && pageIndex <= diarySheets.length ? diarySheets[pageIndex - 1] : null;
+        const blankGeneratingPage = hasGeneratingSlot && pageIndex === diarySheets.length + 1;
         return (
             <div className="flex h-full w-full flex-col overflow-hidden bg-[#f2efe9] text-[#45413b]">
                 <style>{`
@@ -586,7 +681,8 @@ const HandbookApp: React.FC = () => {
                         }}
                     >
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}
-                        {visibleEntry && <HandbookDiaryPage character={openNotebook.character} entry={visibleEntry} revealStep={visibleEntry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleEntry.date === today && generationState === 'generating'} regeneratingPart={regeneratingPart} onRegenerate={kind => void regenerateEntryPart(visibleEntry, kind)} />}
+                        {visibleSheet?.kind === 'decorated' && <HandbookDiaryPage character={openNotebook.character} entry={{ ...visibleSheet.entry, paragraphs: visibleSheet.paragraphs }} revealStep={visibleSheet.entry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleSheet.entry.date === today && generationState === 'generating'} regeneratingPart={regeneratingPart} onRegenerate={kind => void regenerateEntryPart(visibleSheet.entry, kind)} />}
+                        {visibleSheet?.kind === 'continuation' && <HandbookContinuationPage character={openNotebook.character} entry={visibleSheet.entry} paragraphs={visibleSheet.paragraphs} continuationIndex={visibleSheet.continuationIndex} />}
                         {blankGeneratingPage && <EmptyGeneratingPage />}
                         {!loadingEntries && pageIndex === pageCount - 1 && <EndPage onGenerate={showTodayPage} />}
                         {loadingEntries && pageIndex > 0 && <div className="handbook-paper grid h-full place-items-center rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] text-[11px] text-[#8b8176]">正在翻开手账……</div>}

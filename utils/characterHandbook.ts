@@ -183,7 +183,8 @@ export function normalizeHandbookMood(value: unknown): string {
     return HANDBOOK_MOODS.find(option => mood === option || mood.includes(option)) || '平静';
 }
 
-export function limitHandbookParagraphs(paragraphs: CharacterHandbookParagraph[], maxCharacters = 210): CharacterHandbookParagraph[] {
+// 保留模型偶尔写长的正文，显示层会把溢出内容排到纯文字续页；这里只拦截异常失控的长输出。
+export function limitHandbookParagraphs(paragraphs: CharacterHandbookParagraph[], maxCharacters = 640): CharacterHandbookParagraph[] {
     let remaining = maxCharacters;
     const result: CharacterHandbookParagraph[] = [];
     for (const paragraph of (paragraphs || []).slice(0, 4)) {
@@ -485,7 +486,7 @@ ${cleanContent(char.systemPrompt, 3500)}
 今日素材：
 ${facts.lines.length ? facts.lines.join('\n') : '（今天没有可用聊天、群聊或朋友圈素材。只可简短写“今天没发生太多事情”一类感受，不能编造。）'}
 
-输出一篇 160～210 个中文字符、3～4 个自然段的日常随笔；绝对不能超过 210 个中文字符，素材不足时允许更短。正文必须自然连贯，不要逐条复述素材。paragraphs 直接放每个自然段的完整纯文字，不要再嵌套 runs。
+输出一篇 130～180 个中文字符、2～4 个自然段的日常随笔，素材不足时允许更短。只挑一两个真正值得留下的瞬间，不要从早到晚逐条复述，不要为了凑字数写成流水账。正文必须自然连贯；paragraphs 直接放每个自然段的完整纯文字，不要再嵌套 runs。若确有必要略微超出建议字数，必须保留完整句意，客户端会自动排成纯文字续页。
 marks 只标记正文中已经原样出现的短语及样式：highlight（荧光高亮）、wave（浪线）、strike（删除线）、censored（涂黑）、emphasis、handwritten、messy。highlight/wave/strike/censored 每种使用 1～2 次；每个 censored 的 text 只能包含 2～5 个汉字。其他样式酌情少量使用。不要输出 HTML 或 Markdown。
 这一次只写日记文字，不要生成任何图片描述或生图提示词。
 心情只能从以下词表选择一个，禁止自行造句或输出词表之外的内容：${HANDBOOK_MOODS.join('、')}。
