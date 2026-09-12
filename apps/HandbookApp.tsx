@@ -144,8 +144,8 @@ type DiarySheet =
 
 const splitDiaryParagraphs = (
     paragraphs: CharacterHandbookParagraph[],
-    firstPageLimit = 170,
-    continuationLimit = 380,
+    firstPageLimit = 280,
+    continuationLimit = 420,
 ): CharacterHandbookParagraph[][] => {
     const pages: CharacterHandbookParagraph[][] = [];
     let paragraphIndex = 0;
@@ -293,13 +293,11 @@ const HandbookDiaryPage: React.FC<{
     entry: CharacterHandbookEntry;
     revealStep?: number;
     generating?: boolean;
-    regeneratingPart?: 'text' | 'still' | 'chibi' | null;
-    onRegenerate: (kind: 'text' | 'still' | 'chibi') => void;
-}> = ({ character, entry, revealStep = 4, generating = false, regeneratingPart = null, onRegenerate }) => {
+}> = ({ character, entry, revealStep = 4, generating = false }) => {
     const stillUrl = useBlobRefUrl(entry.stillImage);
     const dateParts = entry.date.split('-');
     return (
-        <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-[76px] pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
+        <article className="handbook-paper relative h-full overflow-hidden rounded-[22px] border border-[#e6dccd] bg-[#fffaf0] px-7 pb-11 pt-8 text-[#4b433b] shadow-[0_18px_45px_rgba(80,65,50,0.12)]">
             <div className="absolute left-7 top-0 h-7 w-16 -rotate-2 bg-[#f6d88c]/70" />
             <header className="relative z-10 grid grid-cols-[.92fr_1.08fr] items-start gap-3">
                 <div className={`pt-1 transition-all duration-700 ${revealStep >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
@@ -312,20 +310,13 @@ const HandbookDiaryPage: React.FC<{
                     {stillUrl ? <img src={stillUrl} alt="手账静物横图" className="h-full w-full object-cover" /> : <div className="absolute inset-0 grid place-items-center text-[9px] tracking-[0.12em] text-[#746d65]"><ImageSquare size={20} className="mb-1" />等待静物图</div>}
                 </div>
             </header>
-            <div className={`relative z-10 mt-4 max-h-[270px] overflow-hidden transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
+            <div className={`relative z-10 mt-4 max-h-[350px] overflow-hidden transition-all duration-700 ${revealStep >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
                 <div className="float-right -mr-3 ml-3 h-[360px] w-[42%]" style={{ shapeOutside: 'polygon(0 62%, 100% 62%, 100% 100%, 0 100%)' }}>
                     <div className={`relative top-[62%] rotate-[2.5deg] transition-all duration-700 ${revealStep >= 4 ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}><ChibiPortrait character={character} image={entry.chibiImage} /></div>
                 </div>
                 <DiaryCopy entry={entry} />
             </div>
-            <div className="absolute bottom-11 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
-            <div className="absolute inset-x-0 bottom-0 z-30 flex h-9 items-center gap-1 border-t border-[#eadfce] bg-[#fffaf0]/95 px-4">
-                {([['text', '文字'], ['still', '图片1'], ['chibi', '图片2']] as const).map(([kind, label]) => (
-                    <button key={kind} type="button" disabled={Boolean(regeneratingPart) || generating} onClick={() => onRegenerate(kind)} className="flex items-center gap-0.5 rounded-full border border-[#ded3c4] bg-[#fffaf0]/90 px-2 py-1 text-[8px] text-[#82776c] shadow-sm backdrop-blur disabled:opacity-45" aria-label={`重新生成${label}`}>
-                        <ArrowClockwise size={9} className={regeneratingPart === kind ? 'animate-spin' : ''} />{regeneratingPart === kind ? '生成中' : label}
-                    </button>
-                ))}
-            </div>
+            <div className="absolute bottom-5 left-7 text-[10px] tracking-[0.14em] text-[#9b9186]">— {character.name}</div>
             {generating && (
                 <div className="absolute inset-x-0 bottom-5 z-30 flex justify-center">
                     <div className="flex items-center gap-2 rounded-full bg-[#575f50] px-5 py-2.5 text-[10px] tracking-[0.08em] text-white shadow-[0_8px_22px_rgba(70,78,64,.24)]"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />{entry.imageStatus === 'generating' ? '正在绘制手账贴图' : '正在生成今日手账'}</div>
@@ -334,6 +325,20 @@ const HandbookDiaryPage: React.FC<{
         </article>
     );
 };
+
+const HandbookRegenerationControls: React.FC<{
+    regeneratingPart: 'text' | 'still' | 'chibi' | null;
+    generating: boolean;
+    onRegenerate: (kind: 'text' | 'still' | 'chibi') => void;
+}> = ({ regeneratingPart, generating, onRegenerate }) => (
+    <div className="absolute left-2 top-[calc(100%+10px)] z-30 flex items-center gap-1.5">
+        {([['text', '文字'], ['still', '图片1'], ['chibi', '图片2']] as const).map(([kind, label]) => (
+            <button key={kind} type="button" disabled={Boolean(regeneratingPart) || generating} onClick={() => onRegenerate(kind)} className="flex items-center gap-1 rounded-full border border-[#d8cdbf] bg-[#f8f4ed]/95 px-2.5 py-1.5 text-[8px] text-[#766c62] shadow-sm backdrop-blur disabled:opacity-45" aria-label={`重新生成${label}`}>
+                <ArrowClockwise size={9} className={regeneratingPart === kind ? 'animate-spin' : ''} />{regeneratingPart === kind ? '生成中' : label}
+            </button>
+        ))}
+    </div>
+);
 
 const HandbookContinuationPage: React.FC<{
     character: CharacterProfile;
@@ -673,7 +678,7 @@ const HandbookApp: React.FC = () => {
                 <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-6" style={{ containerType: 'size' }}>
                     <div
                         key={`${pageIndex}-${direction}`}
-                        className={`shrink-0 ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}
+                        className={`relative shrink-0 ${direction === 'next' ? 'handbook-page-next' : 'handbook-page-prev'}`}
                         style={{
                             // 在 B 系纸张基础上略微加长，给 3～5 段正文与贴图留出更舒展的纵向空间。
                             aspectRatio: '1 / 1.55',
@@ -681,7 +686,8 @@ const HandbookApp: React.FC = () => {
                         }}
                     >
                         {pageIndex === 0 && <BookCover character={openNotebook.character} config={activeCover} editing={Boolean(draftCover)} onAvatarMove={(avatarX, avatarY) => setDraftCover(current => current ? ({ ...current, avatarX, avatarY }) : current)} onAvatarResize={(avatarSize) => setDraftCover(current => current ? ({ ...current, avatarSize }) : current)} />}
-                        {visibleSheet?.kind === 'decorated' && <HandbookDiaryPage character={openNotebook.character} entry={{ ...visibleSheet.entry, paragraphs: visibleSheet.paragraphs }} revealStep={visibleSheet.entry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleSheet.entry.date === today && generationState === 'generating'} regeneratingPart={regeneratingPart} onRegenerate={kind => void regenerateEntryPart(visibleSheet.entry, kind)} />}
+                        {visibleSheet?.kind === 'decorated' && <HandbookDiaryPage character={openNotebook.character} entry={{ ...visibleSheet.entry, paragraphs: visibleSheet.paragraphs }} revealStep={visibleSheet.entry.date === today && generationState === 'generating' ? revealStep : 4} generating={visibleSheet.entry.date === today && generationState === 'generating'} />}
+                        {visibleSheet?.kind === 'decorated' && <HandbookRegenerationControls regeneratingPart={regeneratingPart} generating={visibleSheet.entry.date === today && generationState === 'generating'} onRegenerate={kind => void regenerateEntryPart(visibleSheet.entry, kind)} />}
                         {visibleSheet?.kind === 'continuation' && <HandbookContinuationPage character={openNotebook.character} entry={visibleSheet.entry} paragraphs={visibleSheet.paragraphs} continuationIndex={visibleSheet.continuationIndex} />}
                         {blankGeneratingPage && <EmptyGeneratingPage />}
                         {!loadingEntries && pageIndex === pageCount - 1 && <EndPage onGenerate={showTodayPage} />}
