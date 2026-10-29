@@ -3,7 +3,7 @@
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_60807bf51efa934298e1fdf4c1c30c98/node_modules/@rei-standard/amsg-server/dist/chunk-5FXVSC5O.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_54f9aa516e2604638b6a9f0557eadf11/node_modules/@rei-standard/amsg-server/dist/chunk-5FXVSC5O.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -817,7 +817,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_60807bf51efa934298e1fdf4c1c30c98/node_modules/@rei-standard/amsg-server/dist/chunk-HTGYGGUH.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_54f9aa516e2604638b6a9f0557eadf11/node_modules/@rei-standard/amsg-server/dist/chunk-HTGYGGUH.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
