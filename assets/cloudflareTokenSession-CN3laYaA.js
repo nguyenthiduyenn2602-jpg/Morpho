@@ -1,0 +1,1 @@
+let e;function t(o,r){e=o.trim()?{token:o.trim(),source:r,at:Date.now()}:void 0}function n(){return e&&Date.now()-e.at>30*60*1e3&&(e=void 0),e?{...e}:void 0}function a(){e=void 0}export{a as f,n as g,t as r};
