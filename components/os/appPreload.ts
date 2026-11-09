@@ -6,6 +6,7 @@ import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 // 「按下即预取」与「空闲预取/懒加载」共用同一份 chunk，绝不重复下载。
 // 新增 App 时若忘记在此登记，仅会少一次按下预取优化，不影响功能（打开时照常懒加载）。
 const importers: Partial<Record<AppID, () => Promise<unknown>>> = {
+  [AppID.LawHotline]: () => import('../../apps/LawHotline'),
   [AppID.Settings]: () => import('../../apps/Settings'),
   [AppID.Character]: () => import('../../apps/Character'),
   [AppID.Chat]: () => import('../../apps/Chat'),

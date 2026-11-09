@@ -38,10 +38,12 @@ import {
   CirclesFour,
   BowlFood,
   PaperPlaneTilt,
+  Envelope,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
 export const Icons: Record<string, React.FC<{ className?: string }>> = {
+  LawHotline: ({ className }) => <Envelope className={className} weight="regular" />,
   User: ({ className }) => <IdentificationCard className={className} weight="regular" />,
   Character: ({ className }) => <UserCircle className={className} weight="regular" />,
   Chat: ({ className }) => <ChatTeardrop className={className} weight="regular" />,
@@ -66,6 +68,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
+  { id: AppID.LawHotline, name: 'Morpho热线', icon: 'LawHotline', color: 'rose' },
   { id: AppID.User, name: '个人档案', icon: 'User', color: 'rose' },
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },

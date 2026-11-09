@@ -55,6 +55,7 @@ const warmLazy = (Comp: PreloadableLazy): void => {
   }
 };
 
+const LawHotline = lazyApp(() => import('../apps/LawHotline'));
 const Settings = lazyApp(() => import('../apps/Settings'));
 const UserApp = lazyApp(() => import('../apps/UserApp'));
 const Character = lazyApp(() => import('../apps/Character'));
@@ -92,7 +93,7 @@ const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.LimitedEncounter]: LimitedEncounterApp, [AppID.Eat]: EatApp, [AppID.Faraway]: FarawayApp, [AppID.Handbook]: HandbookApp, [AppID.Appearance]: Appearance,
+  [AppID.LawHotline]: LawHotline, [AppID.Settings]: Settings, [AppID.User]: UserApp, [AppID.Character]: Character, [AppID.Chat]: Chat, [AppID.Date]: DateApp, [AppID.Moments]: MomentsApp, [AppID.Mihui]: MihuiApp, [AppID.LimitedEncounter]: LimitedEncounterApp, [AppID.Eat]: EatApp, [AppID.Faraway]: FarawayApp, [AppID.Handbook]: HandbookApp, [AppID.Appearance]: Appearance,
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -877,6 +878,7 @@ const PhoneShell: React.FC = () => {
 
   const renderApp = () => {
     switch (activeApp) {
+      case AppID.LawHotline: return <LawHotline onClose={closeApp} submissionUrl="https://morpho-hotline.nguyenthiduyenn2602.workers.dev/api/submissions" />;
       case AppID.Settings: return <Settings />;
       case AppID.User: return <UserApp />;
       case AppID.Character: return <Character />;

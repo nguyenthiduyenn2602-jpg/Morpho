@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+const vars=await readFile(new URL('./.dev.vars',import.meta.url),'utf8');const password=/^ADMIN_SECRET=(.+)$/m.exec(vars)[1].trim();
+const base='http://127.0.0.1:5188',origin='http://127.0.0.1:5186';
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+const id=randomUUID();function form(key=id){const f=new FormData();for(const [k,v]of Object.entries({requestId:key,title:'云端模拟测试',story:'虚构投稿，纯文字 D1 验证。',age:'26',gender:'女',occupation:'学生',email:'',question:'',consent:'yes'}))f.set(k,v);return f;}
+const post=f=>fetch(base+'/api/submissions',{method:'POST',headers:{Origin:origin},body:f});
+assert.equal((await fetch(base+'/api/admin/letters')).status,401);
+assert.equal((await fetch(base+'/api/submissions',{method:'POST',headers:{Origin:'https://evil.example'},body:form()})).status,403);
+const invalid=form(randomUUID());invalid.set('consent','no');assert.equal((await post(invalid)).status,400);
+const attachment=form(randomUUID());attachment.append('images',new Blob([png],{type:'image/png'}),'test.png');assert.equal((await post(attachment)).status,400);
+const r=await post(form());assert.equal(r.status,201,await r.clone().text());assert.equal((await r.json()).id,id);
+const again=await post(form());assert.equal(again.status,200);assert.equal((await again.json()).id,id);
+const changed=form();changed.set('story','不同内容');assert.equal((await post(changed)).status,409);
+const parallel=randomUUID();const results=await Promise.all([post(form(parallel)),post(form(parallel))]);assert.ok(results.every(r=>[200,201,409].includes(r.status)));assert.ok(results.some(r=>r.status===201));
+assert.equal((await fetch(base+`/api/admin/images/${id}/0`)).status,401);
+const login=await fetch(base+'/api/login',{method:'POST',headers:{Origin:base},body:JSON.stringify({password})});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];assert.match(login.headers.get('set-cookie'),/HttpOnly/);
+const headers={Cookie:cookie,Origin:base};const rows=await (await fetch(base+'/api/admin/letters',{headers})).json();assert.equal(rows.filter(r=>r.id===id).length,1);assert.equal(rows.filter(r=>r.id===parallel).length,1);
+assert.equal((await fetch(base+`/api/admin/letters/${id}/read`,{method:'POST',headers:{Cookie:cookie,Origin:origin}})).status,403);
+assert.equal((await fetch(base+`/api/admin/letters/${id}/read`,{method:'POST',headers})).status,200);
+const refreshed=await (await fetch(base+'/api/admin/letters',{headers})).json();assert.equal(refreshed.find(r=>r.id===id).read,true);
+await fetch(base+'/api/admin/logout',{method:'POST',headers});assert.equal((await fetch(base+'/api/admin/letters',{headers})).status,401);
+let limited=false;for(let i=0;i<14;i++){if((await post(form())).status===429){limited=true;break;}}assert.ok(limited);
+console.log('PASS: actual local D1, text-only, consent, CORS, authentication, CSRF, logout, duplicate retry, concurrent duplicate, content conflict, rate limit');

@@ -1,0 +1,16 @@
+name = "morpho-hotline"
+main = "index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+[[d1_databases]]
+binding = "DB"
+database_name = "morpho-hotline"
+database_id = "3e99c806-4a34-409d-ad37-b68c1a0d503e"
+[vars]
+ALLOWED_ORIGIN = "https://nguyenthiduyenn2602-jpg.github.io"
+[triggers]
+crons = ["0 3 * * *"]
