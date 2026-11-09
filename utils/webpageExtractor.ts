@@ -197,6 +197,24 @@ export function extractXhsNoteId(text: string): string | null {
  * 经 sfworker 展开短链（xhslink.com / xhslink.cn 等），返回跟随 HTTP 重定向后的最终 URL。
  * 小红书短链不含 note id / xsec_token，展开后才拿得到。
  */
+/** Recover only a validated note URL retained by the official login/error redirect. */
+export function recoverXhsNoteRedirect(value: string): string {
+  let current = value;
+  for (let depth = 0; depth < 4; depth++) {
+    try {
+      const parsed = new URL(current);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return value;
+      const host = parsed.hostname.toLowerCase();
+      if (!['xiaohongshu.com', 'rednote.com'].some(d => host === d || host.endsWith('.' + d))) return value;
+      if (extractXhsNoteId(current)) return current;
+      const target = parsed.searchParams.get('redirectPath');
+      if (!target) return value;
+      current = new URL(target, parsed.origin).href;
+    } catch { return value; }
+  }
+  return value;
+}
+
 export async function expandShortUrl(url: string): Promise<string> {
   const res = await fetch(`${sfworkerUrl()}/expand-url`, {
     method: 'POST',
@@ -213,7 +231,7 @@ export async function expandShortUrl(url: string): Promise<string> {
     const err = parsed?.error;
     throw new Error((err && (err.message || err)) || `短链展开失败 (HTTP ${res.status})`);
   }
-  return String(parsed?.data?.finalUrl || url);
+  return recoverXhsNoteRedirect(String(parsed?.data?.finalUrl || url));
 }
 
 /** sfworker /fetch-webpage 的返回：reader=已渲染提取的干净正文；raw=原始 HTML 待前端解析。 */

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, parseWebpageHtml, extractWebpageContent } from './webpageExtractor';
+import { recoverXhsNoteRedirect, expandShortUrl, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, parseWebpageHtml, extractWebpageContent } from './webpageExtractor';
 
 describe('detectFirstUrl', () => {
   it('从一句话里揪出 http(s) 链接', () => {
@@ -206,3 +206,25 @@ describe('extractWebpageContent 提取链路（apizero 主 → sfworker/Jina 降
     expect(wp.truncated).toBe(true);
   });
 });
+
+ describe('XHS login redirect recovery', () => {
+  const note = 'https://www.rednote.com/discovery/item/689c4bac000000001d02f291?xsec_token=test-token%3D&xsec_source=app_share';
+  const wrapped = 'https://www.rednote.com/website-login/error?redirectPath=' + encodeURIComponent(note) + '&error_code=300011';
+  it('recovers note and preserves access parameters', () => {
+    expect(recoverXhsNoteRedirect(wrapped)).toBe(note);
+    expect(extractXhsNoteId(recoverXhsNoteRedirect(wrapped))).toBe('689c4bac000000001d02f291');
+    expect(new URL(recoverXhsNoteRedirect(wrapped)).searchParams.get('xsec_token')).toBe('test-token=');
+  });
+  it('does not trust foreign wrappers or foreign redirect targets', () => {
+    const foreign = 'https://evil.example/?redirectPath=' + encodeURIComponent(note);
+    expect(recoverXhsNoteRedirect(foreign)).toBe(foreign);
+    const spoof = 'https://www.rednote.com/website-login/error?redirectPath=' + encodeURIComponent('https://rednote.com.evil.example/explore/689c4bac000000001d02f291');
+    expect(recoverXhsNoteRedirect(spoof)).toBe(spoof);
+    expect(recoverXhsNoteRedirect(note)).toBe(note);
+  });
+  it('uses recovery on the actual short-link expansion response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({success:true,data:{finalUrl:wrapped}}))));
+    try { expect(await expandShortUrl('https://xhslink.cn/o/example')).toBe(note); }
+    finally { vi.unstubAllGlobals(); }
+  });
+ });
