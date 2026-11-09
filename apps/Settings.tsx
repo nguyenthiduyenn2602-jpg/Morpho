@@ -396,6 +396,7 @@ const McpServersCard: React.FC<{ addToast: (msg: string, type?: any) => void }> 
 const Settings: React.FC = () => {
   const {
       apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels,
+      characters, userProfile, groups,
       exportSystem, importSystem, addToast, showError, resetSystem, updateCharacter,
       apiPresets, addApiPreset, updateApiPreset, removeApiPreset,
       sysOperation, // Get progress state
@@ -1513,7 +1514,11 @@ const Settings: React.FC = () => {
               };
               updateRealtimeConfig(xhsUpdates);
               const nextConfig = { ...realtimeConfig, ...xhsUpdates };
-              syncAmsgToolConfigAndPrompts(nextConfig, { characters, userProfile, groups });
+              try {
+                  syncAmsgToolConfigAndPrompts(nextConfig, { characters, userProfile, groups });
+              } catch {
+                  addToast('小红书连接成功，配置已保存；主动消息配置同步暂未完成。', 'info');
+              }
           } else {
               setRtTestStatus(`连接失败: ${result.error}`);
           }
