@@ -19,7 +19,7 @@ import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
-import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody, filesUnsupportedRetryBody } from '../utils/streamUpgrade';
+import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody, requiresStreamingTransport } from '../utils/streamUpgrade';
 import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
@@ -1046,6 +1046,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           let sendArgs: [RequestInfo | URL, RequestInit?] = args;
           // 透明流式升级状态（utils/streamUpgrade.ts）：请求侧改写 → 响应侧拼回 JSON
           let streamUpgraded = false;
+          let streamRequired = false;
           let bodyBeforeStreamUpgrade: string | null = null;
           if (urlStr.includes('/chat/completions')) {
               const rawBody = (config as RequestInit | undefined)?.body;
@@ -1060,8 +1061,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       // （查手机/记忆宫殿/日程/剧场/群聊…40+ 处）升级为流式**传输**，防网关
                       // 空闲超时把长生成掐成半截；响应会在下面攒齐拼回标准 JSON，调用方无感。
                       // 已自带 stream:true 的请求（聊天主路径/见面/情绪评估）不碰。
-                      if (isGlobalStreamEnabled()) {
-                          const upgraded = upgradeChatBodyToStream(body);
+                      streamRequired = requiresStreamingTransport(urlStr, parsed?.model);
+                      if (streamRequired || isGlobalStreamEnabled()) {
+                          const upgraded = upgradeChatBodyToStream(body, !streamRequired);
                           if (upgraded) {
                               bodyBeforeStreamUpgrade = body;
                               body = upgraded;
@@ -1096,7 +1098,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // 流式升级自愈：个别中转对 stream/stream_options 直接 4xx → 用升级前的
               // 原 body 重发一次，行为退回旧版（升级只能赚不能赔）。
-              if (streamUpgraded && !response.ok && (response.status === 400 || response.status === 422) && bodyBeforeStreamUpgrade) {
+              if (streamUpgraded && !streamRequired && !response.ok && (response.status === 400 || response.status === 422) && bodyBeforeStreamUpgrade) {
                   console.warn('🔁 [StreamUpgrade] 中转拒绝流式升级(HTTP ' + response.status + ')，回退原请求重发');
                   sendArgs = [resource, { ...(config as RequestInit), body: bodyBeforeStreamUpgrade }];
                   response = await originalFetch(...sendArgs);
@@ -1115,22 +1117,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           sendArgs = [resource, { ...sendArgs[1], body: retryBody }];
                           response = await originalFetch(...sendArgs);
                           streamUpgraded = true;
-                      }
-                  }
-              }
-              // Preserve local media; downgrade only this rejected network request.
-              if (response.status === 400 && urlStr.includes('/chat/completions')) {
-                  const sentBody = sendArgs[1]?.body;
-                  if (typeof sentBody === 'string') {
-                      let errorText = '';
-                      try { errorText = await response.clone().text(); } catch { /* preserve error */ }
-                      const retryBody = filesUnsupportedRetryBody(sentBody, errorText);
-                      if (retryBody) {
-                          const originallyStreaming = typeof config?.body === 'string' && JSON.parse(config.body).stream === true;
-                          addToast('当前模型仅支持文字：本次保留文字上下文，图片和原始附件未读取。', 'info');
-                          sendArgs = [resource, { ...sendArgs[1], body: retryBody }];
-                          response = await originalFetch(...sendArgs);
-                          streamUpgraded = !originallyStreaming;
                       }
                   }
               }

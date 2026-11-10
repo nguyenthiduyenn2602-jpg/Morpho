@@ -40,14 +40,14 @@ export function isGlobalStreamEnabled(): boolean {
  * 返回升级后的 body 字符串；不需要升级（已是流式 / 非 JSON / 非对象）返回 null。
  * 注意：调用方负责先判断全局开关（isGlobalStreamEnabled），本函数保持纯粹。
  */
-export function upgradeChatBodyToStream(bodyStr: string): string | null {
+export function upgradeChatBodyToStream(bodyStr: string, includeUsage = true): string | null {
     let parsed: any;
     try { parsed = JSON.parse(bodyStr); } catch { return null; }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     if (parsed.stream === true) return null;  // 调用方自己开了流式：不碰
     parsed.stream = true;
     // include_usage：让末尾 chunk 带 usage，token 计费徽标 / API 调用记录不缺数
-    parsed.stream_options = { include_usage: true };
+    if (includeUsage) parsed.stream_options = { include_usage: true };
     return JSON.stringify(parsed);
 }
 
@@ -88,22 +88,12 @@ export function streamRequiredRetryBody(body: string, errorText: string): string
     } catch { return null; }
 }
 
-/** Provider explicitly rejects files: retain text, and mark omitted media honestly. */
-export function filesUnsupportedRetryBody(body: string, errorText: string): string | null {
+
+/** GG Argon requires streaming transport, independently of display preferences. */
+export function requiresStreamingTransport(url: string, model: unknown): boolean {
     try {
-        if (JSON.parse(errorText)?.error?.code !== 'files_not_supported') return null;
-        const parsed = JSON.parse(body);
-        if (!Array.isArray(parsed?.messages)) return null;
-        let changed = false;
-        const messages = parsed.messages.map((message: any) => {
-            if (!Array.isArray(message.content)) return message;
-            changed = true;
-            const content = message.content.map((part: any) => {
-                if (part?.type === 'text') return typeof part.text === 'string' ? part.text : '';
-                return '[本次模型仅支持纯文本：此图片、音频或附件未传输，不能声称已查看或读取其内容。]';
-            }).join('\n');
-            return { ...message, content };
-        });
-        return changed ? JSON.stringify({ ...parsed, messages, stream: true }) : null;
-    } catch { return null; }
+        const target = new URL(url);
+        return target.hostname === 'gcli.ggchan.dev' && target.pathname.replace(/\/$/, '') === '/v1/chat/completions'
+            && model === 'a-gemini-4-argon';
+    } catch { return false; }
 }
