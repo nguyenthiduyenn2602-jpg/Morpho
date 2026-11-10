@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { upgradeChatBodyToStream, assembleUpgradedResponse } from './streamUpgrade';
+import { upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody } from './streamUpgrade';
 
 // 透明流式升级：请求体改写 + SSE 响应拼回 JSON。
 // 关键不变量：调用方拿到的最终 JSON 与不升级时结构等价（choices/usage/model）。
@@ -66,5 +66,23 @@ describe('assembleUpgradedResponse', () => {
         const upstream = new Response(json, { status: 200, headers: { 'Content-Type': 'application/json' } });
         const out = await assembleUpgradedResponse(upstream);
         expect((await out.json()).choices[0].message.content).toBe('整包');
+    });
+});
+
+describe('stream-required compatibility', () => {
+    const error = JSON.stringify({ error: { code: 'stream_required' } });
+    it('preserves messages and options, without adding optional stream_options', () => {
+        const body = { model: 'a-gemini-4-argon', messages: [{ role: 'user', content: 'hello' }], stream: false, temperature: 0.85 };
+        expect(JSON.parse(streamRequiredRetryBody(JSON.stringify(body), error)!)).toEqual({ ...body, stream: true });
+    });
+    it('does not retry streaming requests or unrelated errors', () => {
+        expect(streamRequiredRetryBody('{"stream":true}', error)).toBeNull();
+        expect(streamRequiredRetryBody('{}', '{"error":{"code":"content_filter"}}')).toBeNull();
+        expect(streamRequiredRetryBody('{}', 'invalid')).toBeNull();
+        expect(streamRequiredRetryBody('[]', error)).toBeNull();
+    });
+    it('preserves media and tools rather than silently discarding them', () => {
+        const body = { messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://example.com/image.png' } }] }], tools: [{ type: 'function' }] };
+        expect(JSON.parse(streamRequiredRetryBody(JSON.stringify(body), error)!)).toEqual({ ...body, stream: true });
     });
 });

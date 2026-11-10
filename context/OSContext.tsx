@@ -19,7 +19,7 @@ import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
-import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
+import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody } from '../utils/streamUpgrade';
 import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
@@ -1098,11 +1098,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 原 body 重发一次，行为退回旧版（升级只能赚不能赔）。
               if (streamUpgraded && !response.ok && (response.status === 400 || response.status === 422) && bodyBeforeStreamUpgrade) {
                   console.warn('🔁 [StreamUpgrade] 中转拒绝流式升级(HTTP ' + response.status + ')，回退原请求重发');
-                  response = await originalFetch(resource, { ...(config as RequestInit), body: bodyBeforeStreamUpgrade });
+                  sendArgs = [resource, { ...(config as RequestInit), body: bodyBeforeStreamUpgrade }];
+                  response = await originalFetch(...sendArgs);
                   streamUpgraded = false;
               }
               // 流式升级的响应归一化：SSE 攒齐拼回标准 chat.completion JSON——
               // 调用方（safeResponseJson / res.json() 均可）拿到与升级前等价的响应。
+              // Explicit stream_required: one retry, even with the global toggle off.
+              if (response.status === 400 && urlStr.includes('/chat/completions')) {
+                  const sentBody = sendArgs[1]?.body;
+                  if (typeof sentBody === 'string') {
+                      let errorText = '';
+                      try { errorText = await response.clone().text(); } catch { /* preserve error */ }
+                      const retryBody = streamRequiredRetryBody(sentBody, errorText);
+                      if (retryBody) {
+                          sendArgs = [resource, { ...sendArgs[1], body: retryBody }];
+                          response = await originalFetch(...sendArgs);
+                          streamUpgraded = true;
+                      }
+                  }
+              }
               if (streamUpgraded && response.ok) {
                   response = await assembleUpgradedResponse(response);
               }

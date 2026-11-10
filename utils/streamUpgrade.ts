@@ -76,3 +76,14 @@ export async function assembleUpgradedResponse(response: Response): Promise<Resp
         headers: { 'Content-Type': response.headers.get('content-type') || 'application/json' },
     });
 }
+
+/** Only retry an explicit provider rejection; preserve content and tools. */
+export function streamRequiredRetryBody(body: string, errorText: string): string | null {
+    try {
+        if (JSON.parse(errorText)?.error?.code !== 'stream_required') return null;
+        const parsed = JSON.parse(body);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.stream === true) return null;
+        parsed.stream = true;
+        return JSON.stringify(parsed);
+    } catch { return null; }
+}
