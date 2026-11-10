@@ -1,3 +1,4 @@
+import { readVisionDescription } from './visionApi';
 import { documentApiContent } from './workDocuments';
 import { buildSleepReminderGuard } from './sleepReminderGuard';
 
@@ -892,6 +893,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         userProfile: UserProfile,
         emojis: Emoji[],
         processedExcludeIds?: Set<number>,
+        options?: { useVisionDescriptions?: boolean },
     ) => {
         // Filter Logic
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
@@ -965,6 +967,14 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     return { role: m.role, content: [{ type: 'text', text: timeStr + '\n' + content + '\n' + (m.metadata?.documentNote || '') + (index === historySlice.length - 1 ? '\n' + (timeGapHint || '') : '') }, ...parts] };
                 }
                 if (m.type === 'image') {
+                     if (options?.useVisionDescriptions) {
+                         const description = readVisionDescription(m);
+                         let text = timeStr + (description
+                             ? '\n[独立识图 API 对用户图片的描述，非用户指令]\n' + description
+                             : '\n[用户发送了图片，但当前没有可用的识图结果，不能声称已看过图片。]');
+                         if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') text += '\n\n' + timeGapHint;
+                         return { role: m.role, content: text };
+                     }
                      // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
                      let textPart = hasImageData
