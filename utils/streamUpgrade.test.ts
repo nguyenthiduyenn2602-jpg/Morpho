@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody } from './streamUpgrade';
+import { upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody, filesUnsupportedRetryBody } from './streamUpgrade';
 
 // 透明流式升级：请求体改写 + SSE 响应拼回 JSON。
 // 关键不变量：调用方拿到的最终 JSON 与不升级时结构等价（choices/usage/model）。
@@ -84,5 +84,34 @@ describe('stream-required compatibility', () => {
     it('preserves media and tools rather than silently discarding them', () => {
         const body = { messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://example.com/image.png' } }] }], tools: [{ type: 'function' }] };
         expect(JSON.parse(streamRequiredRetryBody(JSON.stringify(body), error)!)).toEqual({ ...body, stream: true });
+    });
+});
+
+describe('files-not-supported compatibility', () => {
+    const error = JSON.stringify({ error: { code: 'files_not_supported' } });
+    it('retains history, extracted text, model and tools, without mutating local content', () => {
+        const body = { model: 'm', tools: [], messages: [
+            { role: 'system', content: 'persona' },
+            { role: 'user', content: [{ type: 'text', text: 'document text' }, { type: 'file', file: { file_data: 'SECRET_BINARY' } }, { type: 'image_url', image_url: { url: 'SECRET_IMAGE' } }] }
+        ] };
+        const original = JSON.stringify(body);
+        const result = filesUnsupportedRetryBody(original,error)!;
+        const parsed = JSON.parse(result);
+        expect(parsed.stream).toBe(true);
+        expect(parsed.messages).toHaveLength(2);
+        expect(parsed.messages[0]).toEqual(body.messages[0]);
+        expect(parsed.messages[1].content).toContain('document text');
+        expect(parsed.messages[1].content).toContain('不能声称');
+        expect(result).not.toContain('SECRET_');
+        expect(parsed.tools).toEqual([]);
+        expect(JSON.stringify(body)).toBe(original);
+        expect(filesUnsupportedRetryBody(result,error)).toBeNull();
+    });
+    it('flattens text-only arrays and ignores unrelated errors or invalid bodies', () => {
+        const body=JSON.stringify({messages:[{role:'user',content:[{type:'text',text:'one'},{type:'text',text:'two'}]}]});
+        expect(JSON.parse(filesUnsupportedRetryBody(body,error)!).messages[0].content).toBe('one\ntwo');
+        expect(filesUnsupportedRetryBody(body,'{"error":{"code":"content_filter"}}')).toBeNull();
+        expect(filesUnsupportedRetryBody('{}',error)).toBeNull();
+        expect(filesUnsupportedRetryBody('bad',error)).toBeNull();
     });
 });

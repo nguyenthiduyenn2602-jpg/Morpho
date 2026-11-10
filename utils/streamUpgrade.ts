@@ -87,3 +87,23 @@ export function streamRequiredRetryBody(body: string, errorText: string): string
         return JSON.stringify(parsed);
     } catch { return null; }
 }
+
+/** Provider explicitly rejects files: retain text, and mark omitted media honestly. */
+export function filesUnsupportedRetryBody(body: string, errorText: string): string | null {
+    try {
+        if (JSON.parse(errorText)?.error?.code !== 'files_not_supported') return null;
+        const parsed = JSON.parse(body);
+        if (!Array.isArray(parsed?.messages)) return null;
+        let changed = false;
+        const messages = parsed.messages.map((message: any) => {
+            if (!Array.isArray(message.content)) return message;
+            changed = true;
+            const content = message.content.map((part: any) => {
+                if (part?.type === 'text') return typeof part.text === 'string' ? part.text : '';
+                return '[本次模型仅支持纯文本：此图片、音频或附件未传输，不能声称已查看或读取其内容。]';
+            }).join('\n');
+            return { ...message, content };
+        });
+        return changed ? JSON.stringify({ ...parsed, messages, stream: true }) : null;
+    } catch { return null; }
+}

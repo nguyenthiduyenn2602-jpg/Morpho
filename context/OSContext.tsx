@@ -19,7 +19,7 @@ import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
-import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody } from '../utils/streamUpgrade';
+import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse, streamRequiredRetryBody, filesUnsupportedRetryBody } from '../utils/streamUpgrade';
 import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
 import { INSTALLED_APPS } from '../constants';
 import { markBackupDone } from '../utils/backupReminder';
@@ -1115,6 +1115,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           sendArgs = [resource, { ...sendArgs[1], body: retryBody }];
                           response = await originalFetch(...sendArgs);
                           streamUpgraded = true;
+                      }
+                  }
+              }
+              // Preserve local media; downgrade only this rejected network request.
+              if (response.status === 400 && urlStr.includes('/chat/completions')) {
+                  const sentBody = sendArgs[1]?.body;
+                  if (typeof sentBody === 'string') {
+                      let errorText = '';
+                      try { errorText = await response.clone().text(); } catch { /* preserve error */ }
+                      const retryBody = filesUnsupportedRetryBody(sentBody, errorText);
+                      if (retryBody) {
+                          const originallyStreaming = typeof config?.body === 'string' && JSON.parse(config.body).stream === true;
+                          addToast('当前模型仅支持文字：本次保留文字上下文，图片和原始附件未读取。', 'info');
+                          sendArgs = [resource, { ...sendArgs[1], body: retryBody }];
+                          response = await originalFetch(...sendArgs);
+                          streamUpgraded = !originallyStreaming;
                       }
                   }
               }
