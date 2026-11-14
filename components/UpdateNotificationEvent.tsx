@@ -1,3 +1,5 @@
+import './MorphoUpdateNotice.css';
+import { MORPHO_RELEASE, shouldShowMorphoRelease, dismissMorphoRelease } from '../utils/morphoRelease';
 /**
  * UpdateNotificationEvent.tsx
  * 版本更新强制提醒弹窗 (2026.5.25 小更新)
@@ -40,89 +42,28 @@ export const CHANGELOG_2026_06_21 = 'changelog-2026-06-21';
 export const CHANGELOG_2026_06_26 = 'changelog-2026-06-26';
 export const CHANGELOG_2026_07_10 = 'changelog-2026-07-10';
 
-export const shouldShowUpdateNotification = (): boolean => {
-    // Morpho：原作者（SullyOS）的版本更新弹窗已关闭——它推送的是 SullyOS 自身更新，
-    // 且会引导打开已删除的 SullyOS changelog。Morpho 暂无自有更新推送需求。
-    return false;
-};
 
-interface UpdateNotificationPopupProps {
-    onClose: () => void;
-}
-
-export const UpdateNotificationPopup: React.FC<UpdateNotificationPopupProps> = ({ onClose }) => {
-    const { openApp } = useOS();
-
-    const handleView = () => {
-        try {
-            localStorage.setItem(UPDATE_NOTIFICATION_KEY_2026_07_10, Date.now().toString());
-            sessionStorage.setItem(FAQ_TARGET_SECTION_KEY, CHANGELOG_2026_07_10);
-        } catch { /* ignore */ }
-        openApp(AppID.FAQ);
-        onClose();
+export const shouldShowUpdateNotification = shouldShowMorphoRelease;
+export const UpdateNotificationPopup: React.FC<{onClose: () => void}> = ({onClose}) => {
+    const {openApp} = useOS();
+    const close = () => { dismissMorphoRelease(); onClose(); };
+    const view = () => {
+        try { sessionStorage.setItem(FAQ_TARGET_SECTION_KEY, MORPHO_RELEASE.id); } catch { /* help still opens */ }
+        close(); openApp(AppID.FAQ);
     };
-
-    const handleDismiss = () => {
-        try { localStorage.setItem(UPDATE_NOTIFICATION_KEY_2026_07_10, Date.now().toString()); } catch { /* ignore */ }
-        onClose();
-    };
-
-    return (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
-            <div className="relative w-full max-w-sm bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden animate-slide-up">
-                <div className="pt-7 pb-3 px-6 text-center">
-                    <img
-                        src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f514.png"
-                        alt="update"
-                        className="w-10 h-10 mx-auto mb-2"
-                    />
-                    <h2 className="text-lg font-extrabold text-slate-800">大版本更新 · 生活统计</h2>
-                    <p className="text-[11px] text-slate-400 mt-1">2026 年 7 月 10 日 · 10 项更新</p>
-                </div>
-
-                <div className="px-6 pb-4 space-y-3">
-                    <div className="bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-100 rounded-2xl p-4">
-                        <p className="text-[13px] text-slate-700 leading-relaxed">
-                            <strong className="text-indigo-600">「档案」</strong>新增<strong className="text-violet-600">生活统计</strong>：生理期 / 药盒 / 记账 / 锻炼四模块，还能让角色<strong>注入代记</strong>——聊天时随口说吃药了、花了多少，ta 帮你记。
-                        </p>
-                        <p className="text-[12px] text-slate-500 leading-relaxed mt-2">
-                            <strong className="text-indigo-600">「彼方」</strong>开了场<strong>全服写诗</strong>；<strong className="text-violet-600">捏人</strong>换新画风 + PSD 批量导入 + 手办区；<strong>神经链接</strong>支持<strong>角色分组</strong>。
-                        </p>
-                        <p className="text-[12px] text-slate-500 leading-relaxed mt-2">
-                            还有：<strong>小屋</strong>装修大升级 + 家园新增「凌晨」段；<strong className="text-violet-600">记忆宫殿</strong>门牌（测试中）；<strong>专属提示铃声</strong>；壁纸/小屋图改存 Blob；一大批 iOS 适配与散修。
-                        </p>
-                    </div>
-                    <div className="bg-violet-50 border border-violet-200 rounded-2xl p-3">
-                        <p className="text-[12px] font-bold text-violet-600 text-center">
-                            点下方按钮看完整更新说明
-                        </p>
-                    </div>
-                </div>
-
-                <div className="px-6 pb-7 pt-2 space-y-2">
-                    <button
-                        onClick={handleView}
-                        className="w-full py-3.5 bg-gradient-to-r from-violet-500 to-purple-500 text-white font-bold rounded-2xl shadow-lg shadow-violet-200 active:scale-95 transition-transform text-sm"
-                    >
-                        看看这次更新了啥
-                    </button>
-                    <button
-                        onClick={handleDismiss}
-                        className="w-full py-2 text-slate-400 font-medium text-xs active:scale-95 transition-transform"
-                    >
-                        以后再说
-                    </button>
-                </div>
+    return <div className="morpho-release-overlay fixed inset-0 z-[9998] flex items-center justify-center p-5">
+        <section role="dialog" aria-modal="true" aria-labelledby="morpho-release-title" className="morpho-release-sheet w-full max-w-sm max-h-[85dvh] overflow-y-auto rounded-3xl p-6 text-slate-800">
+            <div className="morpho-release-stamp" aria-hidden="true">🦋</div><p className="text-xs font-bold tracking-widest morpho-release-kicker">MORPHO · {MORPHO_RELEASE.date}</p>
+            <h2 id="morpho-release-title" className="mt-3 text-xl font-bold">{MORPHO_RELEASE.title}</h2>
+            <p className="morpho-release-intro">给现实中的你一封来信，<br />也给故事里的你们，多一点色彩。</p><div className="morpho-release-cards mt-5 space-y-4 text-sm leading-6">
+                <div><h3 className="font-bold">✉ Morpho 热线 · 写给大壮</h3><p className="mt-1 text-slate-600">法律疑问、不舒服的规则，或生活中的小困扰，都可以写成一封来信。首版支持免费文字投稿，可自愿留下邮箱等待回信。</p></div>
+                <div><h3 className="font-bold">🎨 见面剧情 · 配图更顺手</h3><p className="mt-1 text-slate-600">生图导演可以单独配置 API，复用预设、搜索模型、测试连接。画师串、人物提示词、负面词和画幅，也能命名保存、跨剧情载入。</p></div>
             </div>
-        </div>
-    );
+            <p className="mt-4 text-xs leading-5 text-slate-500">热线投稿可能由 AI 辅助整理，并在隐去可识别信息后用于公开讨论；不保证逐一回复。提交前请阅读栏目说明。</p>
+            <button type="button" onClick={view} className="morpho-release-primary mt-5 w-full rounded-2xl py-3 text-sm font-bold text-white">查看完整更新说明</button>
+            <button type="button" onClick={close} className="mt-2 w-full py-3 text-xs text-slate-500">知道啦，继续使用</button>
+            <p className="mt-1 text-center text-[10px] text-slate-400">这份小更新，留在使用帮助里等你回看</p>
+        </section>
+    </div>;
 };
-
-interface UpdateNotificationControllerProps {
-    onClose: () => void;
-}
-
-export const UpdateNotificationController: React.FC<UpdateNotificationControllerProps> = ({ onClose }) => {
-    return <UpdateNotificationPopup onClose={onClose} />;
-};
+export const UpdateNotificationController = UpdateNotificationPopup;
