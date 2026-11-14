@@ -1938,6 +1938,8 @@ export interface StoryTheaterArchive {
 
 /** 剧情剧场每条时间线独立的 NAI 配图偏好；接口、模型和采样参数仍读取全局生图 2.0。 */
 export interface StoryTheaterImageConfig {
+  directorApiEnabled?: boolean;
+  directorApi?: APIConfig;
     enabled: boolean;
     /** 本剧情独立画师串，不修改角色私聊生图设置。 */
     styleTags?: string;

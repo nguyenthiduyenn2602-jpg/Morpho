@@ -1,3 +1,4 @@
+import { resolveStoryDirectorApi } from './storyDirectorApi';
 import type { APIConfig, CharacterNovelAiImageGenerationConfig, CharacterProfile, StoryTheaterEntry } from '../types';
 import { extractContent, safeResponseJson } from './safeApi';
 import type { ImageGenerationDirective } from './imageGeneration';
@@ -615,7 +616,7 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
     const context = {
         feature: '见面 · 剧情配图',
         provider: '剧情分镜 + NovelAI 兼容接口',
-        model: `${options.apiConfig.model} → ${options.apiConfig.novelAiImageGeneration?.model || 'NovelAI'}`,
+        model: `${options.entry.imageGeneration?.directorApiEnabled ? options.entry.imageGeneration.directorApi?.model || "未配置导演模型" : options.apiConfig.model} → ${options.apiConfig.novelAiImageGeneration?.model || 'NovelAI'}`,
         endpoint: options.apiConfig.novelAiImageGeneration?.baseUrl || options.apiConfig.baseUrl,
     };
     try {
@@ -630,10 +631,11 @@ export async function generateStoryTheaterImages(options: GenerateStoryTheaterIm
 
 async function generateStoryTheaterImagesRequest(options: GenerateStoryTheaterImageOptions): Promise<{ state: StoryImageState; frames: StoryGeneratedImageFrame[] }> {
     if (!options.entry.imageGeneration?.enabled) throw new Error('本剧情尚未开启自动配图');
-    const response = await fetch(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const directorApi = resolveStoryDirectorApi(options.entry.imageGeneration, options.apiConfig);
+    const response = await fetch(`${directorApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiConfig.apiKey}` },
-        body: JSON.stringify({ model: options.apiConfig.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.1, max_tokens: 3200 }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${directorApi.apiKey}` },
+        body: JSON.stringify({ model: directorApi.model, messages: buildStoryImagePlanningMessages(options), stream: false, temperature: 0.1, max_tokens: 3200 }),
     });
     if (!response.ok) throw new Error(`配图分镜整理失败（API ${response.status}）`);
     const raw = extractContent(await safeResponseJson(response)).trim();

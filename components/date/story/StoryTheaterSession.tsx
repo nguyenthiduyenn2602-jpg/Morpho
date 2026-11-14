@@ -436,6 +436,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             const manualImageEntry: StoryTheaterEntry = {
                 ...entry,
                 imageGeneration: {
+                    ...entry.imageGeneration,
                     enabled: true,
                     styleTags: entry.imageGeneration?.styleTags || '',
                     negativeTags: entry.imageGeneration?.negativeTags || '',

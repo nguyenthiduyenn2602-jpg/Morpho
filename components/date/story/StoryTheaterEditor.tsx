@@ -53,6 +53,7 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
             characterMemoryDates: { ...current.characterMemoryDates, ...(adding && !current.characterMemoryDates[char.id] ? { [char.id]: localDateTime() } : {}) },
             characterContextLimits: { ...current.characterContextLimits, ...(adding && !current.characterContextLimits[char.id] ? { [char.id]: 100 } : {}) },
             imageGeneration: {
+                ...current.imageGeneration,
                 enabled: current.imageGeneration?.enabled === true,
                 styleTags: current.imageGeneration?.styleTags || '',
                 negativeTags: current.imageGeneration?.negativeTags || '',

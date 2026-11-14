@@ -166,6 +166,8 @@ export const normalizeStoryTheater = (entry: StoryTheaterEntry): StoryTheaterEnt
                 : { type: 'user' },
         characterIds: Array.isArray(entry.characterIds) ? entry.characterIds.filter(Boolean) : [],
         imageGeneration: {
+            directorApiEnabled: entry.imageGeneration?.directorApiEnabled === true,
+            directorApi: entry.imageGeneration?.directorApi,
             enabled: entry.imageGeneration?.enabled === true,
             styleTags: String(entry.imageGeneration?.styleTags || ''),
             negativeTags: String(entry.imageGeneration?.negativeTags || ''),

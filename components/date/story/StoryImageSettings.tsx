@@ -1,3 +1,6 @@
+import StoryImagePresets from './StoryImagePresets';
+import StoryDirectorApiSettings from '../../settings/StoryDirectorApiSettings';
+import { resolveStoryDirectorApi } from '../../../utils/storyDirectorApi';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ImageSquare, X } from '@phosphor-icons/react';
@@ -10,6 +13,8 @@ interface Props {
 }
 
 const fallback = (entry: StoryTheaterEntry): StoryTheaterImageConfig => ({
+    directorApiEnabled: entry.imageGeneration?.directorApiEnabled === true,
+    directorApi: entry.imageGeneration?.directorApi,
     enabled: entry.imageGeneration?.enabled === true,
     styleTags: entry.imageGeneration?.styleTags || '',
     negativeTags: entry.imageGeneration?.negativeTags || '',
@@ -30,6 +35,9 @@ const StoryImageSettingsButton: React.FC<Props> = ({ entry, onChange }) => {
     const globalReady = Boolean(apiConfig.novelAiImageGeneration?.baseUrl && apiConfig.novelAiImageGeneration?.apiKey && apiConfig.novelAiImageGeneration?.model);
     const actors = characters.filter(character => entry.characterIds.includes(character.id));
     const save = async () => {
+        try { resolveStoryDirectorApi(draft, apiConfig); } catch (error) {
+            addToast(error instanceof Error ? error.message : "导演 API 配置无效", "error"); return;
+        }
         if (draft.enabled && !globalReady) {
             addToast('请先在任一私聊的“生图 2.0”里配置全局 URL、Key 和模型', 'error');
             return;
@@ -60,6 +68,8 @@ const StoryImageSettingsButton: React.FC<Props> = ({ entry, onChange }) => {
                 <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain border-y border-slate-200 px-5'>
                     <div className='py-4'><div className='flex items-center justify-between gap-4'><div><div className='text-sm font-semibold'>每轮自动配图</div><p className='mt-1 text-[10px] leading-5 text-slate-500'>正文先显示，再按世界书格式详细整理一幅剧情画面。</p></div><Toggle value={draft.enabled} onChange={enabled => setDraft(current => ({ ...current, enabled }))} /></div></div>
                     {!globalReady && <div className='mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[10px] leading-5 text-amber-700'>全局生图 2.0 尚未完整配置。可以先填写本页，开启前需到私聊生图 2.0 设置 URL、Key 与模型。</div>}
+                    <StoryImagePresets draft={draft} actorIds={entry.characterIds} onChange={setDraft} />
+                    <div className='border-t border-slate-200 py-4 text-xs'><StoryDirectorApiSettings settings={draft} onChange={setDraft} /></div>
                     <label className='block border-t border-slate-200 py-4'><span className='text-[10px] font-bold text-slate-500'>本剧情画师串 / 风格</span><textarea value={draft.styleTags || ''} onChange={event => setDraft(current => ({ ...current, styleTags: event.target.value }))} placeholder='artist:name, cinematic lighting, detailed background' className='mt-1.5 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 outline-none' /></label>
                     <div className='border-t border-slate-200 py-4'>
                         <div className='text-[10px] font-bold text-slate-500'>本剧情人物锚点</div>
