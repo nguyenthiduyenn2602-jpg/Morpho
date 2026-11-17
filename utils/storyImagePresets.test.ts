@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { STORY_IMAGE_PRESETS_KEY, loadStoryImagePresets, saveStoryImagePreset, deleteStoryImagePreset, applyStoryImagePreset } from './storyImagePresets';
+import { rememberStoryImagePreset, restoreStoryImagePreset, STORY_IMAGE_PRESETS_KEY, loadStoryImagePresets, saveStoryImagePreset, deleteStoryImagePreset, applyStoryImagePreset } from './storyImagePresets';
 const config = { enabled: true, width: 1216, height: 832, styleTags: 'artist:one', negativeTags: 'blur', userAnchor: 'blue eyes', characterAnchors: {a: 'black hair', b: ''}, directorApiEnabled: true, directorApi: {baseUrl:'https://api.test',apiKey:'secret',model:'director'} };
 beforeEach(() => localStorage.removeItem(STORY_IMAGE_PRESETS_KEY));
 describe('named illustration presets', () => {
@@ -37,5 +37,24 @@ describe('named illustration presets', () => {
         localStorage.setItem(STORY_IMAGE_PRESETS_KEY,'broken');
         expect(() => saveStoryImagePreset('one',config)).toThrow();
         expect(localStorage.getItem(STORY_IMAGE_PRESETS_KEY)).toBe('broken');
+    });
+});
+
+describe('preset picker restoration', () => {
+    it('restores a saved name on reopen and keeps stories independent', () => {
+        const [preset] = saveStoryImagePreset('morning', config);
+        rememberStoryImagePreset('story-one', preset.id);
+        expect(restoreStoryImagePreset('story-one', loadStoryImagePresets())?.name).toBe('morning');
+        expect(restoreStoryImagePreset('story-two', loadStoryImagePresets())).toBeUndefined();
+        saveStoryImagePreset('renamed', config, preset.id);
+        expect(restoreStoryImagePreset('story-one', loadStoryImagePresets())?.name).toBe('renamed');
+        deleteStoryImagePreset(preset.id);
+        expect(restoreStoryImagePreset('story-one', loadStoryImagePresets())).toBeUndefined();
+    });
+    it('keeps an explicitly cleared picker empty', () => {
+        const [preset] = saveStoryImagePreset('evening', config);
+        rememberStoryImagePreset('story-clear', preset.id);
+        rememberStoryImagePreset('story-clear', '');
+        expect(restoreStoryImagePreset('story-clear', loadStoryImagePresets())).toBeUndefined();
     });
 });

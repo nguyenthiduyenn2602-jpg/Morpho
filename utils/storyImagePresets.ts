@@ -45,3 +45,14 @@ export function applyStoryImagePreset(draft: StoryTheaterImageConfig, preset: St
     }
     return { ...draft, ...preset.config, characterAnchors, imageCount: 1 };
 }
+
+// Remember the picker per story; this does not apply a preset to the story config.
+const selectionKey = (storyId: string) => 'os_story_image_preset_selection_v1:' + storyId;
+export function rememberStoryImagePreset(storyId: string, presetId: string): void {
+    if (presetId) localStorage.setItem(selectionKey(storyId), presetId);
+    else localStorage.removeItem(selectionKey(storyId));
+}
+export function restoreStoryImagePreset(storyId: string, presets: StoryImagePreset[]): StoryImagePreset | undefined {
+    const id = localStorage.getItem(selectionKey(storyId));
+    return presets.find(preset => preset.id === id);
+}

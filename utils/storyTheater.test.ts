@@ -77,8 +77,8 @@ describe('糯米机原生剧情预设边界', () => {
         expect(document.schema).toBe('sullyos.story-preset');
         expect(document.version).toBe(1);
         expect(document.name).toContain('V6.27');
-        expect(document.prompts).toHaveLength(130);
-        expect(document.prompts.filter(prompt => prompt.enabled)).toHaveLength(53);
+        expect(document.prompts).toHaveLength(131);
+        expect(document.prompts.filter(prompt => prompt.enabled)).toHaveLength(54);
         const serialized = JSON.stringify(document);
         expect(serialized).not.toContain('prompt_order');
         expect(serialized).not.toContain('extensions');
@@ -515,5 +515,33 @@ describe('本轮关系备注', () => {
         expect(RELATIONSHIP_TEXTURE_GUIDE).toContain('95—100');
         expect(RELATIONSHIP_TEXTURE_GUIDE).toContain('<relation_fragment>');
         expect(RELATIONSHIP_TEXTURE_GUIDE).toContain('不写散乱 Markdown');
+    });
+});
+
+
+describe('Morpho 多人松弛感特调', () => {
+    it('注册独立预设，重复加载不重复添加且保留自建预设', async () => {
+        const { withBuiltInStoryPresets, BUILTIN_RELAXED_NIGHT_SCREENING_PRESET: relaxed } = await import('./storyTheater');
+        const custom = { ...relaxed, id: 'my-custom', builtIn: false };
+        const list = withBuiltInStoryPresets(withBuiltInStoryPresets([custom]));
+        expect(list.filter(p => p.id === relaxed.id)).toHaveLength(1);
+        expect(list).toContain(custom);
+        expect(list).toContain(BUILTIN_NIGHT_SCREENING_PRESET);
+        expect(relaxed.name).toContain('Morpho多人松弛感特调');
+        expect(resolveStoryPresetDocument(custom, custom.document)).toBe(custom.document);
+    });
+    it('新规则进入实际编译请求并替换多人姓名，旧内置覆盖仍获得新增规则', async () => {
+        const { BUILTIN_RELAXED_NIGHT_SCREENING_PRESET: preset } = await import('./storyTheater');
+        const old = { ...preset.document, prompts: preset.document.prompts.filter(p => p.id !== 'morpho-narrative-agency') };
+        const document = resolveStoryPresetDocument(preset, old);
+        expect(document.prompts.find(p => p.id === 'morpho-narrative-agency')?.enabled).toBe(true);
+        const result = compileStoryPreset({ preset: { ...preset, document }, userName: '小欢', characterNames: ['观澜', '祁山'], slots: { actors: '', persona: '', scenario: '', worldBefore: '', worldAfter: '', history: '' } });
+        const text = result.messages.map(m => m.content).join('\n');
+        expect(text).toContain('观澜、祁山 应忠于各自的人格');
+        expect(text).toContain('小欢 指玩家在故事内使用的身份');
+        expect(text).toContain('不等于人物必须服从');
+        expect(text).toContain('正因为玩家始终掌握故事的走向与取舍');
+        expect(text).not.toContain('{{user}}');
+        expect(text).not.toContain('{{char}}');
     });
 });

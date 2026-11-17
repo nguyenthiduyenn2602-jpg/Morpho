@@ -1,3 +1,5 @@
+import relaxedNightScreening from '../assets/presets/morpho-night-screening-relaxed-v6.27.json';
+import { buildNarrativeAgency } from './narrativeAgency';
 import type {
     CharacterProfile,
     Message,
@@ -469,14 +471,31 @@ const mergeNightScreeningBackstageAndDebts = (document: StoryTheaterPresetDocume
     };
 };
 
+const withNarrativeAgency = (document: StoryTheaterPresetDocument): StoryTheaterPresetDocument => {
+    const prompts = [...document.prompts];
+    const index = prompts.findIndex(prompt => prompt.id === 'nmj-v64-section-story-end');
+    prompts.splice(index < 0 ? prompts.length : index, 0, {
+        id: 'morpho-narrative-agency', name: '玩家执笔权与人物自主性', enabled: true, role: 'system',
+        content: buildNarrativeAgency('{{user}}', '{{char}}'),
+    });
+    return { ...document, prompts };
+};
+
 export const BUILTIN_NIGHT_SCREENING_PRESET: StoryTheaterPreset = {
     id: 'builtin-night-screening',
     name: '糯米鸡｜夜班放映室 V6.27',
     format: 'sullyos-story-preset',
-    document: mergeNightScreeningBackstageAndDebts(normalizeDocument(nightScreeningV627, '糯米鸡｜夜班放映室 V6.27')),
+    document: withNarrativeAgency(mergeNightScreeningBackstageAndDebts(normalizeDocument(nightScreeningV627, '糯米鸡｜夜班放映室 V6.27'))),
     builtIn: true,
     createdAt: 0,
     updatedAt: 0,
+};
+
+export const BUILTIN_RELAXED_NIGHT_SCREENING_PRESET: StoryTheaterPreset = {
+    id: 'builtin-morpho-night-screening-relaxed', name: relaxedNightScreening.name,
+    format: 'sullyos-story-preset',
+    document: withNarrativeAgency(mergeNightScreeningBackstageAndDebts(normalizeDocument(relaxedNightScreening, relaxedNightScreening.name))),
+    builtIn: true, createdAt: 0, updatedAt: 0,
 };
 
 export const BUILTIN_EXPEDITION_PRESET: StoryTheaterPreset = {
@@ -493,9 +512,10 @@ export const BUILTIN_BIOHAZARD_PRESET: StoryTheaterPreset = {
 
 export const withBuiltInStoryPresets = (presets: StoryTheaterPreset[]): StoryTheaterPreset[] => [
     BUILTIN_NIGHT_SCREENING_PRESET,
+    BUILTIN_RELAXED_NIGHT_SCREENING_PRESET,
     BUILTIN_EXPEDITION_PRESET,
     BUILTIN_BIOHAZARD_PRESET,
-    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening') && preset.id !== BUILTIN_EXPEDITION_PRESET.id && preset.id !== BUILTIN_BIOHAZARD_PRESET.id),
+    ...presets.filter(preset => !preset.id.startsWith('builtin-night-screening') && preset.id !== BUILTIN_RELAXED_NIGHT_SCREENING_PRESET.id && preset.id !== BUILTIN_EXPEDITION_PRESET.id && preset.id !== BUILTIN_BIOHAZARD_PRESET.id),
 ];
 
 /**

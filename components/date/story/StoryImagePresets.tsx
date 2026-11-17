@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import type { StoryTheaterImageConfig } from '../../../types';
 import { useOS } from '../../../context/OSContext';
-import { loadStoryImagePresets, saveStoryImagePreset, deleteStoryImagePreset, applyStoryImagePreset, type StoryImagePreset } from '../../../utils/storyImagePresets';
-export default function StoryImagePresets({draft, actorIds, onChange}: {
-    draft: StoryTheaterImageConfig; actorIds: string[]; onChange: (config: StoryTheaterImageConfig) => void;
+import { rememberStoryImagePreset, restoreStoryImagePreset, loadStoryImagePresets, saveStoryImagePreset, deleteStoryImagePreset, applyStoryImagePreset, type StoryImagePreset } from '../../../utils/storyImagePresets';
+export default function StoryImagePresets({draft, actorIds, onChange, storyId}: {
+    storyId: string; draft: StoryTheaterImageConfig; actorIds: string[]; onChange: (config: StoryTheaterImageConfig) => void;
 }) {
     const { addToast } = useOS();
     const [presets, setPresets] = useState<StoryImagePreset[]>([]);
@@ -11,16 +11,26 @@ export default function StoryImagePresets({draft, actorIds, onChange}: {
     const [name, setName] = useState('');
     const [confirmAction, setConfirmAction] = useState<'update' | 'delete' | null>(null);
     const report = (error: unknown) => addToast(error instanceof Error ? error.message : '预设保存失败，请检查本地存储空间', 'error');
-    useEffect(() => { try { setPresets(loadStoryImagePresets()); } catch (error) { report(error); } }, []);
+    useEffect(() => {
+        try {
+            const list = loadStoryImagePresets();
+            const restored = restoreStoryImagePreset(storyId, list);
+            setPresets(list); setSelected(restored?.id || ''); setName(restored?.name || ''); setConfirmAction(null);
+        } catch (error) { report(error); }
+    }, [storyId]);
+    const selectPreset = (id: string) => {
+        setSelected(id);
+        try { rememberStoryImagePreset(storyId, id); } catch (error) { report(error); }
+    };
     const save = (update = false) => {
         try {
             const next = saveStoryImagePreset(name, draft, update ? selected : undefined);
-            setPresets(next); setSelected(next.find(p => p.name === name.trim())!.id); setName(name.trim()); setConfirmAction(null);
+            setPresets(next); selectPreset(next.find(p => p.name === name.trim())!.id); setName(name.trim()); setConfirmAction(null);
             addToast(update ? '预设已更新' : '配图预设已保存，可在其他剧情载入', 'success');
         } catch (error) { report(error); }
     };
     const remove = () => {
-        try { setPresets(deleteStoryImagePreset(selected)); setSelected(''); setName(''); setConfirmAction(null); addToast('预设已删除，当前配图设置保留', 'success'); }
+        try { setPresets(deleteStoryImagePreset(selected)); selectPreset(''); setName(''); setConfirmAction(null); addToast('预设已删除，当前配图设置保留', 'success'); }
         catch (error) { report(error); }
     };
     const field = 'mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-xs';
@@ -29,7 +39,7 @@ export default function StoryImagePresets({draft, actorIds, onChange}: {
         <h3 className='text-sm font-semibold'>我的配图预设</h3>
         <p className='mt-1 text-[10px] leading-5 text-slate-500'>保存画师串、你与各角色的提示词、负面词和画幅，所有剧情共用。API 与自动配图开关保持当前设置。</p>
         <select aria-label='选择配图预设' className={field} value={selected} onChange={event => {
-            const id = event.target.value; setSelected(id); setName(presets.find(p => p.id === id)?.name || ''); setConfirmAction(null);
+            const id = event.target.value; selectPreset(id); setName(presets.find(p => p.id === id)?.name || ''); setConfirmAction(null);
         }}><option value=''>选择预设</option>{presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <button type='button' className={button + ' mt-2 w-full'} disabled={!selected} onClick={() => {
             try {

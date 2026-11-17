@@ -1,3 +1,4 @@
+import { buildDateCharacterPrinciples } from './narrativeAgency';
 /**
  * 见面（DateApp）提示词统一构造器
  *
@@ -158,7 +159,7 @@ export const DATE_STYLE_PRESETS: DateStylePreset[] = [
         hint: '情绪张力拉满，呼吸、心跳、距离感，克制边缘的爆发。',
         peekHint: '张力浓烈，感官冲击具体，空气绷紧',
         block: `### ⭐ 动作与叙述行的写法（风格：浓烈炽热）
-情绪张力拉满。呼吸、心跳、距离感，每一行都往前压一步。
+将已有情绪写得具体，呼吸、心跳和距离感服务于当前事实；张力可以升高或回落，不强行让每一行都升级。
 
 **具体要求**：
 - 感官冲击要具体：温度、力度、停在半空的手
@@ -587,7 +588,7 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string): string => {
 ### 核心规则：一行一念 (One Line per Beat)
 前端解析器基于**换行符**来分割气泡。
 1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**不要整段只用一个情绪，要逐行根据语境切换。** 仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
+2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**逐行根据语境选择，情绪未变时可以连续使用同一标签。** 仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
 3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
 ${char.dateVoiceEnabled ? (getVoicePromptOverride('dateVoice') ?? DATE_VOICE_GUIDE) : ''}
 
@@ -681,7 +682,7 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 
         return {
             messages: [
-                { role: 'system', content: baseContext },
+                { role: 'system', content: baseContext + buildDateCharacterPrinciples(char.name, userProfile?.name || '', true) },
                 { role: 'user', content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` },
             ],
         };
@@ -707,13 +708,14 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         // 向量召回挂到 char.memoryPalaceInjection，buildCoreContext 会读取
         await injectMemoryPalace(char, allMsgs, undefined, userProfile?.name);
         const systemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true, undefined, undefined, { skipTimeAwareness: !isDateTimeAwarenessOn(char) })
-            + buildVNModeBlock(char, userProfile?.name || '');
+            + buildVNModeBlock(char, userProfile?.name || '')
+            + buildDateCharacterPrinciples(char.name, userProfile?.name || '');
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
         const focusLine = isDigDeeperOn(char.dateStyleConfig) ? ` 本轮线索：${pickFocusHint()}。` : '';
         const note = variant === 'send'
-            ? `(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`
-            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并逐行切换情绪，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`;
+            ? `(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据实际内容选择情绪标签，可以连续使用同一标签。叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`
+            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并按实际情绪选择标签，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`;
 
         return {
             messages: [

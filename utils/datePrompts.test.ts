@@ -349,3 +349,21 @@ describe('DatePrompts.buildPeekPayload', () => {
         expect(userMsg).toContain('一张卡片');
     });
 });
+
+
+describe('见面模式人物自主性', () => {
+    it('发送和重写共用新原则，同时保持 VN 格式', async () => {
+        for (const variant of ['send', 'reroll'] as const) {
+            const { messages } = await DatePrompts.buildSessionPayload({ char: makeChar(), userProfile: user, allMsgs: [], emojis: [], userText: '一起走走', variant });
+            const text = sysOf(messages);
+            expect(text).toContain('小白 应忠于各自的人格');
+            expect(text).toContain('阿明 指玩家在故事内使用的身份');
+            expect(text).toContain('情绪允许升高、停留和回落');
+            expect(text).toContain('Visual Novel Mode');
+        }
+    });
+    it('旁观镜头不擅自添加玩家到场', () => {
+        const { messages } = DatePrompts.buildPeekPayload({ char: makeChar(), userProfile: user, allMsgs: [], emojis: [] });
+        expect(sysOf(messages)).toContain('不要自行添加用户到场或双方互动');
+    });
+});
