@@ -91,7 +91,10 @@ describe('stream-required compatibility', () => {
 describe('GG streaming transport preserves multimodal inputs', () => {
     it('targets only the tested GG endpoint and model', () => {
         expect(requiresStreamingTransport('https://gcli.ggchan.dev/v1/chat/completions', 'a-gemini-4-argon')).toBe(true);
+        expect(requiresStreamingTransport('https://gcli.ggchan.dev/v1/chat/completions', '抗截断-agy-gemini-3.8-flash-medium')).toBe(true);
+        expect(requiresStreamingTransport('https://gcli.ggchan.dev/v1/chat/completions', ' 抗截断-agy-gemini-3.8-flash-medium ')).toBe(true);
         expect(requiresStreamingTransport('https://gcli.ggchan.dev.evil.test/v1/chat/completions', 'a-gemini-4-argon')).toBe(false);
+        expect(requiresStreamingTransport('https://other.test/v1/chat/completions', '抗截断-agy-gemini-3.8-flash-medium')).toBe(false);
         expect(requiresStreamingTransport('https://other.test/v1/chat/completions', 'a-gemini-4-argon')).toBe(false);
         expect(requiresStreamingTransport('https://gcli.ggchan.dev/v1/chat/completions', 'other')).toBe(false);
     });

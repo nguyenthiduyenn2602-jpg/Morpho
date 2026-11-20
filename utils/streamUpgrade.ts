@@ -89,11 +89,16 @@ export function streamRequiredRetryBody(body: string, errorText: string): string
 }
 
 
-/** GG Argon requires streaming transport, independently of display preferences. */
+/** GG 的部分模型要求或依赖流式传输，独立于界面里的显示偏好。 */
 export function requiresStreamingTransport(url: string, model: unknown): boolean {
     try {
         const target = new URL(url);
+        const modelId = typeof model === 'string' ? model.trim() : '';
+        const requiresStream = modelId === 'a-gemini-4-argon'
+            // 该抗截断路由的短连接测试可非流式返回，但朋友圈等长请求会
+            // HTTP 200 + output_tokens=0；必须流式接收后再归一化为普通 JSON。
+            || modelId === '抗截断-agy-gemini-3.8-flash-medium';
         return target.hostname === 'gcli.ggchan.dev' && target.pathname.replace(/\/$/, '') === '/v1/chat/completions'
-            && model === 'a-gemini-4-argon';
+            && requiresStream;
     } catch { return false; }
 }
