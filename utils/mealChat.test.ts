@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { DB } from './db';
 import { applyAssistantPostProcessing, type PostProcessCtx } from './applyAssistantPostProcessing';
-import { confirmMealPurchase, matchMealPurchases, mealChatConfirmationKey, mealChatReplySource } from './mealChat';
-import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
+import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatReplySource, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
 const milk: PantryItem = { id: 'whole', name: '普通牛奶', category: '奶豆', quantity: 3, unit: '盒', expiresAt: '2026-11-24' };
@@ -24,30 +23,6 @@ afterEach(() => {
 });
 
 describe('私聊吃了没', () => {
-    it('实际采购支持多项和未入库食材，重复确认不会重复加库存', async () => {
-        prepareStorage();
-        const state = loadMealPlannerState();
-        const eggs: PantryItem = { id: 'old-eggs', name: '鸡蛋', unit: '个', quantity: 2, category: '肉蛋', expiresAt: '2026-11-22' };
-        saveMealPlannerState({ ...state, inventory: [...state.inventory, eggs], settings: { ...state.settings, chatCharacterId: 'cook' } });
-        const source: Message = { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我今天买了12个鸡蛋，两份牛肉' };
-        const matches = matchMealPurchases(source.content, [eggs]);
-        expect(mealChatReplySource(source)).toBe(1);
-        expect(matches.map(match => match.purchase)).toEqual([
-            { name: '鸡蛋', quantity: 12, unit: '个', category: '肉蛋' },
-            { name: '牛肉', quantity: 2, unit: '份', category: '肉蛋' },
-        ]);
-        expect(matchMealPurchases('我打算买12个鸡蛋', [eggs])).toEqual([]);
-        expect(matchMealPurchases('我买了一个背包', [])).toEqual([]);
-        expect(loadMealPlannerState().inventory.find(item => item.id === eggs.id)?.quantity).toBe(2);
-        const [eggMatch, beefMatch] = matches;
-        const eggKey = mealChatConfirmationKey(source, eggMatch);
-        await Promise.all([confirmMealPurchase(eggKey, eggMatch.purchase!), confirmMealPurchase(eggKey, eggMatch.purchase!)]);
-        await confirmMealPurchase(mealChatConfirmationKey(source, beefMatch), beefMatch.purchase!);
-        await confirmMealPurchase('another-purchase', eggMatch.purchase!);
-        const inventory = loadMealPlannerState().inventory;
-        expect(inventory.filter(item => item.name === '鸡蛋').map(item => [item.quantity, item.expiresAt])).toEqual([[24, undefined], [2, '2026-11-22']]);
-        expect(inventory.find(item => item.name === '牛肉')?.quantity).toBe(2);
-    });
     it('私聊收到真实回复才生成卡片，卡片先于角色正文落库，重复处理不会多发', async () => {
         prepareStorage();
         const state = loadMealPlannerState();
@@ -55,6 +30,9 @@ describe('私聊吃了没', () => {
         const messages: Message[] = [
             { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我喝了牛奶' },
         ];
+        for (const content of ['我买了3盒牛奶', '我买了3盒牛奶，花了30元']) {
+            expect(mealChatReplySource({ ...messages[0], content })).toBeUndefined();
+        }
         vi.spyOn(DB, 'getMessagesFromId').mockImplementation(async () => ({ messages: [...messages], totalCount: messages.length }));
         vi.spyOn(DB, 'getRecentMessagesByCharId').mockImplementation(async () => [...messages]);
         const save = vi.spyOn(DB, 'saveMessage').mockImplementation(async message => {

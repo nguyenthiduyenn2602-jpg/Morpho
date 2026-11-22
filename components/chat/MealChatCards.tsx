@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Message } from '../../types';
-import { confirmMealChat, confirmMealPurchase, mealChatConfirmationKey, mealChatStockQuantity, type MealChatMatch, type MealPurchase } from '../../utils/mealChat';
+import { confirmMealChat, mealChatConfirmationKey, mealChatStockQuantity, type MealChatMatch } from '../../utils/mealChat';
 import { loadMealPlannerState, MEAL_PLANNER_STORAGE_KEY, MEAL_STORAGE_CHANGED, type PantryItem } from '../../utils/mealPlanner';
 
 function MealChoice({ item, portion, fromDish, disabled, onConfirm }: {
@@ -45,12 +45,11 @@ export default function MealChatCards({ message, matches }: { message: Message; 
             window.removeEventListener('storage', onStorage);
         };
     }, []);
-    const resolve = async (key: string, choice?: { item: PantryItem; quantity: number } | { purchase: MealPurchase }) => {
+    const resolve = async (key: string, choice?: { item: PantryItem; quantity: number }) => {
         setBusy(key);
         setError(undefined);
         try {
-            if (choice && 'purchase' in choice) await confirmMealPurchase(key, choice.purchase);
-            else await confirmMealChat(key, choice);
+            await confirmMealChat(key, choice);
         } catch (err) {
             setError({ key, text: err instanceof Error ? err.message : '操作未保存，请重试' });
         } finally {
@@ -69,18 +68,13 @@ export default function MealChatCards({ message, matches }: { message: Message; 
                 {fromDish && <div className="text-xs text-[#62715d]">可能用在{fromDish}里</div>}
                 {receipt && 'skipped' in receipt && <div role="status" className="text-xs text-[#62715d]">这次不记</div>}
                 {receipt && 'name' in receipt && <div role="status">{receipt.purchase ? '已入库' : '已扣除'} {receipt.name} {receipt.quantity}{receipt.unit}</div>}
-                {!receipt && <>
-                    {purchase ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce3d7] bg-white p-2.5">
-                        <span className="text-xs text-[#62715d]">入库 {purchase.quantity}{purchase.unit}</span>
-                        <button type="button" disabled={busy !== undefined} onClick={() => void resolve(key, { purchase })}
-                            className="rounded-lg bg-[#52694f] px-3 py-1 text-white disabled:opacity-40">确认入库</button>
-                    </div> : <>
+                {!receipt && purchase && <div className="text-xs text-[#62715d]">私聊入库已停用</div>}
+                {!receipt && !purchase && <>
                     <div className="text-xs text-[#62715d]">
                         {choices.length > 1 ? '选一项确认扣除' : !choices.length ? '对应存货已用完或移除' : null}
                     </div>
                     {choices.map(item => <MealChoice key={item.id} item={item} portion={portion} fromDish={fromDish} disabled={busy !== undefined}
                         onConfirm={(candidate, quantity) => void resolve(key, { item: candidate, quantity })} />)}
-                    </>}
                     <button type="button" disabled={busy !== undefined} onClick={() => void resolve(key)}
                         className="text-xs text-[#62715d] underline disabled:opacity-40">这次不记</button>
                     {error?.key === key && <div role="alert" className="text-xs text-red-700">{error.text}</div>}
