@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { DB } from './db';
+import { applyAssistantPostProcessing, type PostProcessCtx } from './applyAssistantPostProcessing';
 import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
@@ -22,33 +23,43 @@ afterEach(() => {
 });
 
 describe('私聊吃了没', () => {
-    it('角色回复落库后才追加确认卡，重复收取不会多发一张', async () => {
+    it('私聊收到真实回复才生成卡片，卡片先于角色正文落库，重复处理不会多发', async () => {
         prepareStorage();
         const state = loadMealPlannerState();
         saveMealPlannerState({ ...state, settings: { ...state.settings, chatCharacterId: 'cook' } });
         const messages: Message[] = [
-            { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我喝了牛奶', metadata: { mealChatEligible: true } },
+            { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我喝了牛奶' },
         ];
         vi.spyOn(DB, 'getMessagesFromId').mockImplementation(async () => ({ messages: [...messages], totalCount: messages.length }));
+        vi.spyOn(DB, 'getRecentMessagesByCharId').mockImplementation(async () => [...messages]);
         const save = vi.spyOn(DB, 'saveMessage').mockImplementation(async message => {
             const id = messages.length + 1;
             messages.push({ ...message, timestamp: message.timestamp ?? id, id });
             return id;
         });
-        expect(await appendMealChatReplyCard('cook', 1)).toBe(false);
+        const ctx: PostProcessCtx = {
+            char: { id: 'cook', name: '角色' } as PostProcessCtx['char'],
+            userProfile: { name: '我' } as PostProcessCtx['userProfile'],
+            emojis: [], contextMsgs: [...messages], fullMessages: [], initialData: {}, historyMsgCount: 1,
+            xhsCaches: { xsecTokenCache: new Map(), noteTitleCache: new Map(), commentUserIdCache: new Map(), commentParentIdCache: new Map() },
+            api: { baseUrl: '', headers: {}, effectiveApi: { baseUrl: '', apiKey: '', model: '' } },
+            hooks: { setMessages: vi.fn(), addToast: vi.fn() }, instantRender: true,
+            beforeReplyBubbles: () => appendMealChatReplyCard('cook', 1),
+        };
+        await applyAssistantPostProcessing('', ctx);
         expect(save).not.toHaveBeenCalled();
-        messages.push({ id: 2, charId: 'cook', timestamp: 2, role: 'assistant', type: 'text', content: '喝完啦？' });
-        expect(await appendMealChatReplyCard('cook', 1)).toBe(true);
+        await applyAssistantPostProcessing('好喝吗？\n下次再买。', ctx);
         expect(await appendMealChatReplyCard('cook', 1)).toBe(false);
-        expect(save).toHaveBeenCalledOnce();
-        expect(messages[2]).toMatchObject({ role: 'assistant', type: 'meal_card', metadata: { mealChatSourceId: 1 } });
-        expect(placeMealCardsBeforeReplies(messages).map(message => message.id)).toEqual([1, 3, 2]);
+        expect(messages.map(message => message.type)).toEqual(['text', 'meal_card', 'text', 'text']);
+        expect(messages[1]).toMatchObject({ role: 'assistant', type: 'meal_card', metadata: { mealChatSourceId: 1 } });
+        expect(placeMealCardsBeforeReplies(messages).map(message => message.id)).toEqual([1, 2, 3, 4]);
         expect(loadMealPlannerState().inventory[0].quantity).toBe(3);
     });
 
     it('未说明时按一份，俩苹果和两盒牛奶各提取成两份库存单位', () => {
         expect(mealChatStockQuantity(matchMealChat('我吃了苹果', [apple])[0].portion, apple.unit)).toBe(1);
         expect(mealChatStockQuantity(matchMealChat('我吃了俩苹果', [apple])[0].portion, apple.unit)).toBe(2);
+        expect(mealChatStockQuantity(matchMealChat('我吃俩苹果了', [apple])[0].portion, apple.unit)).toBe(2);
         expect(mealChatStockQuantity(matchMealChat('我喝了两盒牛奶', [milk])[0].portion, milk.unit)).toBe(2);
         expect(mealChatStockQuantity(matchMealChat('我喝了半盒牛奶', [milk])[0].portion, milk.unit)).toBe(0.5);
         expect(mealChatStockQuantity(matchMealChat('我喝了两杯牛奶', [milk])[0].portion, milk.unit)).toBeUndefined();

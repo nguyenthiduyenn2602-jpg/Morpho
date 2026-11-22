@@ -540,7 +540,6 @@ const processInboxMessageWithPostProcessing = async (
   const mealPending = getInstantChatPending(message.charId);
   const mealReply = !!mealPending?.mealSourceId && message.taskUuid === mealPending.uuid;
   const dispatchProgress = () => {
-    if (mealReply) return; // 先让确认卡和这一段回复一起上屏。
     window.dispatchEvent(new CustomEvent('active-msg-progress', {
       detail: { charId: message.charId },
     }));
@@ -628,6 +627,9 @@ const processInboxMessageWithPostProcessing = async (
   }
 
   await applyAssistantPostProcessing(message.body || '', {
+    beforeReplyBubbles: mealReply && mealPending?.mealSourceId
+      ? () => appendMealChatReplyCard(message.charId, mealPending.mealSourceId!, { timestamp: persistTimestamp })
+      : undefined,
     char,
     userProfile,
     emojis,
@@ -1777,11 +1779,6 @@ const flushInboxToChatImpl = async () => {
         } catch (e) {
           log.warn('降级存原稿路径消费情绪结果失败（原稿已落库，不受影响）', { messageId: message.messageId, error: e });
         }
-      }
-
-      const mealPending = getInstantChatPending(message.charId);
-      if (mealPending?.mealSourceId && message.taskUuid === mealPending.uuid && message.body?.trim()) {
-        await appendMealChatReplyCard(message.charId, mealPending.mealSourceId, { deliveryId: message.messageId, timestamp: persistTimestamp });
       }
 
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',

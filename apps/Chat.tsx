@@ -1157,8 +1157,8 @@ const Chat: React.FC = () => {
             && replyTarget.metadata?.mealReceiptType !== 'completed' ? replyTarget.metadata?.mealPlan : undefined;
         const completionRequested = !!quotedPlan && isChatMealFinished(text);
         const mealRequest = canHandleMeals && !completionRequested && !detectFirstUrl(text) ? requestedChatMeal(text) : undefined;
-        if (canHandleMeals && !mealRequest && !completionRequested) {
-            msgPayload.metadata = { ...metadata, mealChatEligible: true };
+        if (type === 'text') {
+            msgPayload.metadata = { ...metadata, mealChatEligible: canHandleMeals && !mealRequest && !completionRequested };
         }
         
         if (replyTarget) {

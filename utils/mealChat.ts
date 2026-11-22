@@ -38,6 +38,7 @@ const stockWords = /冰箱|生鲜区|冷冻区|存货|库存|家里.{0,6}食材/
 const stockQuestion = /还有|还剩|有什么|有啥|有没有|到期|过期|临期|清一清|清理|先用|先吃|看看|看下|查一下|用掉|能做|能吃/;
 const mealAdviceRequest = /(?:下顿|下一餐|早餐|午餐|晚餐|宵夜|早饭|午饭|晚饭|今晚|明天|冰箱|食材|家里|剩下的).{0,16}(?:吃点什么|吃什么|吃啥|做点什么|做什么|做啥|怎么搭配|能搭什么)|(?:推荐|安排|想个|帮我想|不知道|纠结).{0,12}(?:吃什么|吃啥|菜单|食谱|菜谱|下一餐|下顿|晚饭|晚餐)/;
 const consumed = /(?:吃|喝)(?:了|过|完(?:了)?|掉(?:了)?)|(?:把|将).*(?:吃|喝)(?:光|完|掉|了)/;
+const consumedWithFinalLe = /^[^吃喝]{0,12}[吃喝]([^吃喝。！？?!]+?)(?:了|啦|咯)[呀呢哦~～]*$/;
 const uncertain = /没有|还没|没[吃喝]|不曾|不[吃喝]|别[吃喝]|[没不]有.*[吃喝]|想|打算|准备|计划|如果|要是|假如|明天|还要|会不会|[吗么？?]|(?:你|他|她|它|他们|她们)(?:刚|已经|也|都|又|今天|中午|晚上|早上|昨晚)*[吃喝]|(?:给|让|看见|看到|听说).*?[吃喝]/;
 
 export function requestedChatMeal(text: string): string | undefined {
@@ -112,10 +113,13 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
     const names = [...new Set([...stock.map(item => normalizeFoodAlias(item.name.trim())), ...generalFoods])]
         .sort((a, b) => b.length - a.length);
     const found = new Map<string, MealChatMatch>();
-    for (const clause of text.split(/[。！!；;，,\n]/)) {
+    for (const rawClause of text.split(/[。！!；;，,\n]/)) {
+        const clause = rawClause.trim();
         const action = consumed.exec(clause);
-        if (!action || uncertain.test(clause)) continue;
-        const foodText = normalizeFoodAlias(/^(?:把|将)/.test(action[0])
+        if (uncertain.test(clause)) continue;
+        const suffixFood = !action ? consumedWithFinalLe.exec(clause)?.[1] : undefined;
+        if (!action && !suffixFood) continue;
+        const foodText = normalizeFoodAlias(!action ? suffixFood! : /^(?:把|将)/.test(action[0])
             ? action[0].replace(/^(?:把|将)/, '')
             : clause.slice(action.index + action[0].length));
         const spans: Array<[number, number]> = [];
@@ -143,7 +147,7 @@ export const mealChatReceiptKey = (message: Message, food: string) =>
         message.metadata?.mealChatSourceAt ?? message.timestamp, food]);
 
 export function mealChatReplySource(message: Message | undefined): number | undefined {
-    if (message?.role !== 'user' || message.type !== 'text' || !message.metadata?.mealChatEligible) return;
+    if (message?.role !== 'user' || message.type !== 'text' || message.metadata?.mealChatEligible === false) return;
     const state = loadMealPlannerState();
     if (state.settings.chatCharacterId === message.charId && matchMealChat(message.content, state.inventory).length) {
         return message.id;
@@ -153,7 +157,7 @@ export function mealChatReplySource(message: Message | undefined): number | unde
 const mealCardsInFlight = new Set<string>();
 
 export async function appendMealChatReplyCard(
-    charId: string, sourceId: number, options?: { replyId?: number; deliveryId?: string; timestamp?: number },
+    charId: string, sourceId: number, options?: { alreadyDelivered?: boolean; timestamp?: number },
 ): Promise<boolean> {
     const key = JSON.stringify([charId, sourceId]);
     if (mealCardsInFlight.has(key)) return false;
@@ -163,21 +167,19 @@ export async function appendMealChatReplyCard(
         const source = messages.find(message => message.id === sourceId);
         if (!source || !mealChatReplySource(source)) return false;
         if (messages.some(message => message.metadata?.mealChatSourceId === sourceId)) return false;
-        const reply = messages.find(message => message.id > sourceId && message.role === 'assistant'
-            && !message.metadata?.mealChatConfirmation
-            && (options?.replyId === undefined || message.id === options.replyId)
-            && (options?.deliveryId === undefined || message.metadata?.activeMsg2?.messageId === options.deliveryId));
-        if (!reply) return false;
+        const reply = options?.alreadyDelivered ? messages.find(message => message.id > sourceId && message.role === 'assistant'
+            && !message.metadata?.mealChatConfirmation) : undefined;
+        if (options?.alreadyDelivered && !reply) return false;
         const mealChat = matchMealChat(source.content, loadMealPlannerState().inventory);
         await DB.saveMessage({
             charId, role: 'assistant', type: 'meal_card', timestamp: options?.timestamp,
             content: `吃了没 · 待确认：${mealChat.map(match => match.food).join('、')}`,
             metadata: { source: 'eat', mealChat, mealChatConfirmation: true, mealChatSourceId: sourceId,
-                mealChatSourceAt: source.timestamp, mealChatReplyId: reply.id },
+                mealChatSourceAt: source.timestamp, ...(reply ? { mealChatReplyId: reply.id } : {}) },
         });
         return true;
     } catch (error) {
-        console.warn('[MealChat] 回复已送达，饮食确认卡保存失败', error);
+        console.warn('[MealChat] 饮食确认卡保存失败', error);
         return false;
     } finally {
         mealCardsInFlight.delete(key);

@@ -295,6 +295,7 @@ export interface PostProcessHooks {
 }
 
 export interface PostProcessCtx {
+    beforeReplyBubbles?: () => Promise<unknown>;
     char: CharacterProfile;
     userProfile: UserProfile;
     emojis: Emoji[];
@@ -506,6 +507,12 @@ export async function applyAssistantPostProcessing(
 
     // 把一段文本 (parseAndExecuteActions / HTML 之外的部分) 渲染成气泡并落库 —— 双语 / 表情 / 引用 / 分段
     // 与原 inline 末尾逻辑一致。抽出来是为了让"执行功能前的本轮正文 A"能在二轮前先展示, 二轮结果 B 复用同一套。
+    let replyBubblesStarted = false;
+    const runBeforeReplyBubbles = async () => {
+        if (replyBubblesStarted) return;
+        replyBubblesStarted = true;
+        await ctx.beforeReplyBubbles?.();
+    };
     const renderAndPersist = async (rawContent: string, firstThinkingChain: string | null): Promise<void> => {
         let firstMeta: any = firstThinkingChain ? { thinkingChain: firstThinkingChain } : null;
         const takeMeta = (base: any): any => {
@@ -553,6 +560,7 @@ export async function applyAssistantPostProcessing(
         let content = ChatParser.sanitize(rawContent, { keepCitations: true });
         content = content.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, '').trim();
         if (!content) return;
+        await runBeforeReplyBubbles();
 
         const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(content);
         let globalMsgIndex = 0;
@@ -1843,6 +1851,7 @@ export async function applyAssistantPostProcessing(
     // ─── Step 5: HTML 卡片 ───
     if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
         const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
+        if (blocks.length) await runBeforeReplyBubbles();
         for (const blk of blocks) {
             try {
                 await DB.saveMessage({

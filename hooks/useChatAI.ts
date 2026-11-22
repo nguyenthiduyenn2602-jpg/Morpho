@@ -1334,7 +1334,7 @@ export const useChatAI = ({
                     ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
                 }, char.id, undefined, onInstantPosted);
                 if (instantResult.ok && instantResult.outcome === 'received' && mealSourceId
-                    && await appendMealChatReplyCard(char.id, mealSourceId)) {
+                    && await appendMealChatReplyCard(char.id, mealSourceId, { alreadyDelivered: true })) {
                     setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                 }
                 if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
@@ -1916,19 +1916,12 @@ export const useChatAI = ({
             // 而是包装 setMessages——后处理第一条真实消息落库上屏的**同一帧**清预览。
             // 交接前预览一直挂着，交接后 instantRender 秒速回填，视觉上是"预览定格成正式消息"。
             let previewHandedOver = false;
-            let firstMealReplyId: number | undefined;
             const previewHandoverIds = new Set<number>();
             const previewBaselineMaxId = contextMsgs.reduce(
                 (maxId, message) => Math.max(maxId, message.id),
                 Number.NEGATIVE_INFINITY,
             );
             const setMessagesWithPreviewHandover = (msgs: Message[]) => {
-                if (mealSourceId && firstMealReplyId === undefined) {
-                    firstMealReplyId = msgs.find(message =>
-                        message.id > previewBaselineMaxId && message.role === 'assistant' && !message.metadata?.mealChatConfirmation
-                        && !message.metadata?.activeMsg2,
-                    )?.id;
-                }
                 const newlyHandedOverIds = findNewStreamPreviewHandoverIds(
                     msgs,
                     latestStreamPreviewBubbles,
@@ -1947,7 +1940,7 @@ export const useChatAI = ({
                     // ref 在 setMessages 触发渲染前同步更新，首帧就能关掉正式气泡的 fade-in。
                     onStreamPreviewHandover?.(char.id, [...handoverIds]);
                 }
-                if (!mealSourceId) setMessages(msgs);
+                setMessages(msgs);
                 if (!previewHandedOver) {
                     previewHandedOver = true;
                     setStreamingBubbles([]);
@@ -2003,6 +1996,7 @@ export const useChatAI = ({
                 commentParentIdCache: commentParentIdCacheRef.current,
             };
             await applyAssistantPostProcessing(rawAiContent, {
+                beforeReplyBubbles: mealSourceId ? () => appendMealChatReplyCard(char.id, mealSourceId) : undefined,
                 char,
                 userProfile,
                 emojis,
@@ -2031,7 +2025,7 @@ export const useChatAI = ({
                     musicHooks: loadMusicHooks() ?? undefined,
                 },
                 // 流式预览已把气泡展示过 → 落库免打字延迟，秒回填（未预览时行为不变）
-                instantRender: streamPreviewShown || !!mealSourceId,
+                instantRender: streamPreviewShown,
                 // Phase 0: 本地 fetch 路径保持原逻辑, 不跳 2nd-pass LLM, 也没有结构化 directives。
                 skipSecondPassLLM: false,
                 directives: [],
@@ -2054,12 +2048,6 @@ export const useChatAI = ({
             // 当前挂载的 Chat（可能是切走又切回后新 mount 的实例，本闭包的 setMessages
             // 对它已失效）会重新 reloadMessages；用户不在该会话时补未读 + toast。
             // instant 路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
-            if (mealSourceId) {
-                if (firstMealReplyId !== undefined) {
-                    await appendMealChatReplyCard(char.id, mealSourceId, { replyId: firstMealReplyId });
-                }
-                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-            }
             announceChatGen(CHAT_GEN_EVENTS.replyArrived, { charId: char.id, charName: char.name });
 
             // 防穿帮闸：仅当这轮请求真的成功、回执确实进了模型上下文并产出已落库的
