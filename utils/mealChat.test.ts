@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { DB } from './db';
 import { applyAssistantPostProcessing, type PostProcessCtx } from './applyAssistantPostProcessing';
+import { confirmMealPurchase, matchMealPurchases, mealChatConfirmationKey, mealChatReplySource } from './mealChat';
 import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
@@ -23,6 +24,30 @@ afterEach(() => {
 });
 
 describe('私聊吃了没', () => {
+    it('实际采购支持多项和未入库食材，重复确认不会重复加库存', async () => {
+        prepareStorage();
+        const state = loadMealPlannerState();
+        const eggs: PantryItem = { id: 'old-eggs', name: '鸡蛋', unit: '个', quantity: 2, category: '肉蛋', expiresAt: '2026-11-22' };
+        saveMealPlannerState({ ...state, inventory: [...state.inventory, eggs], settings: { ...state.settings, chatCharacterId: 'cook' } });
+        const source: Message = { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我今天买了12个鸡蛋，两份牛肉' };
+        const matches = matchMealPurchases(source.content, [eggs]);
+        expect(mealChatReplySource(source)).toBe(1);
+        expect(matches.map(match => match.purchase)).toEqual([
+            { name: '鸡蛋', quantity: 12, unit: '个', category: '肉蛋' },
+            { name: '牛肉', quantity: 2, unit: '份', category: '肉蛋' },
+        ]);
+        expect(matchMealPurchases('我打算买12个鸡蛋', [eggs])).toEqual([]);
+        expect(matchMealPurchases('我买了一个背包', [])).toEqual([]);
+        expect(loadMealPlannerState().inventory.find(item => item.id === eggs.id)?.quantity).toBe(2);
+        const [eggMatch, beefMatch] = matches;
+        const eggKey = mealChatConfirmationKey(source, eggMatch);
+        await Promise.all([confirmMealPurchase(eggKey, eggMatch.purchase!), confirmMealPurchase(eggKey, eggMatch.purchase!)]);
+        await confirmMealPurchase(mealChatConfirmationKey(source, beefMatch), beefMatch.purchase!);
+        await confirmMealPurchase('another-purchase', eggMatch.purchase!);
+        const inventory = loadMealPlannerState().inventory;
+        expect(inventory.filter(item => item.name === '鸡蛋').map(item => [item.quantity, item.expiresAt])).toEqual([[24, undefined], [2, '2026-11-22']]);
+        expect(inventory.find(item => item.name === '牛肉')?.quantity).toBe(2);
+    });
     it('私聊收到真实回复才生成卡片，卡片先于角色正文落库，重复处理不会多发', async () => {
         prepareStorage();
         const state = loadMealPlannerState();
@@ -63,6 +88,23 @@ describe('私聊吃了没', () => {
         expect(mealChatStockQuantity(matchMealChat('我喝了两盒牛奶', [milk])[0].portion, milk.unit)).toBe(2);
         expect(mealChatStockQuantity(matchMealChat('我喝了半盒牛奶', [milk])[0].portion, milk.unit)).toBe(0.5);
         expect(mealChatStockQuantity(matchMealChat('我喝了两杯牛奶', [milk])[0].portion, milk.unit)).toBeUndefined();
+    });
+
+    it('炒饭优先匹配成品，否则分开提示米饭和原料，并保留各自的库存单位', () => {
+        const lamb: PantryItem = { id: 'lamb', name: '羊肉', unit: '克', quantity: 500, category: '肉蛋' };
+        const rice: PantryItem = { id: 'rice', name: '米饭', unit: '碗', quantity: 2, category: '主食' };
+        const ready: PantryItem = { ...rice, id: 'ready', name: '羊肉炒饭', unit: '份' };
+        const message = '我吃了一份羊肉炒饭';
+        expect(matchMealChat(message, [lamb, rice])).toEqual([
+            { food: '羊肉', itemIds: ['lamb'], fromDish: '羊肉炒饭' },
+            { food: '米饭', itemIds: ['rice'], fromDish: '羊肉炒饭' },
+        ]);
+        expect(matchMealChat(message, [lamb, rice, ready])).toEqual([
+            { food: '羊肉炒饭', itemIds: ['ready'], portion: { quantity: 1, unit: '份' } },
+        ]);
+        expect(mealChatStockQuantity(undefined, rice.unit, '羊肉炒饭')).toBe(1);
+        expect(mealChatStockQuantity(undefined, lamb.unit, '羊肉炒饭')).toBeUndefined();
+        expect(mealChatStockQuantity(matchMealChat('炒饭用了100克羊肉', [lamb])[0].portion, lamb.unit)).toBe(100);
     });
     it('泛称保留两种候选，明确品类只对应那一种，同时可识别两个食物', () => {
         expect(matchMealChat('我把牛奶喝了', [milk, skim])).toEqual([{ food: '牛奶', itemIds: ['whole', 'skim'] }]);

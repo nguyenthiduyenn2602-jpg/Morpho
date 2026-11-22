@@ -417,7 +417,7 @@ const EatApp: React.FC = () => {
                     <section className="mt-4 rounded-3xl border border-[#e4e7de] bg-white p-4">
                         <h2 className="font-black text-[#52684f]">私聊饮食记录</h2>
                         <ul className="mt-2 space-y-1 text-sm text-[#62715d]">
-                            {chatFoodLog.map(entry => <li key={entry.key}>{entry.name} · {entry.quantity}{entry.unit}</li>)}
+                            {chatFoodLog.map(entry => <li key={entry.key}>{entry.purchase ? '入库 · ' : ''}{entry.name} · {entry.quantity}{entry.unit}</li>)}
                         </ul>
                     </section>
                 )}
@@ -463,6 +463,7 @@ const EatApp: React.FC = () => {
                                 <button onClick={() => { removeInventory(selectedItem.id); setSelectedItemId(''); }} className="h-9 px-3 rounded-full bg-rose-50 text-rose-500 text-xs font-bold flex items-center gap-1.5"><Trash size={15} />吃完了</button>
                             </div>
                         </section>}
+                        <p className="px-2 text-right text-xs leading-relaxed text-[#62715d]">建议按「份」存放食材，吃掉多少份，就扣多少份。</p>
                     </div>
                 )}
 

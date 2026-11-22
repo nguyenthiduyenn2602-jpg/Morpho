@@ -69,7 +69,7 @@ export interface MealPlannerState {
     plans: DailyMealPlan[];
     chatPlans?: DailyMealPlan[];
     settings: MealPlannerSettings;
-    chatConsumption?: Record<string, { name: string; quantity: number; unit: string; recordedAt?: number } | { skipped: true }>;
+    chatConsumption?: Record<string, { name: string; quantity: number; unit: string; recordedAt?: number; purchase?: true } | { skipped: true }>;
 }
 
 export const MEAL_PLANNER_STORAGE_KEY = 'morpho_eat_state_v1';

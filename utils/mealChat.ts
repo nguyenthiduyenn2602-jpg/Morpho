@@ -1,14 +1,20 @@
 import type { APIConfig, Message } from '../types';
 import { DB } from './db';
-import { generateDailyMealPlan, loadMealPlannerState, MEAL_STORAGE_CHANGED, saveMealPlannerState, type PantryItem } from './mealPlanner';
+import { generateDailyMealPlan, loadMealPlannerState, MEAL_STORAGE_CHANGED, saveMealPlannerState, type PantryCategory, type PantryItem } from './mealPlanner';
+
+export type MealPurchase = Pick<PantryItem, 'name' | 'quantity' | 'unit' | 'category'>;
 
 export interface MealChatMatch {
     food: string;
     itemIds: string[];
     portion?: { quantity: number; unit?: string };
+    fromDish?: string;
+    purchase?: MealPurchase;
 }
 
-const portionAtEnd = /(?:^|[^\d.一二三四五六七八九十零两俩仨半])((?:\d+(?:\.\d+)?)|[一二三四五六七八九十零两]{1,3}|[俩仨半])\s*(千克|公斤|毫升|kg|ml|[个盒瓶袋杯碗盘份片块根颗枚只条碟串包罐克升gL])?\s*$/i;
+const amountToken = /((?:\d+(?:\.\d+)?)|[一二三四五六七八九十零两]{1,3}|[俩仨半])\s*(千克|公斤|毫升|kg|ml|[个盒瓶袋杯碗盘份片块根颗枚只条碟串包罐克升斤gL])?/;
+const portionAtEnd = new RegExp(`(?:^|[^\\d.一二三四五六七八九十零两俩仨半])${amountToken.source}\\s*$`, 'i');
+const portionAtStart = new RegExp(`^${amountToken.source}\\s*`, 'i');
 const digitNames = '零一二三四五六七八九';
 
 function parsePortion(prefix: string): MealChatMatch['portion'] {
@@ -24,7 +30,8 @@ function parsePortion(prefix: string): MealChatMatch['portion'] {
     if (Number.isFinite(quantity) && quantity >= 0.01) return { quantity, unit };
 }
 
-export function mealChatStockQuantity(portion: MealChatMatch['portion'], stockUnit: string): number | undefined {
+export function mealChatStockQuantity(portion: MealChatMatch['portion'], stockUnit: string, fromDish?: string): number | undefined {
+    if (fromDish && !/^(份|碗)$/.test(stockUnit.trim())) return;
     if (!portion) return 1;
     if (!portion.unit) return portion.quantity; // 俩、仨
     const aliases: Record<string, string> = { g: '克', kg: '千克', 公斤: '千克', ml: '毫升', l: '升', 颗: '个', 枚: '个', 只: '个' };
@@ -34,6 +41,42 @@ export function mealChatStockQuantity(portion: MealChatMatch['portion'], stockUn
 
 const generalFoods = ['牛奶', '酸奶', '豆浆', '鸡蛋', '面包', '米饭', '面条', '燕麦', '苹果', '橙汁', '饺子', '馒头', '香蕉', '咖啡', '鸡肉', '豆腐', '番茄'];
 const normalizeFoodAlias = (name: string) => name.replace(/水饺/g, '饺子');
+const purchaseCategories: Array<[PantryCategory, RegExp]> = [
+    ['冷冻', /^(?:速冻|冷冻)|^(?:饺子|馄饨|汤圆|虾仁)$/],
+    ['肉蛋', /^(?:鸡蛋|鸭蛋|鹌鹑蛋|牛肉|羊肉|猪肉|鸡肉|鱼肉|排骨|牛腩|鸡胸肉|鸡腿|五花肉|虾|鱼|培根)$/],
+    ['蔬菜', /^(?:青菜|白菜|小白菜|生菜|菠菜|油麦菜|西兰花|番茄|西红柿|胡萝卜|黄瓜|土豆|洋葱|蒜|葱|蘑菇|香菇|彩椒|豆芽|玉米|茄子)$/],
+    ['水果', /^(?:苹果|香蕉|橙子|梨|草莓|蓝莓|葡萄|西瓜|橘子|柚子|猕猴桃|芒果|牛油果)$/],
+    ['奶豆', /^(?:(?:普通|全脂|低脂|脱脂|鲜|纯)?牛奶|酸奶|奶酪|黄油|豆腐|豆浆)$/],
+    ['主食', /^(?:大米|米饭|面条|挂面|面包|吐司|馒头|燕麦|糯米|面粉|意面)$/],
+    ['饮品', /^(?:橙汁|果汁|可乐|咖啡|矿泉水|茶饮|气泡水)$/],
+    ['调味', /^(?:酱油|老抽|生抽|盐|糖|醋|耗油|蚝油|食用油|橄榄油)$/],
+];
+
+export function matchMealPurchases(text: string, inventory: PantryItem[]): MealChatMatch[] {
+    const matches = new Map<string, MealChatMatch>();
+    for (const sentence of text.split(/[。！？!?；;\n]/)) {
+        const action = /^\s*(?:我)?(?:今天|昨天|上午|下午|早上|中午|晚上|刚刚|刚才|刚|还|也|又|顺便|已经|在超市|从超市|回来|去超市|在菜场)*\s*(?:买了|买回来|买回来啦|添置了|补货买了|采购了|囤了)\s*/.exec(sentence);
+        if (!action || /(?:如果|打算|想买|还没|没买|没去|吗|么|要不要)/.test(sentence)) continue;
+        for (const raw of sentence.slice(action[0].length).split(/[、，,]|和|以及/)) {
+            const entry = raw.trim().replace(/^(?:还有|还买了|又买了)\s*/, '').replace(/(?:回来|啦|了|呢|哦)[～~]*$/, '').trim();
+            const prefix = portionAtStart.exec(entry)?.[0];
+            const portion = prefix ? parsePortion(prefix.trim()) : undefined;
+            const name = normalizeFoodAlias(portion ? entry.slice(prefix!.length).trim() : entry);
+            const existing = inventory.find(item => normalizeFoodAlias(item.name.trim()) === name);
+            const category = existing?.category ?? purchaseCategories.find(([, pattern]) => pattern.test(name))?.[0];
+            if (!category || !/^[\p{L}\p{N}][\p{L}\p{N}\s·-]{0,29}$/u.test(name)) break;
+            const unit = portion?.unit ?? existing?.unit ?? '份';
+            const key = JSON.stringify([name, unit]);
+            const quantity = (matches.get(key)?.purchase?.quantity || 0) + (portion?.quantity ?? 1);
+            if (!Number.isFinite(quantity) || quantity > 1_000_000) continue;
+            matches.set(key, { food: existing?.name ?? name, itemIds: [], purchase: {
+                name: existing?.name ?? name, unit, quantity: Math.round(quantity * 100) / 100, category,
+            } });
+        }
+    }
+    return [...matches.values()];
+}
+const namedFriedRice = /(羊肉|牛肉|猪肉|鸡肉|蛋|鸡蛋|虾仁)炒饭/g;
 const stockWords = /冰箱|生鲜区|冷冻区|存货|库存|家里.{0,6}食材/;
 const stockQuestion = /还有|还剩|有什么|有啥|有没有|到期|过期|临期|清一清|清理|先用|先吃|看看|看下|查一下|用掉|能做|能吃/;
 const mealAdviceRequest = /(?:下顿|下一餐|早餐|午餐|晚餐|宵夜|早饭|午饭|晚饭|今晚|明天|冰箱|食材|家里|剩下的).{0,16}(?:吃点什么|吃什么|吃啥|做点什么|做什么|做啥|怎么搭配|能搭什么)|(?:推荐|安排|想个|帮我想|不知道|纠结).{0,12}(?:吃什么|吃啥|菜单|食谱|菜谱|下一餐|下顿|晚饭|晚餐)/;
@@ -115,14 +158,31 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
     const found = new Map<string, MealChatMatch>();
     for (const rawClause of text.split(/[。！!；;，,\n]/)) {
         const clause = rawClause.trim();
-        const action = consumed.exec(clause);
-        if (uncertain.test(clause)) continue;
+        const action = consumed.exec(clause) ?? /(?:炒饭|这道菜|做饭)[^。！？?!]{0,10}?用了/.exec(clause);
+        if (uncertain.test(clause) || /没用|不用/.test(clause)) continue;
         const suffixFood = !action ? consumedWithFinalLe.exec(clause)?.[1] : undefined;
         if (!action && !suffixFood) continue;
         const foodText = normalizeFoodAlias(!action ? suffixFood! : /^(?:把|将)/.test(action[0])
             ? action[0].replace(/^(?:把|将)/, '')
             : clause.slice(action.index + action[0].length));
         const spans: Array<[number, number]> = [];
+        for (const match of foodText.matchAll(namedFriedRice)) {
+            const [dish, protein] = match;
+            const index = match.index!;
+            spans.push([index, index + dish.length]);
+            const prepared = stock.filter(item => item.name.includes(dish));
+            if (prepared.length) {
+                const portion = parsePortion(foodText.slice(0, index));
+                found.set(dish, { food: dish, itemIds: prepared.map(item => item.id), ...(portion ? { portion } : {}) });
+                continue;
+            }
+            for (const ingredient of [protein === '蛋' ? '鸡蛋' : protein, '米饭']) {
+                const candidates = stock.filter(item => !item.name.includes('炒饭') && item.name.includes(ingredient));
+                if (candidates.length) {
+                    found.set(ingredient, { food: ingredient, itemIds: candidates.map(item => item.id), fromDish: dish });
+                }
+            }
+        }
         for (const name of names) {
             let index = foodText.indexOf(name);
             while (index >= 0 && spans.some(([start, end]) => index < end && index + name.length > start)) {
@@ -146,10 +206,14 @@ export const mealChatReceiptKey = (message: Message, food: string) =>
     JSON.stringify([message.charId, message.metadata?.mealChatSourceId ?? message.id,
         message.metadata?.mealChatSourceAt ?? message.timestamp, food]);
 
+export const mealChatConfirmationKey = (message: Message, match: MealChatMatch) =>
+    mealChatReceiptKey(message, match.purchase ? JSON.stringify(['购物', match.food, match.purchase.unit]) : match.food);
+
 export function mealChatReplySource(message: Message | undefined): number | undefined {
     if (message?.role !== 'user' || message.type !== 'text' || message.metadata?.mealChatEligible === false) return;
     const state = loadMealPlannerState();
-    if (state.settings.chatCharacterId === message.charId && matchMealChat(message.content, state.inventory).length) {
+    if (state.settings.chatCharacterId === message.charId
+        && (matchMealChat(message.content, state.inventory).length || matchMealPurchases(message.content, state.inventory).length)) {
         return message.id;
     }
 }
@@ -170,10 +234,11 @@ export async function appendMealChatReplyCard(
         const reply = options?.alreadyDelivered ? messages.find(message => message.id > sourceId && message.role === 'assistant'
             && !message.metadata?.mealChatConfirmation) : undefined;
         if (options?.alreadyDelivered && !reply) return false;
-        const mealChat = matchMealChat(source.content, loadMealPlannerState().inventory);
+        const { inventory } = loadMealPlannerState();
+        const mealChat = [...matchMealChat(source.content, inventory), ...matchMealPurchases(source.content, inventory)];
         await DB.saveMessage({
             charId, role: 'assistant', type: 'meal_card', timestamp: options?.timestamp,
-            content: `吃了没 · 待确认：${mealChat.map(match => match.food).join('、')}`,
+            content: mealChat.map(match => `${match.purchase ? '购物' : '饮食'} · ${match.food}`).join('、'),
             metadata: { source: 'eat', mealChat, mealChatConfirmation: true, mealChatSourceId: sourceId,
                 mealChatSourceAt: source.timestamp, ...(reply ? { mealChatReplyId: reply.id } : {}) },
         });
@@ -229,6 +294,27 @@ export function confirmMealChat(key: string, choice?: { item: PantryItem; quanti
         window.dispatchEvent(new Event(MEAL_STORAGE_CHANGED));
     };
     return withMealStorageLock(commit);
+}
+
+export function confirmMealPurchase(key: string, purchase: MealPurchase) {
+    return withMealStorageLock(() => {
+        const state = loadMealPlannerState();
+        if (state.chatConsumption?.[key]) return;
+        const { name, unit, quantity, category } = purchase;
+        if (!name?.trim() || !unit?.trim() || !Number.isFinite(quantity) || quantity < 0.01 || quantity > 1_000_000) {
+            throw new Error('补货信息不完整，请核对后重新发送');
+        }
+        const existing = state.inventory.find(item => !item.expiresAt && item.unit === unit
+            && normalizeFoodAlias(item.name.trim()) === normalizeFoodAlias(name.trim()));
+        const inventory = existing ? state.inventory.map(item => item.id === existing.id
+            ? { ...item, quantity: Math.round((item.quantity + quantity) * 100) / 100 } : item)
+            : [{ id: `food-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name, unit, quantity, category }, ...state.inventory];
+        saveMealPlannerState({
+            ...state, inventory,
+            chatConsumption: { ...state.chatConsumption, [key]: { name, unit, quantity, purchase: true, recordedAt: Date.now() } },
+        });
+        window.dispatchEvent(new Event(MEAL_STORAGE_CHANGED));
+    });
 }
 
 export function buildMealChatContext(message: Message | undefined, now = new Date()): string {
