@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
     BowlFood,
@@ -26,6 +26,8 @@ import {
     formatMealPlanForChat,
     generateDailyMealPlan,
     loadMealPlannerState,
+    MEAL_PLANNER_STORAGE_KEY,
+    MEAL_STORAGE_CHANGED,
     PantryCategory,
     PantryItem,
     saveMealPlannerState,
@@ -65,7 +67,7 @@ const newItem = (): Omit<PantryItem, 'id'> => ({ name: '', quantity: 1, unit: '�
 
 const EatApp: React.FC = () => {
     const { closeApp, apiConfig, addToast, characters, userProfile } = useOS();
-    const [state, setState] = useState<MealPlannerState>(() => loadMealPlannerState());
+    const [state, setSnapshot] = useState<MealPlannerState>(loadMealPlannerState);
     const [tab, setTab] = useState<Tab>('today');
     const [date, setDate] = useState(localDate);
     const [generating, setGenerating] = useState(false);
@@ -76,9 +78,38 @@ const EatApp: React.FC = () => {
     const [mealActionType, setMealActionType] = useState<string>('');
     const mealPressTimer = useRef<number | null>(null);
 
-    useEffect(() => { saveMealPlannerState(state); }, [state]);
+    const setState = useCallback((update: (current: MealPlannerState) => MealPlannerState) => {
+        const next = update(loadMealPlannerState());
+        try {
+            saveMealPlannerState(next);
+        } catch {
+            addToast('冰箱数据未能保存，请检查存储空间', 'error');
+            return;
+        }
+        setSnapshot(next);
+        window.dispatchEvent(new Event(MEAL_STORAGE_CHANGED));
+    }, [addToast]);
+
+    useEffect(() => {
+        const refresh = () => setSnapshot(loadMealPlannerState());
+        const onStorage = (event: StorageEvent) => {
+            if (event.key === MEAL_PLANNER_STORAGE_KEY || event.key === null) refresh();
+        };
+        window.addEventListener(MEAL_STORAGE_CHANGED, refresh);
+        window.addEventListener('storage', onStorage);
+        return () => {
+            window.removeEventListener(MEAL_STORAGE_CHANGED, refresh);
+            window.removeEventListener('storage', onStorage);
+        };
+    }, []);
 
     const currentPlan = useMemo(() => state.plans.find(plan => plan.date === date), [state.plans, date]);
+    const chatFoodLog = Object.entries(state.chatConsumption || {}).flatMap(([key, entry]) => {
+        if (!('name' in entry) || !entry.recordedAt) return [];
+        const when = new Date(entry.recordedAt);
+        const entryDate = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
+        return entryDate === date ? [{ key, ...entry }] : [];
+    }).sort((a, b) => b.recordedAt! - a.recordedAt!);
     const expiring = useMemo(() => {
         const end = new Date();
         end.setDate(end.getDate() + 3);
@@ -365,6 +396,31 @@ const EatApp: React.FC = () => {
                     </div>
                 )}
 
+                {tab === 'today' && (state.chatPlans || []).some(plan => plan.date === date) && (
+                    <section className="mt-4 rounded-3xl border border-[#e4e7de] bg-white p-4">
+                        <h2 className="font-black text-[#52684f]">私聊安排</h2>
+                        {(state.chatPlans || []).filter(plan => plan.date === date).map(plan => {
+                            const meal = plan.meals[0];
+                            if (!meal) return null;
+                            return <div key={plan.id} className="mt-3 rounded-xl bg-[#f4f7f0] p-3">
+                                <div className="flex justify-between gap-2 text-sm font-bold">
+                                    <span>{meal.type} · {plan.title}</span>
+                                    <span className="shrink-0 text-xs text-[#62715d]">{plan.completedMeals?.includes(meal.type) ? '已吃' : '一人份'}</span>
+                                </div>
+                                <p className="mt-1 text-xs text-[#62715d]">{meal.dishes.map(dish => dish.name).join('、')}</p>
+                                {!!meal.tip && <p className="mt-1 text-xs">{meal.tip}</p>}
+                            </div>;
+                        })}
+                    </section>
+                )}
+                {tab === 'today' && chatFoodLog.length > 0 && (
+                    <section className="mt-4 rounded-3xl border border-[#e4e7de] bg-white p-4">
+                        <h2 className="font-black text-[#52684f]">私聊饮食记录</h2>
+                        <ul className="mt-2 space-y-1 text-sm text-[#62715d]">
+                            {chatFoodLog.map(entry => <li key={entry.key}>{entry.name} · {entry.quantity}{entry.unit}</li>)}
+                        </ul>
+                    </section>
+                )}
                 {tab === 'fridge' && (
                     <div className="space-y-4">
                         <section className="flex items-center justify-between px-1">
@@ -420,6 +476,18 @@ const EatApp: React.FC = () => {
                             <div><span className="text-xs font-bold">饮食方向</span><div className="mt-2 grid grid-cols-3 gap-2">{(['正常吃', '清淡点', '控热量'] as const).map(goal => <button key={goal} onClick={() => setState(prev => ({ ...prev, settings: { ...prev.settings, goal } }))} className={`py-2.5 rounded-xl text-xs font-black border ${state.settings.goal === goal ? 'bg-[#71866e] text-white border-[#71866e]' : 'bg-white border-[#dfded5]'}`}>{goal}</button>)}</div></div>
                             <label className="block"><span className="text-xs font-bold">不吃 / 忌口</span><textarea value={state.settings.dislikes} onChange={event => setState(prev => ({ ...prev, settings: { ...prev.settings, dislikes: event.target.value } }))} placeholder="例如：不吃香菜、海鲜过敏……" className="mt-2 w-full h-24 rounded-xl bg-[#f5f3eb] px-4 py-3 text-sm resize-none outline-none" /></label>
                             <label className="block"><span className="text-xs font-bold">厨房和时间</span><textarea value={state.settings.kitchenNote} onChange={event => setState(prev => ({ ...prev, settings: { ...prev.settings, kitchenNote: event.target.value } }))} placeholder="例如：只有电饭煲；晚饭最多做20分钟" className="mt-2 w-full h-24 rounded-xl bg-[#f5f3eb] px-4 py-3 text-sm resize-none outline-none" /></label>
+                            <div>
+                                <label className="block text-xs font-bold">私聊饮食管家
+                                    <select value={state.settings.chatCharacterId || ''} onChange={event => {
+                                        const chatCharacterId = event.target.value || undefined;
+                                        setState(prev => ({ ...prev, settings: { ...prev.settings, chatCharacterId } }));
+                                    }} className="mt-2 w-full rounded-xl bg-[#f5f3eb] px-4 py-3">
+                                        <option value="">不授权</option>
+                                        {characters.map(character => <option key={character.id} value={character.id}>{character.name}</option>)}
+                                    </select>
+                                </label>
+                                <p className="mt-1 text-[10px] text-[#69766a]">选一位角色。问他晚上吃什么，会按冰箱存货安排一人份；引用菜单说吃完了，就能记下这餐并扣除食材。</p>
+                            </div>
                             <div>
                                 <span className="text-xs font-bold">生成后同步给谁</span>
                                 <p className="text-[10px] text-[#969c93] mt-1">今日饮食会写进所选角色的私聊，角色下次聊天时也能看见。</p>

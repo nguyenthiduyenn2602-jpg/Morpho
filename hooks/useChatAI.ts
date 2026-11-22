@@ -27,6 +27,8 @@ import { callMcpTool, getMcpUseNativeTools, hasWorkerUnreachableMcpServer } from
 import { buildMcpOpenAITools, buildMcpRejectedToolsFallbackBody, buildMcpTextFallbackBody, extractTextFakedMcpCalls, formatMcpToolResult, sanitizeMcpLeadInText, shouldRetryMcpWithoutTools, stripTextFakedMcpCalls, type FakedMcpCall } from '../utils/mcpToolBridge';
 import { buildToolResultMessage, normalizeToolCallsForCompat } from '../utils/toolCallCompat';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { buildMealChatContext } from '../utils/mealChat';
+import { loadMealPlannerState } from '../utils/mealPlanner';
 import {
     isInstantConfigReady,
     sendInstantPushAndAwaitReply,
@@ -847,7 +849,8 @@ export const useChatAI = ({
             // 的 prompt，最后却交给了 IP 或落回本地」——两个钟的问题原样回来。
             const instantPushConfigured = isInstantConfigReady();
             const luckinChatOn = !!luckinChatRef?.current?.active;
-            const latestUserText = [...contextMsgs].reverse().find(message => message.role === 'user')?.content || '';
+            const latestUserMessage = [...contextMsgs].reverse().find(message => message.role === 'user');
+            const latestUserText = latestUserMessage?.content || '';
             // 图片 API 只能由当前打开的客户端调用。明确索图的这一轮必须留在本地；
             // 若用户允许角色主动发图，模型需要先在本地作出生图决定，因此该角色的对话轮也保持本地。
             // 这里只否决本轮的云端生成，不改主动消息配置，worker 后续推来的消息仍可正常接收。
@@ -1007,6 +1010,7 @@ export const useChatAI = ({
                 timelyByWorker: instantChatRoute,
                 extraSystemPrompt: [
                     opts?.extraSystemPrompt?.trim(),
+                    loadMealPlannerState().settings.chatCharacterId === char.id ? buildMealChatContext(latestUserMessage) : '',
                     localImageGenerationEnabled
                         ? (novelAiImageGenerationEnabled
                             ? buildNovelAiDecisionPrompt(charForGen, userProfile)

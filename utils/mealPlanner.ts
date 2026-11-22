@@ -55,6 +55,7 @@ export interface MealPlannerSettings {
     diners: number;
     mealsPerDay: 1 | 2 | 3;
     pushCharacterIds: string[];
+    chatCharacterId?: string;
     /** 旧版单选字段，仅用于迁移已有设置。 */
     pushCharacterId?: string;
     goal: '正常吃' | '清淡点' | '控热量';
@@ -66,10 +67,13 @@ export interface MealPlannerState {
     version: 1;
     inventory: PantryItem[];
     plans: DailyMealPlan[];
+    chatPlans?: DailyMealPlan[];
     settings: MealPlannerSettings;
+    chatConsumption?: Record<string, { name: string; quantity: number; unit: string; recordedAt?: number } | { skipped: true }>;
 }
 
 export const MEAL_PLANNER_STORAGE_KEY = 'morpho_eat_state_v1';
+export const MEAL_STORAGE_CHANGED = 'morpho-eat-state-changed';
 
 export const DEFAULT_MEAL_SETTINGS: MealPlannerSettings = {
     targetKcal: 1600,
@@ -104,7 +108,9 @@ export const loadMealPlannerState = (): MealPlannerState => {
             version: 1,
             inventory: Array.isArray(parsed?.inventory) ? parsed.inventory : [],
             plans: Array.isArray(parsed?.plans) ? parsed.plans.slice(0, 14) : [],
+            chatPlans: Array.isArray(parsed?.chatPlans) ? parsed.chatPlans.slice(0, 30) : [],
             settings: { ...DEFAULT_MEAL_SETTINGS, ...savedSettings, pushCharacterIds },
+            chatConsumption: parsed?.chatConsumption,
         };
     } catch {
         return emptyMealPlannerState();
@@ -176,7 +182,7 @@ export const buildMealPlannerPrompt = (
 
 const normalizedName = (value: unknown): string => text(value, '', 80).replace(/[\s·，,。]/g, '').toLowerCase();
 
-export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3 = 3, inventory: PantryItem[] = []): DailyMealPlan => {
+export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3 = 3, inventory: PantryItem[] = [], strictStock = false): DailyMealPlan => {
     const expectedTypes = mealsPerDay === 1 ? ['一餐'] : mealsPerDay === 2 ? ['第一餐', '第二餐'] : ['早餐', '午餐', '晚餐'];
     const rawMeals = raw?.meals ?? raw?.mealPlan ?? raw?.['餐次'];
     const meals: PlannedMeal[] = (Array.isArray(rawMeals) ? rawMeals : []).map((meal: any, index: number) => {
@@ -186,8 +192,9 @@ export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3
             let ingredients: MealIngredient[] = (Array.isArray(dish?.ingredients) ? dish.ingredients : []).map((ingredient: any) => {
                 const name = text(typeof ingredient === 'string' ? ingredient : (ingredient?.name ?? ingredient?.['食材']), '', 30);
                 const requestedId = text(ingredient?.inventoryId, '', 100) || undefined;
+                const exact = inventory.filter(item => normalizedName(item.name) === normalizedName(name));
                 const matched = inventory.find(item => item.id === requestedId)
-                    || inventory.find(item => normalizedName(item.name) === normalizedName(name));
+                    || (strictStock ? (exact.length === 1 ? exact[0] : undefined) : exact[0]);
                 return {
                     name: name || matched?.name || '食材',
                     quantity: Math.max(0, Number(ingredient?.quantity ?? ingredient?.['数量']) || (typeof ingredient === 'string' ? 1 : 0)),
@@ -201,8 +208,9 @@ export const normalizeMealPlan = (raw: any, date: string, mealsPerDay: 1 | 2 | 3
             if (!ingredients.length && stockUsed.length) {
                 ingredients = stockUsed.map(name => {
                     const key = normalizedName(name);
-                    const matched = inventory.find(item => key.includes(normalizedName(item.name)) || normalizedName(item.name).includes(key));
-                    return { name: matched?.name || name, quantity: 1, unit: matched?.unit || '份', inventoryId: matched?.id, fromStock: Boolean(matched) };
+                    const matched = strictStock ? undefined
+                        : inventory.find(item => key.includes(normalizedName(item.name)) || normalizedName(item.name).includes(key));
+                    return { name: matched?.name || name, quantity: 1, unit: matched?.unit || '份', inventoryId: matched?.id, fromStock: strictStock || Boolean(matched) };
                 });
             }
             return {
@@ -243,7 +251,7 @@ export const formatMealPlanForChat = (plan: DailyMealPlan, userName = '你'): st
         return `${meal.type}：${dishes}`;
     }).join('\n');
     const shopping = plan.shoppingList.length ? `\n顺手补买：${plan.shoppingList.join('、')}` : '';
-    return `【${userName}今日饮食小票 · ${plan.date}】\n${meals}\n全天约 ${plan.totalKcal} kcal${shopping}\n${plan.note}`;
+    return `【${userName}今日饮食小票 · ${plan.date}】\n${meals}\n${plan.meals.length === 1 ? '本餐' : '全天'}约 ${plan.totalKcal} kcal${shopping}\n${plan.note}`;
 };
 
 export const formatMealCompletionForChat = (plan: DailyMealPlan, mealType: string, userName = '你'): string => {
@@ -258,6 +266,7 @@ export const generateDailyMealPlan = async (
     inventory: PantryItem[],
     settings: MealPlannerSettings,
     date: string,
+    chatMeal?: { type: string; request: string },
 ): Promise<DailyMealPlan> => {
     if (!api.baseUrl?.trim() || !api.model?.trim()) throw new Error('请先在设置中配置全局 API 和模型');
     const data = await safeFetchJson(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -270,7 +279,9 @@ export const generateDailyMealPlan = async (
             model: api.model,
             messages: [
                 { role: 'system', content: '你是一位真正会过日子的中国家庭饮食助手。严格按用户库存安排平价、简单、家常的饭菜，只输出合法 JSON。' },
-                { role: 'user', content: buildMealPlannerPrompt(inventory, settings, date) },
+                { role: 'user', content: buildMealPlannerPrompt(inventory, settings, date) + (chatMeal
+                    ? `\n\n本次只安排一人份的${chatMeal.type}。上面的全天目标只供参考，不要把全天热量塞进这一餐。优先用库存，给出适合这一餐的家常搭配，食材总用量不能超过库存。用户本轮需求：${chatMeal.request.slice(0, 500)}`
+                    : '') },
             ],
             temperature: 0.72,
             max_tokens: 4096,
@@ -279,5 +290,7 @@ export const generateDailyMealPlan = async (
     }, 0, 60000, { appId: 'eat', appName: '吃了吗', purpose: '生成家常饮食安排' });
     const content = extractContent(data).trim();
     if (!content) throw new Error('模型没有返回饮食安排');
-    return normalizeMealPlan(extractJsonObject(content), date, settings.mealsPerDay, inventory);
+    const plan = normalizeMealPlan(extractJsonObject(content), date, settings.mealsPerDay, inventory, !!chatMeal);
+    if (chatMeal) plan.meals[0].type = chatMeal.type;
+    return plan;
 };

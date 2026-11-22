@@ -29,6 +29,9 @@ import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER 
 import { isLuckinConfigured } from '../utils/luckinMcpClient';
 import { isLuckinActivatedInMessages, LUCKIN_ACTIVATE_TRIGGER, LUCKIN_DEACTIVATE_TRIGGER } from '../utils/luckinToolBridge';
 import MessageItem, { ThinkingChainBlock } from '../components/chat/MessageItem';
+import MealChatCards from '../components/chat/MealChatCards';
+import { arrangeChatMeal, completeQuotedMeal, isChatMealFinished, matchMealChat, requestedChatMeal } from '../utils/mealChat';
+import { formatMealPlanForChat, loadMealPlannerState, type DailyMealPlan } from '../utils/mealPlanner';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import LuckinMiniApp from '../components/luckin/LuckinMiniApp';
 import LuckinLocationModal from '../components/luckin/LuckinLocationModal';
@@ -165,6 +168,7 @@ const Chat: React.FC = () => {
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+    const [arrangingMeals, setArrangingMeals] = useState<Record<number, string>>({});
 
     const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result' | 'delete-friend' | 'friend-request'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
@@ -1147,6 +1151,16 @@ const Chat: React.FC = () => {
         }
 
         const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
+        const mealState = type === 'text' ? loadMealPlannerState() : undefined;
+        const canHandleMeals = mealState?.settings.chatCharacterId === char.id;
+        const quotedPlan: DailyMealPlan | undefined = canHandleMeals && replyTarget?.type === 'meal_card'
+            && replyTarget.metadata?.mealReceiptType !== 'completed' ? replyTarget.metadata?.mealPlan : undefined;
+        const completionRequested = !!quotedPlan && isChatMealFinished(text);
+        const mealRequest = canHandleMeals && !completionRequested && !detectFirstUrl(text) ? requestedChatMeal(text) : undefined;
+        if (mealState && canHandleMeals && !mealRequest && !completionRequested) {
+            const mealChat = matchMealChat(text, mealState.inventory);
+            if (mealChat.length) msgPayload.metadata = { ...metadata, mealChat };
+        }
         
         if (replyTarget) {
             msgPayload.replyTo = {
@@ -1293,6 +1307,37 @@ const Chat: React.FC = () => {
 
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
+
+        if (completionRequested && quotedPlan) {
+            try {
+                if (quotedPlan.meals.length !== 1) throw new Error('这张卡是全天安排，请到吃了没标记具体哪一餐');
+                addToast(await completeQuotedMeal(char.id, quotedPlan.id, quotedPlan.meals[0].type), 'success');
+            } catch (error) {
+                addToast(error instanceof Error ? error.message : '用餐记录未保存', 'error');
+            }
+        }
+        if (mealRequest) {
+            setArrangingMeals(previous => ({ ...previous, [savedUserMsgId]: char.id }));
+            try {
+                const plan = await arrangeChatMeal(apiConfig, char.id, localDateKey, mealRequest, text);
+                const mealUserName = userProfile.name?.trim() || '你';
+                await DB.saveMessage({
+                    charId: char.id, role: 'assistant', type: 'meal_card',
+                    content: formatMealPlanForChat(plan, mealUserName),
+                    metadata: { source: 'eat', mealPlanId: plan.id, mealPlanDate: plan.date, mealPlan: plan, mealUserName, chatMeal: true },
+                });
+                if (activeCharIdRef.current === char.id) await reloadMessages(visibleCountRef.current);
+            } catch (error) {
+                addToast(error instanceof Error ? error.message : '饮食安排生成失败', 'error');
+            } finally {
+                setArrangingMeals(previous => {
+                    const next = { ...previous };
+                    delete next[savedUserMsgId];
+                    return next;
+                });
+            }
+        }
+        if (activeCharIdRef.current !== char.id) return;
 
         // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
         // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
@@ -2907,7 +2952,7 @@ const Chat: React.FC = () => {
     }), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
-    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
+    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget, apiConfig, localDateKey, userProfile.name]);
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     // 兜底：正常情况下 OSContext 启动时一定会保底一个角色，char 不该为空。
     // 但若 init 期间某个 store 读取失败（数据其实还在 IndexedDB 里），characters 可能暂时为空，
@@ -3604,6 +3649,13 @@ const Chat: React.FC = () => {
                             regeneratingGeneratedImage={regeneratingGeneratedImageIds.has(m.id)}
                             thinkingChainOptions={thinkingChainOptions}
                         />
+                        {!selectionMode && m.role === 'user' && m.type === 'text' && m.metadata?.mealChat?.length > 0 && (
+                            <MealChatCards message={m} matches={m.metadata.mealChat} />
+                        )}
+                        {!selectionMode && m.type === 'meal_card' && m.metadata?.chatMeal && (
+                            <button type="button" onClick={() => handleQuickReply(m)}
+                                className="ml-14 mb-3 rounded-full bg-[#eef4ec] px-3 py-1 text-xs text-[#475f43]">引用菜单</button>
+                        )}
                         {showToolTrace && (
                             <div className={`px-3 mb-4 ${breaksWithNext ? toolTracePullClass : ''}`}>
                                 <div className="ml-12 text-[10px] leading-relaxed text-slate-400">
@@ -3620,6 +3672,11 @@ const Chat: React.FC = () => {
                     原版精致观感 = 小号 (w-1) + 轻脉冲. 但原版用的 Tailwind 自定义类 animate-dot-pulse
                     CDN 没生成 (一换就消失), 原版色 slate-400/70 又太淡看不见. 解法: 自己写 inline @keyframes
                     (不依赖 CDN) 还原脉冲, 用实色 slate-400 (峰值满不透明) 保证看得见, 尺寸回到原版 w-1. */}
+                {!selectionMode && Object.values(arrangingMeals).includes(char.id) && (
+                    <div role="status" className="ml-12 mb-4 w-fit animate-pulse rounded-2xl bg-[#eef4ec] px-4 py-2 text-xs text-[#475f43]">
+                        正在安排今日饮食…
+                    </div>
+                )}
                 {instantSendingActive && !selectionMode && (
                     <div className="flex justify-end px-3 -mt-1 -mb-4">
                         <style>{`@keyframes chatPendingDot{0%,80%,100%{opacity:.35;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}`}</style>

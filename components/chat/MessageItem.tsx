@@ -2997,7 +2997,7 @@ const MessageItem = React.memo(({
                         </div>
                     )}
                     <div className="pt-2 border-t border-dashed border-[#c8c1aa] flex items-center justify-between">
-                        <span className="text-[10px] font-bold">{isCompletionReceipt ? '本餐合计' : '全天合计'}</span>
+                        <span className="text-[10px] font-bold">{isCompletionReceipt || meals.length === 1 ? '本餐合计' : '全天合计'}</span>
                         <span className="text-[13px] font-black tabular-nums text-[#60725d]">{isCompletionReceipt ? (Number(meals[0]?.kcal) || 0) : (Number(plan.totalKcal) || 0)} kcal</span>
                     </div>
                 </div>
