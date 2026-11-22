@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { DB } from './db';
 import { applyAssistantPostProcessing, type PostProcessCtx } from './applyAssistantPostProcessing';
-import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatReplySource, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
+import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatReplySource, mealChatSourceForTurn, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
 const milk: PantryItem = { id: 'whole', name: '普通牛奶', category: '奶豆', quantity: 3, unit: '盒', expiresAt: '2026-11-24' };
@@ -30,6 +30,8 @@ describe('私聊吃了没', () => {
         const messages: Message[] = [
             { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我喝了牛奶' },
         ];
+        expect(mealChatSourceForTurn([...messages, { ...messages[0], id: 2, content: '今天还不错' }])).toBe(1);
+        expect(mealChatSourceForTurn([...messages, { ...messages[0], id: 2, role: 'assistant', content: '好喝吗？' }])).toBeUndefined();
         for (const content of ['我买了3盒牛奶', '我买了3盒牛奶，花了30元']) {
             expect(mealChatReplySource({ ...messages[0], content })).toBeUndefined();
         }
@@ -66,6 +68,28 @@ describe('私聊吃了没', () => {
         expect(mealChatStockQuantity(matchMealChat('我喝了两盒牛奶', [milk])[0].portion, milk.unit)).toBe(2);
         expect(mealChatStockQuantity(matchMealChat('我喝了半盒牛奶', [milk])[0].portion, milk.unit)).toBe(0.5);
         expect(mealChatStockQuantity(matchMealChat('我喝了两杯牛奶', [milk])[0].portion, milk.unit)).toBeUndefined();
+    });
+
+    it('明确说一个食物时支持库存简称、括号备注和按份库存', () => {
+        const puff: PantryItem = { ...apple, id: 'puff', name: '奶油泡芙（冷藏）', unit: '份' };
+        const chocolate: PantryItem = { ...puff, id: 'choc', name: '巧克力泡芙' };
+        const found = matchMealChat('我吃了一个泡芙', [puff, chocolate]);
+        expect(found).toEqual([{ food: '泡芙', itemIds: ['puff', 'choc'], portion: { quantity: 1, unit: '个' } }]);
+        expect(matchMealChat('我吃了一个奶油泡芙', [puff, chocolate])[0].itemIds).toEqual(['puff']);
+        expect(mealChatStockQuantity(found[0].portion, puff.unit)).toBe(1);
+        expect(mealChatStockQuantity(found[0].portion, '袋')).toBeUndefined();
+    });
+
+    it('外卖、随手买的零食和无对应库存不出扣减卡，同句明确来自冰箱的食物仍可记', () => {
+        const burger: PantryItem = { ...apple, id: 'burger', name: '汉堡', unit: '份' };
+        expect(matchMealChat('我吃了一个冰淇淋', [apple, burger])).toEqual([]);
+        expect(matchMealChat('我吃了一个外卖点的汉堡', [burger])).toEqual([]);
+        expect(matchMealChat('我点的外卖到了，我吃了一个汉堡', [burger])).toEqual([]);
+        expect(matchMealChat('我吃了一个苹果，刚在楼下买的', [apple])).toEqual([]);
+        expect(matchMealChat('我吃了一个随手买的苹果', [apple])).toEqual([]);
+        expect(matchMealChat('吃了一个苹果？', [apple])).toEqual([]);
+        expect(matchMealChat('我没点外卖，我吃了一个苹果', [apple]).map(match => match.food)).toEqual(['苹果']);
+        expect(matchMealChat('外卖到了，我也吃了一个冰箱里的苹果', [apple, burger]).map(match => match.food)).toEqual(['苹果']);
     });
 
     it('炒饭优先匹配成品，否则分开提示米饭和原料，并保留各自的库存单位', () => {

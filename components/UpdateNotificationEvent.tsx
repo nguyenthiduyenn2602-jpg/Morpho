@@ -55,11 +55,19 @@ export const UpdateNotificationPopup: React.FC<{onClose: () => void}> = ({onClos
         <section role="dialog" aria-modal="true" aria-labelledby="morpho-release-title" className="morpho-release-sheet w-full max-w-sm max-h-[85dvh] overflow-y-auto rounded-3xl p-6 text-slate-800">
             <div className="morpho-release-stamp" aria-hidden="true">🦋</div><p className="text-xs font-bold tracking-widest morpho-release-kicker">MORPHO · {MORPHO_RELEASE.date}</p>
             <h2 id="morpho-release-title" className="mt-3 text-xl font-bold">{MORPHO_RELEASE.title}</h2>
-            <p className="morpho-release-intro">给现实中的你一封来信，<br />也给故事里的你们，多一点色彩。</p><div className="morpho-release-cards mt-5 space-y-4 text-sm leading-6">
-                <div><h3 className="font-bold">✉ Morpho 热线 · 写给大壮</h3><p className="mt-1 text-slate-600">法律疑问、不舒服的规则，或生活中的小困扰，都可以写成一封来信。首版支持免费文字投稿，可自愿留下邮箱等待回信。</p></div>
-                <div><h3 className="font-bold">🎨 见面剧情 · 配图更顺手</h3><p className="mt-1 text-slate-600">生图导演可以单独配置 API，复用预设、搜索模型、测试连接。画师串、人物提示词、负面词和画幅，也能命名保存、跨剧情载入。</p></div>
+            <p className="morpho-release-intro">天冷了，今天想吃点什么？</p>
+            <div className="morpho-release-cards mt-5 space-y-4 text-sm leading-6">
+                <div>
+                    <h3 className="font-bold">🍲 吃了什么，私聊里说一声</h3>
+                    <p className="mt-1 text-slate-600">授权一位角色后，吃过的东西匹配到冰箱库存，他会在下一轮回复开头发「饮食」卡片。点确认才扣库存。外卖和顺手买的零食照常聊。</p>
+                </div>
+                <div>
+                    <h3 className="font-bold">🧺 入库手动记，花销归记账本</h3>
+                    <p className="mt-1 text-slate-600">新买的食材目前仍要在冰箱里手动添加。两边各记各的，饮食卡片不会触发记账。</p>
+                </div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-slate-500">热线投稿可能由 AI 辅助整理，并在隐去可识别信息后用于公开讨论；不保证逐一回复。提交前请阅读栏目说明。</p>
+            <p className="mt-4 text-xs leading-5 text-slate-500">肉类、水饺、意面等建议按「份」入库。水果按「个」或「份」都可以，拜托角色记录时，尽量用和冰箱里一样的量词。</p>
+            <p className="mt-2 text-xs leading-5 font-bold morpho-release-kicker">祝你在冬日健康饮食。❄️</p>
             <button type="button" onClick={view} className="morpho-release-primary mt-5 w-full rounded-2xl py-3 text-sm font-bold text-white">查看完整更新说明</button>
             <button type="button" onClick={close} className="mt-2 w-full py-3 text-xs text-slate-500">知道啦，继续使用</button>
             <p className="mt-1 text-center text-[10px] text-slate-400">这份小更新，留在使用帮助里等你回看</p>

@@ -1,4 +1,4 @@
-import { MORPHO_RELEASE } from '../utils/morphoRelease';
+import { MORPHO_RELEASE_HISTORY } from '../utils/morphoRelease';
 
 import React, { useEffect, useState } from 'react';
 import { useOS } from '../context/OSContext';
@@ -94,11 +94,11 @@ interface ChangelogEntry {
     accent: string;
 }
 
-const CHANGELOG_ENTRIES: ChangelogEntry[] = [{
-    id: MORPHO_RELEASE.id, title: MORPHO_RELEASE.title, subtitle: MORPHO_RELEASE.subtitle,
-    date: MORPHO_RELEASE.date, src: import.meta.env.BASE_URL + MORPHO_RELEASE.path,
+const CHANGELOG_ENTRIES: ChangelogEntry[] = MORPHO_RELEASE_HISTORY.map(release => ({
+    id: release.id, title: release.title, subtitle: release.subtitle,
+    date: release.date, src: import.meta.env.BASE_URL + release.path,
     accent: 'from-[#fdfcf9] to-[#f1eee8] border-[#e5dfd4]',
-}];
+}));
 
 type Tab = 'faq' | 'changelog';
 

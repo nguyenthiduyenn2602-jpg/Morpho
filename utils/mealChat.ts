@@ -13,6 +13,7 @@ export interface MealChatMatch {
 
 const amountToken = /((?:\d+(?:\.\d+)?)|[一二三四五六七八九十零两]{1,3}|[俩仨半])\s*(千克|公斤|毫升|kg|ml|[个盒箱瓶袋杯碗盘份片块根颗枚只条碟串包罐克升斤gL])?/;
 const portionAtEnd = new RegExp(`(?:^|[^\\d.一二三四五六七八九十零两俩仨半])${amountToken.source}\\s*$`, 'i');
+const portionAtStart = new RegExp(`^${amountToken.source}\\s*`, 'i');
 const digitNames = '零一二三四五六七八九';
 
 function parsePortion(prefix: string): MealChatMatch['portion'] {
@@ -33,12 +34,17 @@ export function mealChatStockQuantity(portion: MealChatMatch['portion'], stockUn
     if (!portion) return 1;
     if (!portion.unit) return portion.quantity; // 俩、仨
     const aliases: Record<string, string> = { g: '克', kg: '千克', 公斤: '千克', ml: '毫升', l: '升', 颗: '个', 枚: '个', 只: '个' };
-    const normalize = (value: string) => aliases[value.toLowerCase()] ?? value;
-    return normalize(portion.unit) === normalize(stockUnit) ? portion.quantity : undefined;
+    const normalize = (value: string) => aliases[value.trim().toLowerCase()] ?? value.trim();
+    const statedUnit = normalize(portion.unit);
+    const inventoryUnit = normalize(stockUnit);
+    if (statedUnit === inventoryUnit || (inventoryUnit === '份' && statedUnit === '个' && portion.quantity === 1)) {
+        return portion.quantity;
+    }
 }
 
 const generalFoods = ['牛奶', '酸奶', '豆浆', '鸡蛋', '面包', '米饭', '面条', '燕麦', '苹果', '橙汁', '饺子', '馒头', '香蕉', '咖啡', '鸡肉', '豆腐', '番茄'];
 const normalizeFoodAlias = (name: string) => name.replace(/水饺/g, '饺子');
+const pantryLabel = (name: string) => normalizeFoodAlias(name.trim()).replace(/\s*[（(][^（）()]+[）)]\s*$/, '').trim();
 const namedFriedRice = /(羊肉|牛肉|猪肉|鸡肉|蛋|鸡蛋|虾仁)炒饭/g;
 const stockWords = /冰箱|生鲜区|冷冻区|存货|库存|家里.{0,6}食材/;
 const stockQuestion = /还有|还剩|有什么|有啥|有没有|到期|过期|临期|清一清|清理|先用|先吃|看看|看下|查一下|用掉|能做|能吃/;
@@ -46,6 +52,16 @@ const mealAdviceRequest = /(?:下顿|下一餐|早餐|午餐|晚餐|宵夜|早�
 const consumed = /(?:吃|喝)(?:了|过|完(?:了)?|掉(?:了)?)|(?:把|将).*(?:吃|喝)(?:光|完|掉|了)/;
 const consumedWithFinalLe = /^[^吃喝]{0,12}[吃喝]([^吃喝。！？?!]+?)(?:了|啦|咯)[呀呢哦~～]*$/;
 const uncertain = /没有|还没|没[吃喝]|不曾|不[吃喝]|别[吃喝]|[没不]有.*[吃喝]|想|打算|准备|计划|如果|要是|假如|明天|还要|会不会|[吗么？?]|(?:你|他|她|它|他们|她们)(?:刚|已经|也|都|又|今天|中午|晚上|早上|昨晚)*[吃喝]|(?:给|让|看见|看到|听说).*?[吃喝]/;
+const statedFridgeOrigin = /从(?:家里)?冰箱(?:里)?(?:拿|取|找|剩)|(?:冰箱里|冰箱|库存|自家存的)的|用(?:了)?(?:冰箱里|家里存的|库存)/;
+const statedOutsideOrigin = /外卖|外送|店里吃|在外面吃|餐馆吃|餐厅吃|食堂吃|别人请|同事请|同事给|朋友给|(?:刚|现|随手|顺手|路上|楼下|便利店|超市|小卖部)[^，。；！?！,]{0,10}买(?:的|来|了)|(?:餐厅|店里|网上|平台|手机上)[^，。；！?！,]{0,8}点的/;
+
+function mealClausesWithStockPossible(text: string): string[] {
+    return text.split(/[。！!；;\n]/).flatMap(sentence => {
+        const clauses = sentence.split(/[，,]/);
+        const fromOutside = statedOutsideOrigin.test(sentence.replace(/(?:没|没有|不)(?:有)?(?:点|吃|叫)外卖/g, ''));
+        return clauses.filter(clause => statedFridgeOrigin.test(clause) || !fromOutside);
+    });
+}
 
 export function requestedChatMeal(text: string): string | undefined {
     if (/昨天|昨晚|昨早|明天|后天|吃了|吃过|(?:你们?|他们?|她们?)(?:今天|晚上|今晚|想|打算|准备|要)*吃/.test(text)) return;
@@ -116,10 +132,9 @@ export function completeQuotedMeal(charId: string, planId: string, type: string)
 // stay a choice between every matching stocked variant.
 export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMatch[] {
     const stock = inventory.filter(item => item.quantity > 0 && item.name.trim());
-    const names = [...new Set([...stock.map(item => normalizeFoodAlias(item.name.trim())), ...generalFoods])]
-        .sort((a, b) => b.length - a.length);
+    const stockNames = stock.flatMap(item => [normalizeFoodAlias(item.name.trim()), pantryLabel(item.name)]);
     const found = new Map<string, MealChatMatch>();
-    for (const rawClause of text.split(/[。！!；;，,\n]/)) {
+    for (const rawClause of mealClausesWithStockPossible(text)) {
         const clause = rawClause.trim();
         const action = consumed.exec(clause) ?? /(?:炒饭|这道菜|做饭)[^。！？?!]{0,10}?用了/.exec(clause);
         if (uncertain.test(clause) || /没用|不用/.test(clause)) continue;
@@ -128,6 +143,16 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
         const foodText = normalizeFoodAlias(!action ? suffixFood! : /^(?:把|将)/.test(action[0])
             ? action[0].replace(/^(?:把|将)/, '')
             : clause.slice(action.index + action[0].length));
+        // Let a clearly named portion match a narrower inventory label, e.g. 泡芙 → 奶油泡芙.
+        const spokenNames = new Set<string>();
+        for (const part of foodText.split(/[、。！!；;，,\n]|和|以及/)) {
+            const segment = part.trim();
+            const prefix = portionAtStart.exec(segment)?.[0];
+            if (!prefix || !parsePortion(prefix.trim())) continue;
+            const name = segment.slice(prefix.length).replace(/(?:吃|喝)(?:完|掉|光)?了$|[呀啦哦呢吧~～]+$/g, '').trim();
+            if (/^[\p{L}]{2,12}$/u.test(name)) spokenNames.add(name);
+        }
+        const names = [...new Set([...stockNames, ...spokenNames, ...generalFoods])].sort((a, b) => b.length - a.length);
         const spans: Array<[number, number]> = [];
         for (const match of foodText.matchAll(namedFriedRice)) {
             const [dish, protein] = match;
@@ -152,10 +177,11 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
                 index = foodText.indexOf(name, index + name.length);
             }
             if (index < 0) continue;
-            const candidates = stock.filter(item => {
-                const itemName = normalizeFoodAlias(item.name.trim());
-                return generalFoods.includes(name) ? itemName.includes(name) : itemName === name;
-            });
+            const exact = stock.filter(item => normalizeFoodAlias(item.name.trim()) === name || pantryLabel(item.name) === name);
+            const candidates = generalFoods.includes(name)
+                ? stock.filter(item => pantryLabel(item.name).includes(name))
+                : exact.length ? exact
+                    : spokenNames.has(name) ? stock.filter(item => pantryLabel(item.name).endsWith(name)) : [];
             if (!candidates.length) continue;
             spans.push([index, index + name.length]);
             const portion = parsePortion(foodText.slice(0, index));
@@ -177,6 +203,15 @@ export function mealChatReplySource(message: Message | undefined): number | unde
     const state = loadMealPlannerState();
     if (state.settings.chatCharacterId === message.charId && matchMealChat(message.content, state.inventory).length) {
         return message.id;
+    }
+}
+
+export function mealChatSourceForTurn(messages: Message[]): number | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.role === 'assistant' && !message.metadata?.mealChatConfirmation) break;
+        const source = mealChatReplySource(message);
+        if (source !== undefined) return source;
     }
 }
 
