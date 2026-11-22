@@ -1458,7 +1458,7 @@ export const useChatAI = ({
             // 只允许标签外确实属于普通文字的部分预览。
             // 每次 onDelta 基于累计全文全量重算（safeFetchJson 重试会重开流，天然重置）；
             // 正文尾句和思考内容只在累计文本确实变化时触发重渲染。
-            const streamUiEligible = !!userStream && !toolModeActive && !bilingualActive;
+            const streamUiEligible = !!userStream && !toolModeActive && !bilingualActive && !mealSourceId;
             const streamPreviewEligible = streamUiEligible;
             const streamThinkingEligible = streamUiEligible && payload.flags.thinkingActive;
             // 预览真的上过屏才置 true → 后处理落库时跳过拟人打字延迟（instantRender），
@@ -1916,18 +1916,18 @@ export const useChatAI = ({
             // 而是包装 setMessages——后处理第一条真实消息落库上屏的**同一帧**清预览。
             // 交接前预览一直挂着，交接后 instantRender 秒速回填，视觉上是"预览定格成正式消息"。
             let previewHandedOver = false;
-            let hasPersistedReply = false;
+            let firstMealReplyId: number | undefined;
             const previewHandoverIds = new Set<number>();
             const previewBaselineMaxId = contextMsgs.reduce(
                 (maxId, message) => Math.max(maxId, message.id),
                 Number.NEGATIVE_INFINITY,
             );
             const setMessagesWithPreviewHandover = (msgs: Message[]) => {
-                if (mealSourceId && !hasPersistedReply) {
-                    hasPersistedReply = msgs.some(message =>
+                if (mealSourceId && firstMealReplyId === undefined) {
+                    firstMealReplyId = msgs.find(message =>
                         message.id > previewBaselineMaxId && message.role === 'assistant' && !message.metadata?.mealChatConfirmation
                         && !message.metadata?.activeMsg2,
-                    );
+                    )?.id;
                 }
                 const newlyHandedOverIds = findNewStreamPreviewHandoverIds(
                     msgs,
@@ -1947,7 +1947,7 @@ export const useChatAI = ({
                     // ref 在 setMessages 触发渲染前同步更新，首帧就能关掉正式气泡的 fade-in。
                     onStreamPreviewHandover?.(char.id, [...handoverIds]);
                 }
-                setMessages(msgs);
+                if (!mealSourceId) setMessages(msgs);
                 if (!previewHandedOver) {
                     previewHandedOver = true;
                     setStreamingBubbles([]);
@@ -2031,7 +2031,7 @@ export const useChatAI = ({
                     musicHooks: loadMusicHooks() ?? undefined,
                 },
                 // 流式预览已把气泡展示过 → 落库免打字延迟，秒回填（未预览时行为不变）
-                instantRender: streamPreviewShown,
+                instantRender: streamPreviewShown || !!mealSourceId,
                 // Phase 0: 本地 fetch 路径保持原逻辑, 不跳 2nd-pass LLM, 也没有结构化 directives。
                 skipSecondPassLLM: false,
                 directives: [],
@@ -2054,8 +2054,11 @@ export const useChatAI = ({
             // 当前挂载的 Chat（可能是切走又切回后新 mount 的实例，本闭包的 setMessages
             // 对它已失效）会重新 reloadMessages；用户不在该会话时补未读 + toast。
             // instant 路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
-            if (hasPersistedReply && mealSourceId && await appendMealChatReplyCard(char.id, mealSourceId)) {
-                setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
+            if (mealSourceId) {
+                if (firstMealReplyId !== undefined) {
+                    await appendMealChatReplyCard(char.id, mealSourceId, { replyId: firstMealReplyId });
+                }
+                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
             }
             announceChatGen(CHAT_GEN_EVENTS.replyArrived, { charId: char.id, charName: char.name });
 

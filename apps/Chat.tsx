@@ -30,7 +30,7 @@ import { isLuckinConfigured } from '../utils/luckinMcpClient';
 import { isLuckinActivatedInMessages, LUCKIN_ACTIVATE_TRIGGER, LUCKIN_DEACTIVATE_TRIGGER } from '../utils/luckinToolBridge';
 import MessageItem, { ThinkingChainBlock } from '../components/chat/MessageItem';
 import MealChatCards from '../components/chat/MealChatCards';
-import { arrangeChatMeal, completeQuotedMeal, isChatMealFinished, requestedChatMeal } from '../utils/mealChat';
+import { arrangeChatMeal, completeQuotedMeal, isChatMealFinished, placeMealCardsBeforeReplies, requestedChatMeal } from '../utils/mealChat';
 import { formatMealPlanForChat, loadMealPlannerState, type DailyMealPlan } from '../utils/mealPlanner';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import LuckinMiniApp from '../components/luckin/LuckinMiniApp';
@@ -2882,10 +2882,10 @@ const Chat: React.FC = () => {
             if (idx >= 0) {
                 const start = Math.max(0, idx - WINDOW_RADIUS);
                 const end = Math.min(base.length, idx + WINDOW_RADIUS + 1);
-                return base.slice(start, end);
+                return placeMealCardsBeforeReplies(base.slice(start, end));
             }
         }
-        return base.slice(-visibleCount);
+        return placeMealCardsBeforeReplies(base.slice(-visibleCount));
     }, [messages, char?.id, char?.hideSystemLogs, visibleCount, windowedFocusMsgId]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);

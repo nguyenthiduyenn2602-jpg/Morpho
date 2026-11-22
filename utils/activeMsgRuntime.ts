@@ -537,7 +537,10 @@ const processInboxMessageWithPostProcessing = async (
   // 用一个独立的 side-channel 事件 'active-msg-progress': OSContext 监听它后只 setLastMsgTimestamp,
   // 不 fire toast / 不增加未读 / 不 resolve sendInstantPush 的 one-shot promise。
   // 单条 inbox message 进来时 fire 一次 'active-msg-received' 即可保证 toast / 未读 / 通知一次发生。
+  const mealPending = getInstantChatPending(message.charId);
+  const mealReply = !!mealPending?.mealSourceId && message.taskUuid === mealPending.uuid;
   const dispatchProgress = () => {
+    if (mealReply) return; // 先让确认卡和这一段回复一起上屏。
     window.dispatchEvent(new CustomEvent('active-msg-progress', {
       detail: { charId: message.charId },
     }));
@@ -1777,8 +1780,8 @@ const flushInboxToChatImpl = async () => {
       }
 
       const mealPending = getInstantChatPending(message.charId);
-      if (mealPending?.mealSourceId && message.taskUuid === mealPending.uuid && isLastChunk(message) && message.body?.trim()) {
-        await appendMealChatReplyCard(message.charId, mealPending.mealSourceId, persistTimestamp);
+      if (mealPending?.mealSourceId && message.taskUuid === mealPending.uuid && message.body?.trim()) {
+        await appendMealChatReplyCard(message.charId, mealPending.mealSourceId, { deliveryId: message.messageId, timestamp: persistTimestamp });
       }
 
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',

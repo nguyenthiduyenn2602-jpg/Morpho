@@ -5,6 +5,31 @@ import { generateDailyMealPlan, loadMealPlannerState, MEAL_STORAGE_CHANGED, save
 export interface MealChatMatch {
     food: string;
     itemIds: string[];
+    portion?: { quantity: number; unit?: string };
+}
+
+const portionAtEnd = /(?:^|[^\d.一二三四五六七八九十零两俩仨半])((?:\d+(?:\.\d+)?)|[一二三四五六七八九十零两]{1,3}|[俩仨半])\s*(千克|公斤|毫升|kg|ml|[个盒瓶袋杯碗盘份片块根颗枚只条碟串包罐克升gL])?\s*$/i;
+const digitNames = '零一二三四五六七八九';
+
+function parsePortion(prefix: string): MealChatMatch['portion'] {
+    const match = prefix.match(portionAtEnd);
+    if (!match) return;
+    const [, amount, unit] = match;
+    if (!unit && !/^[俩仨]$/.test(amount)) return;
+    const number = amount.replace(/两|俩/g, '二').replace('仨', '三');
+    const [tens, ones] = number.split('十');
+    const quantity = amount === '半' ? 0.5 : /^\d/.test(number) ? Number(number)
+        : ones !== undefined ? (tens ? digitNames.indexOf(tens) : 1) * 10 + (ones ? digitNames.indexOf(ones) : 0)
+        : digitNames.indexOf(number);
+    if (Number.isFinite(quantity) && quantity >= 0.01) return { quantity, unit };
+}
+
+export function mealChatStockQuantity(portion: MealChatMatch['portion'], stockUnit: string): number | undefined {
+    if (!portion) return 1;
+    if (!portion.unit) return portion.quantity; // 俩、仨
+    const aliases: Record<string, string> = { g: '克', kg: '千克', 公斤: '千克', ml: '毫升', l: '升', 颗: '个', 枚: '个', 只: '个' };
+    const normalize = (value: string) => aliases[value.toLowerCase()] ?? value;
+    return normalize(portion.unit) === normalize(stockUnit) ? portion.quantity : undefined;
 }
 
 const generalFoods = ['牛奶', '酸奶', '豆浆', '鸡蛋', '面包', '米饭', '面条', '燕麦', '苹果', '橙汁', '饺子', '馒头', '香蕉', '咖啡', '鸡肉', '豆腐', '番茄'];
@@ -106,7 +131,8 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
             });
             if (!candidates.length) continue;
             spans.push([index, index + name.length]);
-            found.set(name, { food: name, itemIds: candidates.map(item => item.id) });
+            const portion = parsePortion(foodText.slice(0, index));
+            found.set(name, { food: name, itemIds: candidates.map(item => item.id), ...(portion ? { portion } : {}) });
         }
     }
     return [...found.values()];
@@ -126,7 +152,9 @@ export function mealChatReplySource(message: Message | undefined): number | unde
 
 const mealCardsInFlight = new Set<string>();
 
-export async function appendMealChatReplyCard(charId: string, sourceId: number, timestamp?: number): Promise<boolean> {
+export async function appendMealChatReplyCard(
+    charId: string, sourceId: number, options?: { replyId?: number; deliveryId?: string; timestamp?: number },
+): Promise<boolean> {
     const key = JSON.stringify([charId, sourceId]);
     if (mealCardsInFlight.has(key)) return false;
     mealCardsInFlight.add(key);
@@ -135,12 +163,17 @@ export async function appendMealChatReplyCard(charId: string, sourceId: number, 
         const source = messages.find(message => message.id === sourceId);
         if (!source || !mealChatReplySource(source)) return false;
         if (messages.some(message => message.metadata?.mealChatSourceId === sourceId)) return false;
-        if (!messages.some(message => message.id > sourceId && message.role === 'assistant' && !message.metadata?.mealChatConfirmation)) return false;
+        const reply = messages.find(message => message.id > sourceId && message.role === 'assistant'
+            && !message.metadata?.mealChatConfirmation
+            && (options?.replyId === undefined || message.id === options.replyId)
+            && (options?.deliveryId === undefined || message.metadata?.activeMsg2?.messageId === options.deliveryId));
+        if (!reply) return false;
         const mealChat = matchMealChat(source.content, loadMealPlannerState().inventory);
         await DB.saveMessage({
-            charId, role: 'assistant', type: 'meal_card', timestamp,
+            charId, role: 'assistant', type: 'meal_card', timestamp: options?.timestamp,
             content: `吃了没 · 待确认：${mealChat.map(match => match.food).join('、')}`,
-            metadata: { source: 'eat', mealChat, mealChatConfirmation: true, mealChatSourceId: sourceId, mealChatSourceAt: source.timestamp },
+            metadata: { source: 'eat', mealChat, mealChatConfirmation: true, mealChatSourceId: sourceId,
+                mealChatSourceAt: source.timestamp, mealChatReplyId: reply.id },
         });
         return true;
     } catch (error) {
@@ -149,6 +182,22 @@ export async function appendMealChatReplyCard(charId: string, sourceId: number, 
     } finally {
         mealCardsInFlight.delete(key);
     }
+}
+
+export function placeMealCardsBeforeReplies(messages: Message[]): Message[] {
+    const ids = new Set(messages.map(message => message.id));
+    const cards = new Map<number, Message[]>();
+    for (const message of messages) {
+        const replyId = message.metadata?.mealChatReplyId;
+        if (message.metadata?.mealChatConfirmation && ids.has(replyId)) {
+            cards.set(replyId, [...(cards.get(replyId) || []), message]);
+        }
+    }
+    if (!cards.size) return messages;
+    return messages.flatMap(message => {
+        if (message.metadata?.mealChatConfirmation && cards.has(message.metadata.mealChatReplyId)) return [];
+        return [...(cards.get(message.id) || []), message];
+    });
 }
 
 export function confirmMealChat(key: string, choice?: { item: PantryItem; quantity: number }) {

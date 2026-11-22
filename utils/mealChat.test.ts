@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { DB } from './db';
-import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, requestedChatMeal } from './mealChat';
+import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, mealChatStockQuantity, placeMealCardsBeforeReplies, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
 const milk: PantryItem = { id: 'whole', name: '普通牛奶', category: '奶豆', quantity: 3, unit: '盒', expiresAt: '2026-11-24' };
@@ -42,7 +42,16 @@ describe('私聊吃了没', () => {
         expect(await appendMealChatReplyCard('cook', 1)).toBe(false);
         expect(save).toHaveBeenCalledOnce();
         expect(messages[2]).toMatchObject({ role: 'assistant', type: 'meal_card', metadata: { mealChatSourceId: 1 } });
+        expect(placeMealCardsBeforeReplies(messages).map(message => message.id)).toEqual([1, 3, 2]);
         expect(loadMealPlannerState().inventory[0].quantity).toBe(3);
+    });
+
+    it('未说明时按一份，俩苹果和两盒牛奶各提取成两份库存单位', () => {
+        expect(mealChatStockQuantity(matchMealChat('我吃了苹果', [apple])[0].portion, apple.unit)).toBe(1);
+        expect(mealChatStockQuantity(matchMealChat('我吃了俩苹果', [apple])[0].portion, apple.unit)).toBe(2);
+        expect(mealChatStockQuantity(matchMealChat('我喝了两盒牛奶', [milk])[0].portion, milk.unit)).toBe(2);
+        expect(mealChatStockQuantity(matchMealChat('我喝了半盒牛奶', [milk])[0].portion, milk.unit)).toBe(0.5);
+        expect(mealChatStockQuantity(matchMealChat('我喝了两杯牛奶', [milk])[0].portion, milk.unit)).toBeUndefined();
     });
     it('泛称保留两种候选，明确品类只对应那一种，同时可识别两个食物', () => {
         expect(matchMealChat('我把牛奶喝了', [milk, skim])).toEqual([{ food: '牛奶', itemIds: ['whole', 'skim'] }]);
