@@ -1,4 +1,5 @@
 import type { APIConfig, Message } from '../types';
+import { DB } from './db';
 import { generateDailyMealPlan, loadMealPlannerState, MEAL_STORAGE_CHANGED, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
 export interface MealChatMatch {
@@ -7,6 +8,7 @@ export interface MealChatMatch {
 }
 
 const generalFoods = ['牛奶', '酸奶', '豆浆', '鸡蛋', '面包', '米饭', '面条', '燕麦', '苹果', '橙汁', '饺子', '馒头', '香蕉', '咖啡', '鸡肉', '豆腐', '番茄'];
+const normalizeFoodAlias = (name: string) => name.replace(/水饺/g, '饺子');
 const stockWords = /冰箱|生鲜区|冷冻区|存货|库存|家里.{0,6}食材/;
 const stockQuestion = /还有|还剩|有什么|有啥|有没有|到期|过期|临期|清一清|清理|先用|先吃|看看|看下|查一下|用掉|能做|能吃/;
 const mealAdviceRequest = /(?:下顿|下一餐|早餐|午餐|晚餐|宵夜|早饭|午饭|晚饭|今晚|明天|冰箱|食材|家里|剩下的).{0,16}(?:吃点什么|吃什么|吃啥|做点什么|做什么|做啥|怎么搭配|能搭什么)|(?:推荐|安排|想个|帮我想|不知道|纠结).{0,12}(?:吃什么|吃啥|菜单|食谱|菜谱|下一餐|下顿|晚饭|晚餐)/;
@@ -82,14 +84,15 @@ export function completeQuotedMeal(charId: string, planId: string, type: string)
 // stay a choice between every matching stocked variant.
 export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMatch[] {
     const stock = inventory.filter(item => item.quantity > 0 && item.name.trim());
-    const names = [...new Set([...stock.map(item => item.name.trim()), ...generalFoods])].sort((a, b) => b.length - a.length);
+    const names = [...new Set([...stock.map(item => normalizeFoodAlias(item.name.trim())), ...generalFoods])]
+        .sort((a, b) => b.length - a.length);
     const found = new Map<string, MealChatMatch>();
     for (const clause of text.split(/[。！!；;，,\n]/)) {
         const action = consumed.exec(clause);
         if (!action || uncertain.test(clause)) continue;
-        const foodText = /^(?:把|将)/.test(action[0])
+        const foodText = normalizeFoodAlias(/^(?:把|将)/.test(action[0])
             ? action[0].replace(/^(?:把|将)/, '')
-            : clause.slice(action.index + action[0].length);
+            : clause.slice(action.index + action[0].length));
         const spans: Array<[number, number]> = [];
         for (const name of names) {
             let index = foodText.indexOf(name);
@@ -97,7 +100,10 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
                 index = foodText.indexOf(name, index + name.length);
             }
             if (index < 0) continue;
-            const candidates = stock.filter(item => generalFoods.includes(name) ? item.name.includes(name) : item.name.trim() === name);
+            const candidates = stock.filter(item => {
+                const itemName = normalizeFoodAlias(item.name.trim());
+                return generalFoods.includes(name) ? itemName.includes(name) : itemName === name;
+            });
             if (!candidates.length) continue;
             spans.push([index, index + name.length]);
             found.set(name, { food: name, itemIds: candidates.map(item => item.id) });
@@ -107,7 +113,43 @@ export function matchMealChat(text: string, inventory: PantryItem[]): MealChatMa
 }
 
 export const mealChatReceiptKey = (message: Message, food: string) =>
-    JSON.stringify([message.charId, message.id, message.timestamp, food]);
+    JSON.stringify([message.charId, message.metadata?.mealChatSourceId ?? message.id,
+        message.metadata?.mealChatSourceAt ?? message.timestamp, food]);
+
+export function mealChatReplySource(message: Message | undefined): number | undefined {
+    if (message?.role !== 'user' || message.type !== 'text' || !message.metadata?.mealChatEligible) return;
+    const state = loadMealPlannerState();
+    if (state.settings.chatCharacterId === message.charId && matchMealChat(message.content, state.inventory).length) {
+        return message.id;
+    }
+}
+
+const mealCardsInFlight = new Set<string>();
+
+export async function appendMealChatReplyCard(charId: string, sourceId: number, timestamp?: number): Promise<boolean> {
+    const key = JSON.stringify([charId, sourceId]);
+    if (mealCardsInFlight.has(key)) return false;
+    mealCardsInFlight.add(key);
+    try {
+        const { messages } = await DB.getMessagesFromId(charId, sourceId);
+        const source = messages.find(message => message.id === sourceId);
+        if (!source || !mealChatReplySource(source)) return false;
+        if (messages.some(message => message.metadata?.mealChatSourceId === sourceId)) return false;
+        if (!messages.some(message => message.id > sourceId && message.role === 'assistant' && !message.metadata?.mealChatConfirmation)) return false;
+        const mealChat = matchMealChat(source.content, loadMealPlannerState().inventory);
+        await DB.saveMessage({
+            charId, role: 'assistant', type: 'meal_card', timestamp,
+            content: `吃了没 · 待确认：${mealChat.map(match => match.food).join('、')}`,
+            metadata: { source: 'eat', mealChat, mealChatConfirmation: true, mealChatSourceId: sourceId, mealChatSourceAt: source.timestamp },
+        });
+        return true;
+    } catch (error) {
+        console.warn('[MealChat] 回复已送达，饮食确认卡保存失败', error);
+        return false;
+    } finally {
+        mealCardsInFlight.delete(key);
+    }
+}
 
 export function confirmMealChat(key: string, choice?: { item: PantryItem; quantity: number }) {
     const commit = () => {

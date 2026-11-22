@@ -47,6 +47,7 @@ export interface AmsgInstantChatPending {
   acceptedAt: number;
   /** 角色名快照（全局横幅显示用）。必填：唯一写入方恒定带上（角色名为空就是空串）。 */
   charName: string;
+  mealSourceId?: number;
 }
 
 type PendingMap = Record<string, AmsgInstantChatPending>;
@@ -66,6 +67,7 @@ const readPendingMap = (): PendingMap => {
           uuid: record.uuid,
           acceptedAt: record.acceptedAt,
           charName: typeof record.charName === 'string' ? record.charName : '',
+          ...(typeof record.mealSourceId === 'number' ? { mealSourceId: record.mealSourceId } : {}),
         };
       }
     }
@@ -101,9 +103,10 @@ export const setInstantChatPending = (
   uuid: string,
   acceptedAt = Date.now(),
   charName = '',
+  mealSourceId?: number,
 ): void => {
   const map = readPendingMap();
-  map[charId] = { charId, uuid, acceptedAt, charName };
+  map[charId] = { charId, uuid, acceptedAt, charName, ...(mealSourceId === undefined ? {} : { mealSourceId }) };
   writePendingMap(map);
   announcePendingChanged(charId);
 };
@@ -422,6 +425,7 @@ export interface InstantChatSendResult {
  */
 export const sendInstantChatTurn = async (params: {
   char: CharacterProfile;
+  mealSourceId?: number;
   chatMessages: Array<{ role: string; content: unknown }>;
   /** 本地生成这一轮会用的凭据（effectiveApi），云端必须用同一份。 */
   api: { baseUrl: string; apiKey: string; model: string };
@@ -471,7 +475,7 @@ export const sendInstantChatTurn = async (params: {
       ...(supersedes ? { supersedesUuid: supersedes.uuid } : {}),
     });
     // 先记待收再释放占位（finally），挡板的两个信号无缝交接，不留「都不认」的空窗。
-    setInstantChatPending(params.char.id, uuid, Date.now(), params.char.name);
+    setInstantChatPending(params.char.id, uuid, Date.now(), params.char.name, params.mealSourceId);
     recordCloudApiCall({
       id: cloudApiCallLogId(uuid),
       route: 'cloud-instant-chat',

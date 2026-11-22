@@ -30,7 +30,7 @@ import { isLuckinConfigured } from '../utils/luckinMcpClient';
 import { isLuckinActivatedInMessages, LUCKIN_ACTIVATE_TRIGGER, LUCKIN_DEACTIVATE_TRIGGER } from '../utils/luckinToolBridge';
 import MessageItem, { ThinkingChainBlock } from '../components/chat/MessageItem';
 import MealChatCards from '../components/chat/MealChatCards';
-import { arrangeChatMeal, completeQuotedMeal, isChatMealFinished, matchMealChat, requestedChatMeal } from '../utils/mealChat';
+import { arrangeChatMeal, completeQuotedMeal, isChatMealFinished, requestedChatMeal } from '../utils/mealChat';
 import { formatMealPlanForChat, loadMealPlannerState, type DailyMealPlan } from '../utils/mealPlanner';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import LuckinMiniApp from '../components/luckin/LuckinMiniApp';
@@ -1157,9 +1157,8 @@ const Chat: React.FC = () => {
             && replyTarget.metadata?.mealReceiptType !== 'completed' ? replyTarget.metadata?.mealPlan : undefined;
         const completionRequested = !!quotedPlan && isChatMealFinished(text);
         const mealRequest = canHandleMeals && !completionRequested && !detectFirstUrl(text) ? requestedChatMeal(text) : undefined;
-        if (mealState && canHandleMeals && !mealRequest && !completionRequested) {
-            const mealChat = matchMealChat(text, mealState.inventory);
-            if (mealChat.length) msgPayload.metadata = { ...metadata, mealChat };
+        if (canHandleMeals && !mealRequest && !completionRequested) {
+            msgPayload.metadata = { ...metadata, mealChatEligible: true };
         }
         
         if (replyTarget) {
@@ -3650,7 +3649,9 @@ const Chat: React.FC = () => {
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {!selectionMode && m.role === 'user' && m.type === 'text' && m.metadata?.mealChat?.length > 0 && (
-                            <MealChatCards message={m} matches={m.metadata.mealChat} />
+                            <div className="ml-12 mb-3">
+                                <MealChatCards message={m} matches={m.metadata.mealChat} />
+                            </div>
                         )}
                         {!selectionMode && m.type === 'meal_card' && m.metadata?.chatMeal && (
                             <button type="button" onClick={() => handleQuickReply(m)}

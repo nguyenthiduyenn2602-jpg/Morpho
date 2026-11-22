@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
-import { arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, requestedChatMeal } from './mealChat';
+import { DB } from './db';
+import { appendMealChatReplyCard, arrangeChatMeal, buildMealChatContext, completeQuotedMeal, confirmMealChat, isChatMealFinished, matchMealChat, mealChatReceiptKey, requestedChatMeal } from './mealChat';
 import { emptyMealPlannerState, loadMealPlannerState, saveMealPlannerState, type PantryItem } from './mealPlanner';
 
 const milk: PantryItem = { id: 'whole', name: '普通牛奶', category: '奶豆', quantity: 3, unit: '盒', expiresAt: '2026-11-24' };
@@ -15,9 +16,34 @@ function prepareStorage() {
     saveMealPlannerState({ ...emptyMealPlannerState(), inventory: [milk, skim, apple] });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+});
 
 describe('私聊吃了没', () => {
+    it('角色回复落库后才追加确认卡，重复收取不会多发一张', async () => {
+        prepareStorage();
+        const state = loadMealPlannerState();
+        saveMealPlannerState({ ...state, settings: { ...state.settings, chatCharacterId: 'cook' } });
+        const messages: Message[] = [
+            { id: 1, charId: 'cook', timestamp: 1, role: 'user', type: 'text', content: '我喝了牛奶', metadata: { mealChatEligible: true } },
+        ];
+        vi.spyOn(DB, 'getMessagesFromId').mockImplementation(async () => ({ messages: [...messages], totalCount: messages.length }));
+        const save = vi.spyOn(DB, 'saveMessage').mockImplementation(async message => {
+            const id = messages.length + 1;
+            messages.push({ ...message, timestamp: message.timestamp ?? id, id });
+            return id;
+        });
+        expect(await appendMealChatReplyCard('cook', 1)).toBe(false);
+        expect(save).not.toHaveBeenCalled();
+        messages.push({ id: 2, charId: 'cook', timestamp: 2, role: 'assistant', type: 'text', content: '喝完啦？' });
+        expect(await appendMealChatReplyCard('cook', 1)).toBe(true);
+        expect(await appendMealChatReplyCard('cook', 1)).toBe(false);
+        expect(save).toHaveBeenCalledOnce();
+        expect(messages[2]).toMatchObject({ role: 'assistant', type: 'meal_card', metadata: { mealChatSourceId: 1 } });
+        expect(loadMealPlannerState().inventory[0].quantity).toBe(3);
+    });
     it('泛称保留两种候选，明确品类只对应那一种，同时可识别两个食物', () => {
         expect(matchMealChat('我把牛奶喝了', [milk, skim])).toEqual([{ food: '牛奶', itemIds: ['whole', 'skim'] }]);
         expect(matchMealChat('我喝了脱脂牛奶和苹果', [milk, skim, apple])).toEqual([
@@ -39,6 +65,15 @@ describe('私聊吃了没', () => {
         await confirmMealChat('skip');
         await confirmMealChat('skip', { item: milk, quantity: 1 });
         expect(loadMealPlannerState().inventory[0].quantity).toBe(3);
+    });
+
+    it('水饺和饺子双向匹配，具体馅料优先，泛称仍保留所有候选', () => {
+        const pork: PantryItem = { id: 'pork', name: '猪肉水饺', category: '冷冻', quantity: 6, unit: '个' };
+        const veg: PantryItem = { ...pork, id: 'veg', name: '素馅饺子' };
+        expect(matchMealChat('我吃了饺子', [pork])).toEqual([{ food: '饺子', itemIds: ['pork'] }]);
+        expect(matchMealChat('我吃了水饺', [veg])).toEqual([{ food: '饺子', itemIds: ['veg'] }]);
+        expect(matchMealChat('我吃了水饺', [pork, veg])).toEqual([{ food: '饺子', itemIds: ['pork', 'veg'] }]);
+        expect(matchMealChat('我吃了猪肉饺子', [pork, veg])).toEqual([{ food: '猪肉饺子', itemIds: ['pork'] }]);
     });
 
     it('仅授权角色安排一人份晚餐，引用完成只扣一次，库存不足时整餐不扣', async () => {

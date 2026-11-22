@@ -27,7 +27,7 @@ import { callMcpTool, getMcpUseNativeTools, hasWorkerUnreachableMcpServer } from
 import { buildMcpOpenAITools, buildMcpRejectedToolsFallbackBody, buildMcpTextFallbackBody, extractTextFakedMcpCalls, formatMcpToolResult, sanitizeMcpLeadInText, shouldRetryMcpWithoutTools, stripTextFakedMcpCalls, type FakedMcpCall } from '../utils/mcpToolBridge';
 import { buildToolResultMessage, normalizeToolCallsForCompat } from '../utils/toolCallCompat';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
-import { buildMealChatContext } from '../utils/mealChat';
+import { appendMealChatReplyCard, buildMealChatContext, mealChatReplySource } from '../utils/mealChat';
 import { loadMealPlannerState } from '../utils/mealPlanner';
 import {
     isInstantConfigReady,
@@ -851,6 +851,7 @@ export const useChatAI = ({
             const luckinChatOn = !!luckinChatRef?.current?.active;
             const latestUserMessage = [...contextMsgs].reverse().find(message => message.role === 'user');
             const latestUserText = latestUserMessage?.content || '';
+            const mealSourceId = mealChatReplySource(latestUserMessage);
             // 图片 API 只能由当前打开的客户端调用。明确索图的这一轮必须留在本地；
             // 若用户允许角色主动发图，模型需要先在本地作出生图决定，因此该角色的对话轮也保持本地。
             // 这里只否决本轮的云端生成，不改主动消息配置，worker 后续推来的消息仍可正常接收。
@@ -1332,6 +1333,10 @@ export const useChatAI = ({
                     // 放顶层字段, 不进 metadata —— 框架不会回显它, 副 API apiKey 不会泄进 push.
                     ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
                 }, char.id, undefined, onInstantPosted);
+                if (instantResult.ok && instantResult.outcome === 'received' && mealSourceId
+                    && await appendMealChatReplyCard(char.id, mealSourceId)) {
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                }
                 if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
                     // 长报错 (worker 400 校验信息 + CF 错误页可能很长) 走弹窗, 手机用户能
                     // 看清并复制反馈; 没注入 showError 时降级到 toast.
@@ -1387,6 +1392,7 @@ export const useChatAI = ({
                     : null;
                 const instantChatResult = await sendInstantChatTurn({
                     char,
+                    mealSourceId,
                     // 云端要发给模型的就是本地这一份，一个字不改（见 fire_pack 的 chat 段）。
                     chatMessages: (amsg2NoticesBlock
                         ? [...fullMessages, { role: 'system', content: amsg2NoticesBlock }]
@@ -1910,12 +1916,19 @@ export const useChatAI = ({
             // 而是包装 setMessages——后处理第一条真实消息落库上屏的**同一帧**清预览。
             // 交接前预览一直挂着，交接后 instantRender 秒速回填，视觉上是"预览定格成正式消息"。
             let previewHandedOver = false;
+            let hasPersistedReply = false;
             const previewHandoverIds = new Set<number>();
             const previewBaselineMaxId = contextMsgs.reduce(
                 (maxId, message) => Math.max(maxId, message.id),
                 Number.NEGATIVE_INFINITY,
             );
             const setMessagesWithPreviewHandover = (msgs: Message[]) => {
+                if (mealSourceId && !hasPersistedReply) {
+                    hasPersistedReply = msgs.some(message =>
+                        message.id > previewBaselineMaxId && message.role === 'assistant' && !message.metadata?.mealChatConfirmation
+                        && !message.metadata?.activeMsg2,
+                    );
+                }
                 const newlyHandedOverIds = findNewStreamPreviewHandoverIds(
                     msgs,
                     latestStreamPreviewBubbles,
@@ -2041,6 +2054,9 @@ export const useChatAI = ({
             // 当前挂载的 Chat（可能是切走又切回后新 mount 的实例，本闭包的 setMessages
             // 对它已失效）会重新 reloadMessages；用户不在该会话时补未读 + toast。
             // instant 路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
+            if (hasPersistedReply && mealSourceId && await appendMealChatReplyCard(char.id, mealSourceId)) {
+                setMessagesWithPreviewHandover(await DB.getRecentMessagesByCharId(char.id, 200));
+            }
             announceChatGen(CHAT_GEN_EVENTS.replyArrived, { charId: char.id, charName: char.name });
 
             // 防穿帮闸：仅当这轮请求真的成功、回执确实进了模型上下文并产出已落库的

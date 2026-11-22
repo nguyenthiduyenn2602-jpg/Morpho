@@ -1,5 +1,6 @@
 import { useHalloweenActive, visibleAvatarStyle } from '../../utils/halloweenEvent';
 import WorkDocumentCard from './WorkDocumentCard';
+import MealChatCards from './MealChatCards';
 
 
 
@@ -2939,6 +2940,10 @@ const MessageItem = React.memo(({
             </div>
         );
         return commonLayout(card);
+    }
+
+    if (m.type === 'meal_card' && m.metadata?.mealChatConfirmation && Array.isArray(m.metadata.mealChat)) {
+        return commonLayout(selectionMode ? m.content : <MealChatCards message={m} matches={m.metadata.mealChat} />);
     }
 
     if (m.type === 'meal_card' && m.metadata?.mealPlan) {

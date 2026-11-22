@@ -1,5 +1,6 @@
 import { ActiveMsg2InboxMessage, ActiveMsg2TaskRecord, APIConfig, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
+import { appendMealChatReplyCard } from './mealChat';
 import { ChatPrompts } from './chatPrompts';
 import { ActiveMsgStore } from './activeMsgStore';
 import { ActiveMsgClient, type AmsgOutboxEntry, type RemoteTaskStatus } from './activeMsgClient';
@@ -1773,6 +1774,11 @@ const flushInboxToChatImpl = async () => {
         } catch (e) {
           log.warn('降级存原稿路径消费情绪结果失败（原稿已落库，不受影响）', { messageId: message.messageId, error: e });
         }
+      }
+
+      const mealPending = getInstantChatPending(message.charId);
+      if (mealPending?.mealSourceId && message.taskUuid === mealPending.uuid && isLastChunk(message) && message.body?.trim()) {
+        await appendMealChatReplyCard(message.charId, mealPending.mealSourceId, persistTimestamp);
       }
 
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',

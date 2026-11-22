@@ -24,7 +24,7 @@ function MealChoice({ item, disabled, onConfirm }: {
             <span className="text-xs">{item.unit}</span>
             <button type="button" className="rounded-lg bg-[#52694f] px-3 py-1 text-white disabled:opacity-40"
                 disabled={disabled || Number(quantity) < 0.01 || Number(quantity) > item.quantity}
-                onClick={() => onConfirm(item, Number(quantity))}>已吃</button>
+                onClick={() => onConfirm(item, Number(quantity))}>确认已吃</button>
         </div>
     </div>;
 }
@@ -57,7 +57,7 @@ export default function MealChatCards({ message, matches }: { message: Message; 
             setBusy(undefined);
         }
     };
-    return <div className="mb-3 ml-auto mr-4 w-[min(19rem,85%)] space-y-2 text-sm text-[#354832]">
+    return <div className="w-full max-w-[19rem] space-y-2 text-sm text-[#354832]">
         {matches.map(({ food, itemIds }) => {
             const key = mealChatReceiptKey(message, food);
             const receipt = state.chatConsumption?.[key];

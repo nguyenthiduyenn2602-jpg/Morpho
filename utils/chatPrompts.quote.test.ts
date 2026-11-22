@@ -72,4 +72,16 @@ describe('buildMessageHistory 引用双语消息', () => {
         expect(content).not.toContain('<翻译>');
         expect(content).not.toContain('<译文>');
     });
+
+    it('饮食确认卡不会抢占角色对用户原话的回复', () => {
+        const history = makeHistory();
+        history.push({
+            id: 3, charId: 'c1', role: 'assistant', type: 'meal_card', content: '吃了没 · 待确认：饺子',
+            timestamp: t0 + 2000, metadata: { mealChatConfirmation: true },
+        });
+        const { apiMessages } = ChatPrompts.buildMessageHistory(history, 1, char, userProfile, []);
+        expect(apiMessages).toHaveLength(1);
+        expect(apiMessages[0].role).toBe('user');
+        expect(apiMessages[0].content).toContain(USER_REPLY);
+    });
 });
